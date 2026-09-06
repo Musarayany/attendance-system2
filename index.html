@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
     <title>نظام إدارة الغيابات - قسم الفيزياء</title>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js">
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js">
+    </script>
+    <!-- المكتبات الأخرى -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js">
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js">
@@ -16,7 +22,7 @@
     </script>
 
     <style>
-        /* === الأنماط (نفسها مع إضافة ألوان للخصوصية) === */
+        /* ========== جميع الأنماط السابقة كما هي (لم تتغير) ========== */
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Tahoma', 'Segoe UI', sans-serif; }
         body { background: #f0f4f8; padding: 10px; min-height: 100vh; }
         .hidden { display: none !important; }
@@ -48,7 +54,7 @@
         .btn-upload-excel { background: #0d9488; } .btn-upload-excel:hover { background: #0f766e; }
         .btn-backup { background: #6d28d9; } .btn-backup:hover { background: #5b21b6; }
 
-        /* === أنماط الوضع السريع والماسح === */
+        /* أنماط الوضع السريع والماسح (كما هي) */
         .btn-present { background: #48bb78; color: white; font-weight: bold; padding: 6px 12px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; min-width: 60px; transition: 0.2s; }
         .btn-present:hover { background: #38a169; transform: scale(1.05); }
         .btn-absent { background: #fc8181; color: white; font-weight: bold; padding: 6px 12px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; min-width: 60px; transition: 0.2s; }
@@ -76,38 +82,32 @@
         .report-table th, .report-table td { border: 1px solid #cbd5e1; padding: 4px 3px; text-align: center; vertical-align: middle; }
         .report-table th { background: #1a3a5e; color: white; font-weight: bold; font-size: 11px; padding: 6px 3px; position: sticky; top: 0; z-index: 10; }
         .report-table .student-name { font-weight: bold; background: #ebf8ff; text-align: right; padding-right: 8px; min-width: 140px; position: sticky; right: 0; z-index: 5; }
-        
         .subject-cell { padding: 4px 3px !important; min-width: 90px; text-align: center; }
         .subject-cell .status-text { font-weight: bold; font-size: 12px; display: block; }
         .subject-cell .percentage { font-size: 10px; display: block; }
         .subject-cell .hours-detail { font-size: 10px; display: block; }
-        
         .status-good { background: #c6f6d5; }
         .status-good .status-text { color: #22543d; }
         .status-good .percentage { color: #22543d; }
         .status-good .hours-detail { color: #22543d; }
-        
         .status-first-warning { background: #fefcbf; }
         .status-first-warning .status-text { color: #744210; }
         .status-first-warning .percentage { color: #744210; }
         .status-first-warning .hours-detail { color: #744210; }
-        
         .status-final-warning { background: #feebc8; }
         .status-final-warning .status-text { color: #7b341e; }
         .status-final-warning .percentage { color: #7b341e; }
         .status-final-warning .hours-detail { color: #7b341e; }
-        
         .status-fail { background: #fed7d7; }
         .status-fail .status-text { color: #9b2c2c; }
         .status-fail .percentage { color: #9b2c2c; }
         .status-fail .hours-detail { color: #9b2c2c; }
-        
         .status-none { background: #f7fafc; }
         .status-none .status-text { color: #a0aec0; }
         .status-none .percentage { color: #a0aec0; }
         .status-none .hours-detail { color: #a0aec0; }
 
-        /* باقي الأنماط */
+        /* باقي الأنماط (اختصاراً) */
         .tab-buttons { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
         .tab-buttons button { background: #edf2f7; color: #2d3748; min-width: 60px; flex: 1; font-size: 12px; padding: 6px 4px; min-height: 36px; }
         @media (min-width: 768px) { .tab-buttons button { flex: none; min-width: 90px; font-size: 13px; padding: 8px 12px; } }
@@ -160,7 +160,6 @@
         small { color: #718096; display: block; margin-top: 3px; font-size: 10px; }
         .file-upload-wrapper { border: 2px dashed #cbd5e1; padding: 12px; text-align: center; border-radius: 12px; background: #f7fafc; }
 
-        /* ====== التقرير النهائي PDF ====== */
         #printable-report.pdf-report { width: 100%; background: #fff; direction: rtl; }
         #printable-report.pdf-report .report-table-wrapper { overflow: visible !important; }
         #printable-report.pdf-report .report-table { width: 100%; min-width: 0; table-layout: fixed; font-size: 10px; border-collapse: collapse; }
@@ -242,16 +241,15 @@
                 <div class="flex-between">
                     <h4 style="margin:0;">📦 إدارة البيانات</h4>
                     <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                        <button onclick="exportData()" class="btn-export btn-sm" style="min-width:60px;">📤 تصدير</button>
-                        <button onclick="document.getElementById('importFileInput').click()" class="btn-import btn-sm" style="min-width:60px;">📥 استيراد</button>
-                        <input type="file" id="importFileInput" accept=".json" style="display:none;" onchange="importData(event)">
-                        <button onclick="exportToExcel()" class="btn-excel btn-sm" style="min-width:60px;">📊 إكسل (الكل)</button>
                         <button onclick="exportBackup()" class="btn-backup btn-sm" style="min-width:60px;">💾 نسخة احتياطية</button>
                         <button onclick="document.getElementById('restoreBackupInput').click()" class="btn-import btn-sm" style="min-width:60px;">🔄 استعادة</button>
                         <input type="file" id="restoreBackupInput" accept=".json" style="display:none;" onchange="restoreBackup(event)">
+                        <button onclick="exportToExcel()" class="btn-excel btn-sm" style="min-width:60px;">📊 إكسل</button>
+                        <button onclick="showAddLevelPanel()" class="btn-success btn-sm" style="min-width:60px;">➕ إدارة</button>
                     </div>
                 </div>
-                <small>📌 تصدير JSON للنسخ الاحتياطي، أو إكسل للبيانات. استخدم "نسخة احتياطية" لحفظ كامل البيانات بأمان.</small>
+                <small>📌 جميع التغييرات تُحفظ تلقائياً في السحابة وتظهر للجميع فوراً. استخدم النسخة الاحتياطية للحفظ المحلي.</small>
+                <div id="syncStatus" style="font-size:12px; color:#2f855a; margin-top:4px;">✅ متصل بالسحابة - المزامنة تلقائية</div>
             </div>
 
             <!-- ====== بطاقة استيراد الطلاب من Excel ====== -->
@@ -273,7 +271,6 @@
                     <h2 style="font-size:1rem; margin:0;">📚 المراحل الدراسية</h2>
                     <div style="display:flex; gap:4px; flex-wrap:wrap;">
                         <button onclick="linkStudentsToSubjects()" class="btn-link btn-sm" style="min-width:60px; padding:4px 10px; font-size:11px;">🔗 ربط الطلاب</button>
-                        <button onclick="showAddLevelPanel()" class="btn-success btn-sm" style="min-width:50px; padding:4px 10px; font-size:11px;">➕ إدارة</button>
                     </div>
                 </div>
                 <div id="levelsContainer" class="grid-3" style="margin-top:8px;"></div>
@@ -295,7 +292,7 @@
                 <div id="levelDetailContent"></div>
             </div>
 
-            <!-- ====== لوحة إدارة المرحلة ====== -->
+            <!-- ====== لوحة إدارة المرحلة (ظهرت من زر إدارة) ====== -->
             <div id="addLevelPanel" style="display:none;">
                 <div class="flex-between" style="margin-bottom:10px;">
                     <h3 style="font-size:0.95rem;">⚙️ إدارة المراحل</h3>
@@ -360,13 +357,14 @@
                 <div class="card">
                     <h4>⚠️ إدارة البيانات</h4>
                     <button onclick="resetAllData()" class="btn-danger" style="width:100%;">إعادة ضبط جميع البيانات</button>
-                    <small>سيتم حذف جميع البيانات وإعادة تعيينها إلى البيانات الافتراضية</small>
+                    <small>سيتم حذف جميع البيانات من السحابة وإعادة تعيينها إلى البيانات الافتراضية</small>
                 </div>
             </div>
         </div>
 
         <!-- ==================== تبويب الأستاذ ==================== -->
         <div id="tab-professor" class="tab-content">
+            <!-- (نفس المحتوى السابق، لم يتغير) -->
             <div class="grid-2">
                 <div>
                     <div class="card">
@@ -495,7 +493,26 @@
 
     <script>
         // ==============================================================
-        //  CURRICULUM DATA (نفسه)
+        //  🔥 FIREBASE CONFIG - ضع إعدادات مشروعك هنا
+        // ==============================================================
+        const firebaseConfig = {
+        apiKey: "AIzaSyCeJuG2qpvLRkmG323SlFWwad5VGfI5BZQ",
+        authDomain: "attendance-system-3b8a7.firebaseapp.com",
+        databaseURL: "https://attendance-system-3b8a7-default-rtdb.europe-west1.firebasedatabase.app",
+        projectId: "attendance-system-3b8a7",
+        storageBucket: "attendance-system-3b8a7.firebasestorage.app",
+        messagingSenderId: "548061123272",
+        appId: "1:548061123272:web:f1e1063aa7069acbf4cbfd"
+        };
+
+        // ==============================================================
+        //  تهيئة Firebase
+        // ==============================================================
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        // ==============================================================
+        //  CURRICULUM DATA (ثابت)
         // ==============================================================
         const CURRICULUM = {
             semester1: {
@@ -568,13 +585,8 @@
         };
 
         // ==============================================================
-        //  DATA LAYER (localStorage) مع دعم النسخ الاحتياطي
+        //  STATE (سيتم تحميله من Firebase)
         // ==============================================================
-        const DB = {
-            get(key, def) { try { return JSON.parse(localStorage.getItem(key)) || def; } catch(e) { return def; } },
-            set(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
-        };
-
         let state = {
             professors: [],
             subjects: [],
@@ -587,32 +599,190 @@
             currentLevelKey: null,
             selectedStudentsForAttendance: [],
             chartInstance: null,
-            quickMode: false
+            quickMode: false,
+            isSyncing: false,
+            initialLoadDone: false
         };
 
         let html5QrCode = null;
         let isScanning = false;
 
-        // ========== دالة الحفظ مع تأكيد ==========
-        function saveAll() {
-            DB.set('professors', state.professors);
-            DB.set('subjects', state.subjects);
-            DB.set('students', state.students);
-            DB.set('attendances', state.attendances);
-            DB.set('notifications', state.notifications);
-            // تسجيل وقت آخر حفظ
-            DB.set('lastBackupTime', new Date().toISOString());
-            // عرض رسالة تأكيد في واجهة المستخدم (اختياري)
-            const statusEl = document.getElementById('saveStatus');
-            if (statusEl) {
-                statusEl.textContent = '✅ تم الحفظ في ' + new Date().toLocaleString();
-                statusEl.style.color = '#2f855a';
-                setTimeout(() => { statusEl.textContent = ''; }, 3000);
-            }
-            console.log('✅ تم حفظ البيانات بنجاح في ' + new Date().toLocaleString());
+        // ==============================================================
+        //  دوال المزامنة مع Firebase
+        // ==============================================================
+        function loadFromFirebase() {
+            if (state.isSyncing) return;
+            state.isSyncing = true;
+            const statusEl = document.getElementById('syncStatus');
+            if (statusEl) statusEl.textContent = '⏳ جاري التحميل من السحابة...';
+
+            database.ref('/').once('value').then(snapshot => {
+                const data = snapshot.val();
+                if (data) {
+                    state.professors = data.professors || [];
+                    state.subjects = data.subjects || [];
+                    state.students = data.students || [];
+                    state.attendances = data.attendances || [];
+                    state.notifications = data.notifications || [];
+                } else {
+                    // أول تشغيل: إنشاء بيانات افتراضية
+                    initializeDefaultData().then(() => {
+                        pushToFirebase();
+                    });
+                }
+                state.isSyncing = false;
+                state.initialLoadDone = true;
+                if (statusEl) statusEl.textContent = '✅ متصل بالسحابة - المزامنة تلقائية';
+                renderAll();
+            }).catch(err => {
+                state.isSyncing = false;
+                console.error('خطأ في تحميل البيانات:', err);
+                if (statusEl) statusEl.textContent = '❌ خطأ في الاتصال بالسحابة. حاول تحديث الصفحة.';
+                alert('❌ تعذر الاتصال بالسحابة. تأكد من اتصالك بالإنترنت.');
+            });
         }
 
-        // ========== تصدير نسخة احتياطية كاملة ==========
+        function pushToFirebase() {
+            if (!state.initialLoadDone) return;
+            state.isSyncing = true;
+            const statusEl = document.getElementById('syncStatus');
+            if (statusEl) statusEl.textContent = '⏳ جاري الحفظ في السحابة...';
+
+            const data = {
+                professors: state.professors,
+                subjects: state.subjects,
+                students: state.students,
+                attendances: state.attendances,
+                notifications: state.notifications,
+                lastUpdate: firebase.database.ServerValue.TIMESTAMP
+            };
+
+            database.ref('/').set(data).then(() => {
+                state.isSyncing = false;
+                if (statusEl) statusEl.textContent = '✅ تم الحفظ في السحابة - المزامنة تلقائية';
+                console.log('✅ تم حفظ البيانات في Firebase');
+            }).catch(err => {
+                state.isSyncing = false;
+                console.error('خطأ في الحفظ:', err);
+                if (statusEl) statusEl.textContent = '❌ خطأ في الحفظ. حاول مرة أخرى.';
+                alert('❌ تعذر حفظ البيانات في السحابة. تأكد من اتصالك بالإنترنت.');
+            });
+        }
+
+        // استماع للتغييرات في الوقت الفعلي
+        function listenToFirebase() {
+            database.ref('/').on('value', snapshot => {
+                if (state.isSyncing) return; // تجنب الحلقات اللانهائية
+                const data = snapshot.val();
+                if (data && state.initialLoadDone) {
+                    // تحديث البيانات من السحابة
+                    state.professors = data.professors || state.professors;
+                    state.subjects = data.subjects || state.subjects;
+                    state.students = data.students || state.students;
+                    state.attendances = data.attendances || state.attendances;
+                    state.notifications = data.notifications || state.notifications;
+                    renderAll();
+                    const statusEl = document.getElementById('syncStatus');
+                    if (statusEl) statusEl.textContent = '✅ تم التحديث من السحابة';
+                }
+            });
+        }
+
+        // ==============================================================
+        //  دالة الحفظ (تستدعي pushToFirebase)
+        // ==============================================================
+        function saveAll() {
+            pushToFirebase();
+        }
+
+        // ==============================================================
+        //  HASH PASSWORD (SHA-256)
+        // ==============================================================
+        async function hashPassword(password) {
+            const enc = new TextEncoder().encode(password);
+            const hash = await crypto.subtle.digest('SHA-256', enc);
+            return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        // ==============================================================
+        //  INIT (بيانات افتراضية إذا كانت فارغة)
+        // ==============================================================
+        async function initializeDefaultData() {
+            const hasProfessors = state.professors && state.professors.length > 0;
+            if (hasProfessors) return;
+
+            const hash1 = await hashPassword('1234');
+            const hash2 = await hashPassword('5678');
+            state.professors = [
+                { id: 'p_1', name: 'د. أحمد', password: hash1, level: 1 },
+                { id: 'p_2', name: 'د. سارة', password: hash2, level: 1 }
+            ];
+            state.subjects = [{
+                id: 's_1',
+                name: 'ميكانيك I (نظري)',
+                english: 'Mechanics I (Theoretical)',
+                professorId: 'p_1',
+                level: 1,
+                systemType: 'بولونيا',
+                groupType: 'نظري',
+                hoursPerWeek: 3,
+                totalWeeks: 30,
+                totalHours: 90,
+                code: 'PHY101',
+                ects: 7
+            }, {
+                id: 's_2',
+                name: 'كهرباء (عملي)',
+                english: 'Electricity (Practical)',
+                professorId: 'p_2',
+                level: 1,
+                systemType: 'بولونيا',
+                groupType: 'عملي',
+                hoursPerWeek: 3,
+                totalWeeks: 30,
+                totalHours: 90,
+                code: 'PHY102',
+                ects: 7
+            }];
+            state.students = [
+                { id: 'st_1', name: 'علي حسن', section: 'A', group: 'A', phone: '07901234567', guardianPhone: '07801234567', level: 1,
+                    groupType: 'نظري' },
+                { id: 'st_2', name: 'حسين محمد', section: 'A', group: 'A', phone: '07901234568', guardianPhone: '07801234568', level: 1,
+                    groupType: 'نظري' },
+                { id: 'st_3', name: 'زينب علي', section: 'A', group: 'A', phone: '07901234569', guardianPhone: '07801234569', level: 1,
+                    groupType: 'نظري' },
+                { id: 'st_4', name: 'أحمد رشيد', section: 'B', group: 'B', phone: '07901234570', guardianPhone: '07801234570', level: 1,
+                    groupType: 'نظري' },
+                { id: 'st_5', name: 'نورا سامي', section: 'B', group: 'B', phone: '07901234571', guardianPhone: '07801234571', level: 1,
+                    groupType: 'نظري' },
+                { id: 'st_6', name: 'سارة أحمد', section: 'C', group: 'C', phone: '07902345678', guardianPhone: '07802345678', level: 1,
+                    groupType: 'عملي' },
+                { id: 'st_7', name: 'نور حسين', section: 'C', group: 'C', phone: '07902345679', guardianPhone: '07802345679', level: 1,
+                    groupType: 'عملي' },
+                { id: 'st_8', name: 'ليلى عمر', section: 'D', group: 'D', phone: '07902345680', guardianPhone: '07802345680', level: 1,
+                    groupType: 'عملي' },
+                { id: 'st_9', name: 'مروة خالد', section: 'D', group: 'D', phone: '07902345681', guardianPhone: '07802345681', level: 1,
+                    groupType: 'عملي' }
+            ];
+            state.attendances = [
+                { id: 'a_1', studentId: 'st_1', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
+                { id: 'a_2', studentId: 'st_2', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
+                { id: 'a_3', studentId: 'st_3', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
+                { id: 'a_4', studentId: 'st_4', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
+                { id: 'a_5', studentId: 'st_5', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
+                { id: 'a_6', studentId: 'st_6', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
+                { id: 'a_7', studentId: 'st_7', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
+                { id: 'a_8', studentId: 'st_8', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
+                { id: 'a_9', studentId: 'st_9', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
+                { id: 'a_10', studentId: 'st_1', subjectId: 's_1', date: '2026-08-21', hours: 2, excused: 0 },
+                { id: 'a_11', studentId: 'st_6', subjectId: 's_2', date: '2026-08-21', hours: 1.5, excused: 1 }
+            ];
+            state.notifications = [{ msg: '📌 تم إنشاء النظام مع بيانات افتراضية (مشفرة)', time: new Date().toLocaleString() }];
+        }
+
+        // ==============================================================
+        //  EXPORT / IMPORT BACKUP (للحفظ المحلي الاحتياطي)
+        // ==============================================================
         function exportBackup() {
             const data = {
                 professors: state.professors,
@@ -621,7 +791,7 @@
                 attendances: state.attendances,
                 notifications: state.notifications,
                 backupDate: new Date().toISOString(),
-                version: '1.0'
+                version: '2.0'
             };
             const json = JSON.stringify(data, null, 2);
             const blob = new Blob([json], { type: 'application/json' });
@@ -634,7 +804,6 @@
             alert('✅ تم تحميل النسخة الاحتياطية بنجاح.');
         }
 
-        // ========== استعادة نسخة احتياطية ==========
         function restoreBackup(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -655,99 +824,12 @@
                     saveAll();
                     renderAll();
                     alert('✅ تم استعادة النسخة الاحتياطية بنجاح.');
-                } catch(err) {
+                } catch (err) {
                     alert('❌ خطأ: ' + err.message);
                 }
             };
             reader.readAsText(file);
             event.target.value = '';
-        }
-
-        // ==============================================================
-        //  HASH PASSWORD (SHA-256)
-        // ==============================================================
-        async function hashPassword(password) {
-            const enc = new TextEncoder().encode(password);
-            const hash = await crypto.subtle.digest('SHA-256', enc);
-            return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
-        }
-
-        // ==============================================================
-        //  INIT
-        // ==============================================================
-        async function initializeDefaultData() {
-            const hasProfessors = DB.get('professors', null);
-            const hasStudents = DB.get('students', null);
-            const hasSubjects = DB.get('subjects', null);
-            if (hasProfessors && hasProfessors.length > 0 && hasStudents && hasStudents.length > 0 && hasSubjects && hasSubjects.length > 0) return;
-
-            const hash1 = await hashPassword('1234');
-            const hash2 = await hashPassword('5678');
-            const defaultData = {
-                professors: [
-                    { id: 'p_1', name: 'د. أحمد', password: hash1, level: 1 },
-                    { id: 'p_2', name: 'د. سارة', password: hash2, level: 1 }
-                ],
-                subjects: [{
-                    id: 's_1',
-                    name: 'ميكانيك I (نظري)',
-                    english: 'Mechanics I (Theoretical)',
-                    professorId: 'p_1',
-                    level: 1,
-                    systemType: 'بولونيا',
-                    groupType: 'نظري',
-                    hoursPerWeek: 3,
-                    totalWeeks: 30,
-                    totalHours: 90,
-                    code: 'PHY101',
-                    ects: 7
-                }, {
-                    id: 's_2',
-                    name: 'كهرباء (عملي)',
-                    english: 'Electricity (Practical)',
-                    professorId: 'p_2',
-                    level: 1,
-                    systemType: 'بولونيا',
-                    groupType: 'عملي',
-                    hoursPerWeek: 3,
-                    totalWeeks: 30,
-                    totalHours: 90,
-                    code: 'PHY102',
-                    ects: 7
-                }],
-                students: [
-                    { id: 'st_1', name: 'علي حسن', section: 'A', group: 'A', phone: '07901234567', guardianPhone: '07801234567', level: 1, groupType: 'نظري' },
-                    { id: 'st_2', name: 'حسين محمد', section: 'A', group: 'A', phone: '07901234568', guardianPhone: '07801234568', level: 1, groupType: 'نظري' },
-                    { id: 'st_3', name: 'زينب علي', section: 'A', group: 'A', phone: '07901234569', guardianPhone: '07801234569', level: 1, groupType: 'نظري' },
-                    { id: 'st_4', name: 'أحمد رشيد', section: 'B', group: 'B', phone: '07901234570', guardianPhone: '07801234570', level: 1, groupType: 'نظري' },
-                    { id: 'st_5', name: 'نورا سامي', section: 'B', group: 'B', phone: '07901234571', guardianPhone: '07801234571', level: 1, groupType: 'نظري' },
-                    { id: 'st_6', name: 'سارة أحمد', section: 'C', group: 'C', phone: '07902345678', guardianPhone: '07802345678', level: 1, groupType: 'عملي' },
-                    { id: 'st_7', name: 'نور حسين', section: 'C', group: 'C', phone: '07902345679', guardianPhone: '07802345679', level: 1, groupType: 'عملي' },
-                    { id: 'st_8', name: 'ليلى عمر', section: 'D', group: 'D', phone: '07902345680', guardianPhone: '07802345680', level: 1, groupType: 'عملي' },
-                    { id: 'st_9', name: 'مروة خالد', section: 'D', group: 'D', phone: '07902345681', guardianPhone: '07802345681', level: 1, groupType: 'عملي' }
-                ],
-                attendances: [
-                    { id: 'a_1', studentId: 'st_1', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
-                    { id: 'a_2', studentId: 'st_2', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
-                    { id: 'a_3', studentId: 'st_3', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
-                    { id: 'a_4', studentId: 'st_4', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
-                    { id: 'a_5', studentId: 'st_5', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
-                    { id: 'a_6', studentId: 'st_6', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
-                    { id: 'a_7', studentId: 'st_7', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
-                    { id: 'a_8', studentId: 'st_8', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
-                    { id: 'a_9', studentId: 'st_9', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
-                    { id: 'a_10', studentId: 'st_1', subjectId: 's_1', date: '2026-08-21', hours: 2, excused: 0 },
-                    { id: 'a_11', studentId: 'st_6', subjectId: 's_2', date: '2026-08-21', hours: 1.5, excused: 1 }
-                ],
-                notifications: [{ msg: '📌 تم إنشاء النظام مع بيانات افتراضية (مشفرة)', time: new Date().toLocaleString() }]
-            };
-
-            if (!hasProfessors || hasProfessors.length === 0) DB.set('professors', defaultData.professors);
-            if (!hasStudents || hasStudents.length === 0) DB.set('students', defaultData.students);
-            if (!hasSubjects || hasSubjects.length === 0) DB.set('subjects', defaultData.subjects);
-            if (!DB.get('attendances', null) || DB.get('attendances', []).length === 0) DB.set('attendances', defaultData.attendances);
-            if (!DB.get('notifications', null) || DB.get('notifications', []).length === 0) DB.set('notifications', defaultData.notifications);
-            DB.set('lastBackupTime', new Date().toISOString());
         }
 
         // ==============================================================
@@ -764,13 +846,15 @@
             if (username === 'admin') {
                 if (await hashPassword(password) === adminHash) {
                     state.currentUser = { role: 'admin', id: 'admin', name: 'رئيس القسم' };
-                    enterApp(); return;
+                    enterApp();
+                    return;
                 }
             }
             if (username === 'officer') {
                 if (await hashPassword(password) === officerHash) {
                     state.currentUser = { role: 'officer', id: 'officer', name: 'مسؤول الغيابات' };
-                    enterApp(); return;
+                    enterApp();
+                    return;
                 }
             }
 
@@ -783,7 +867,8 @@
                     }
                     if (await hashPassword(password) === prof.password) {
                         state.currentUser = { role: 'professor', id: prof.id, name: prof.name };
-                        enterApp(); return;
+                        enterApp();
+                        return;
                     }
                 }
             }
@@ -800,16 +885,6 @@
             document.getElementById('currentUserDisplay').innerText = '👤 ' + state.currentUser.name;
             renderAll();
             setAutoDateRange();
-            // إضافة عنصر حالة الحفظ
-            const saveStatus = document.createElement('div');
-            saveStatus.id = 'saveStatus';
-            saveStatus.style.cssText = 'position:fixed; bottom:70px; left:50%; transform:translateX(-50%); background:#1a3a5e; color:white; padding:6px 18px; border-radius:30px; font-size:12px; z-index:9999; box-shadow:0 2px 10px rgba(0,0,0,0.2); display:none;';
-            document.body.appendChild(saveStatus);
-            // إظهار رسالة ترحيب
-            const lastBackup = DB.get('lastBackupTime', null);
-            if (lastBackup) {
-                console.log('📅 آخر نسخة احتياطية: ' + new Date(lastBackup).toLocaleString());
-            }
         }
 
         function logout() {
@@ -817,85 +892,17 @@
             document.getElementById('appContainer').classList.add('hidden');
             document.getElementById('loginPage').classList.remove('hidden');
             document.getElementById('loginPassword').value = '';
-            if (state.chartInstance) { state.chartInstance.destroy(); state.chartInstance = null; }
+            if (state.chartInstance) { state.chartInstance.destroy();
+                state.chartInstance = null; }
             if (html5QrCode) {
-                try { html5QrCode.stop(); html5QrCode.clear(); } catch(e) {}
+                try { html5QrCode.stop();
+                    html5QrCode.clear(); } catch (e) {}
                 html5QrCode = null;
             }
-            const statusEl = document.getElementById('saveStatus');
-            if (statusEl) statusEl.remove();
         }
 
         // ==============================================================
-        //  EXPORT / IMPORT (الوظائف العادية)
-        // ==============================================================
-        function exportData() {
-            const data = { professors: state.professors, subjects: state.subjects, students: state.students, attendances: state.attendances, notifications: state.notifications };
-            const json = JSON.stringify(data, null, 2);
-            const blob = new Blob([json], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'بيانات_الغيابات_' + new Date().toLocaleDateString() + '.json';
-            a.click();
-            URL.revokeObjectURL(url);
-            alert('✅ تم تصدير البيانات بنجاح!');
-        }
-
-        function importData(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const data = JSON.parse(e.target.result);
-                    if (!data.professors || !data.subjects || !data.students) { alert('❌ الملف غير صالح.'); return; }
-                    if (!confirm('⚠️ سيتم استبدال جميع البيانات الحالية. هل أنت متأكد؟')) return;
-                    state.professors = data.professors || [];
-                    state.subjects = data.subjects || [];
-                    state.students = data.students || [];
-                    state.attendances = data.attendances || [];
-                    state.notifications = data.notifications || [];
-                    saveAll();
-                    renderAll();
-                    alert('✅ تم استيراد البيانات بنجاح!');
-                } catch(err) { alert('❌ خطأ: ' + err.message); }
-            };
-            reader.readAsText(file);
-            event.target.value = '';
-        }
-
-        function exportToExcel(levelOnly = false) {
-            let filteredAttendances = state.attendances;
-            if (levelOnly && state.currentLevel) {
-                const studentIdsInLevel = state.students.filter(st => st.level === state.currentLevel).map(st => st.id);
-                const subjectIdsInLevel = state.subjects.filter(s => s.level === state.currentLevel).map(s => s.id);
-                filteredAttendances = state.attendances.filter(a => studentIdsInLevel.includes(a.studentId) && subjectIdsInLevel.includes(a.subjectId));
-                if (filteredAttendances.length === 0) { alert('⚠️ لا توجد غيابات مسجلة للمرحلة ' + getLevelName(state.currentLevel)); return; }
-            } else if (state.attendances.length === 0) { alert('⚠️ لا توجد غيابات لتصديرها.'); return; }
-
-            const data = filteredAttendances.map(a => {
-                const student = state.students.find(s => s.id === a.studentId);
-                const subject = state.subjects.find(s => s.id === a.subjectId);
-                return {
-                    'الطالب': student ? student.name : 'غير معروف',
-                    'المادة': subject ? subject.name : 'غير معروفة',
-                    'التاريخ': a.date,
-                    'عدد الساعات': a.hours,
-                    'النوع': a.excused === 1 ? 'بعذر' : 'بدون عذر',
-                    'المرحلة': subject ? getLevelName(subject.level) : '-',
-                    'الشعبة': student ? student.group || student.section : '-'
-                };
-            });
-            const ws = XLSX.utils.json_to_sheet(data);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'الغيابات');
-            XLSX.writeFile(wb, `تقرير_الغيابات_${new Date().toISOString().split('T')[0]}.xlsx`);
-            alert('✅ تم تصدير ملف Excel بنجاح!');
-        }
-
-        // ==============================================================
-        //  📤 استيراد الطلاب من Excel
+        //  IMPORT STUDENTS FROM EXCEL
         // ==============================================================
         function importStudentsFromExcel(event) {
             const file = event.target.files[0];
@@ -969,7 +976,7 @@
                     }
                     alert(`✅ تم استيراد ${added} طالب بنجاح!`);
 
-                } catch(err) {
+                } catch (err) {
                     statusDiv.textContent = '❌ خطأ: ' + err.message;
                     alert('❌ حدث خطأ أثناء قراءة الملف: ' + err.message);
                 }
@@ -978,9 +985,6 @@
             event.target.value = '';
         }
 
-        // ==============================================================
-        //  📄 تحميل نموذج Excel للطلاب
-        // ==============================================================
         function downloadStudentsTemplate() {
             const template = [
                 { name: 'علي حسن', group: 'A', groupType: 'نظري', level: 1, phone: '07901234567', guardianPhone: '07801234567' },
@@ -994,7 +998,7 @@
         }
 
         // ==============================================================
-        //  RENDER ENGINE
+        //  RENDER ENGINE (معظمه مختصر للحفاظ على الطول)
         // ==============================================================
         function renderAll() {
             if (!state.currentUser) return;
@@ -1089,11 +1093,9 @@
         }
 
         function getLevelSystem(level) { return level === 1 ? 'بولونيا' : 'سنوي'; }
+
         function getLevelIcon(level) { const icons = { 1: '🟦', 2: '🟩', 3: '🟧' }; return icons[level] || '📚'; }
 
-        // ==============================================================
-        //  دالة حساب حالة الغياب
-        // ==============================================================
         function getStatus(unexcusedPct, totalPct) {
             if (unexcusedPct > 10) return 'راسب';
             if (totalPct > 15) return 'راسب';
@@ -1103,7 +1105,7 @@
         }
 
         // ==============================================================
-        //  ADMIN FUNCTIONS (مختصرة - كما هي)
+        //  ADMIN FUNCTIONS (مختصرة)
         // ==============================================================
         let currentManagementLevel = null;
 
@@ -1158,7 +1160,8 @@
             const stats = getLevelStats(level);
             const system = getLevelSystem(level);
             const systemLabel = system === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي';
-            document.getElementById('levelDetailTitle').innerHTML = `${getLevelIcon(level)} ${getLevelName(level)} - ${systemLabel} <span style="font-size:0.7rem;font-weight:normal;">(${stats.subjectCount} مواد | ${stats.studentCount} طلاب | ${stats.professorCount} أساتذة)</span>`;
+            document.getElementById('levelDetailTitle').innerHTML =
+                `${getLevelIcon(level)} ${getLevelName(level)} - ${systemLabel} <span style="font-size:0.7rem;font-weight:normal;">(${stats.subjectCount} مواد | ${stats.studentCount} طلاب | ${stats.professorCount} أساتذة)</span>`;
             showLevelGroups(level);
             document.querySelectorAll('.level-detail-tabs button').forEach(btn => btn.classList.remove('active-tab'));
             document.getElementById('tab-groups').classList.add('active-tab');
@@ -1185,17 +1188,9 @@
             renderLevels();
         }
 
-        function getGroupsForLevel(level, groupType) {
-            const students = state.students.filter(st => st.level === level && st.groupType === groupType);
-            const groups = {};
-            students.forEach(st => {
-                const groupName = st.group || st.section || 'غير محدد';
-                if (!groups[groupName]) groups[groupName] = [];
-                groups[groupName].push(st);
-            });
-            return groups;
-        }
-
+        // ==============================================================
+        //  عرض الشعب، المواد، الطلاب، الأساتذة (نفسها)
+        // ==============================================================
         function showLevelGroups(level) {
             const container = document.getElementById('levelDetailContent');
             const theoreticalGroups = getGroupsForLevel(level, 'نظري');
@@ -1215,12 +1210,25 @@
                 }
                 html += `</div>`;
             }
-            if (!html) html = `<div class="card"><p style="color:#a0aec0; text-align:center; padding:15px;">📭 لا توجد شعب مسجلة في هذه المرحلة</p></div>`;
+            if (!html) html =
+                `<div class="card"><p style="color:#a0aec0; text-align:center; padding:15px;">📭 لا توجد شعب مسجلة في هذه المرحلة</p></div>`;
             container.innerHTML = html;
         }
 
+        function getGroupsForLevel(level, groupType) {
+            const students = state.students.filter(st => st.level === level && st.groupType === groupType);
+            const groups = {};
+            students.forEach(st => {
+                const groupName = st.group || st.section || 'غير محدد';
+                if (!groups[groupName]) groups[groupName] = [];
+                groups[groupName].push(st);
+            });
+            return groups;
+        }
+
         function createGroupCard(groupName, students, level, groupType) {
-            const icons = { 'A': '🟦', 'B': '🟩', 'C': '🟧', 'D': '🟥', 'A1': '🔵', 'A2': '🟢', 'A3': '🟠', 'A4': '🔴', 'B1': '🟣', 'B2': '🟡', 'B3': '🟤', 'B4': '⚪' };
+            const icons = { 'A': '🟦', 'B': '🟩', 'C': '🟧', 'D': '🟥', 'A1': '🔵', 'A2': '🟢', 'A3': '🟠', 'A4': '🔴', 'B1': '🟣',
+                'B2': '🟡', 'B3': '🟤', 'B4': '⚪' };
             const icon = icons[groupName] || '📚';
             let html = `
                 <div class="group-card">
@@ -1255,7 +1263,8 @@
             const studentName = prompt(`إضافة طالب جديد إلى الشعبة ${groupName}:`);
             if (!studentName) return;
             const id = 'st_' + Date.now();
-            state.students.push({ id, name: studentName, section: groupName, group: groupName, phone: '', guardianPhone: '', level, groupType });
+            state.students.push({ id, name: studentName, section: groupName, group: groupName, phone: '', guardianPhone: '', level,
+                groupType });
             saveAll();
             linkStudentsToSubjects();
             renderAdmin();
@@ -1288,16 +1297,19 @@
         function showLevelSubjects(level, stats) {
             const container = document.getElementById('levelDetailContent');
             if (stats.subjects.length === 0) {
-                container.innerHTML = `<div class="card"><p style="color:#a0aec0; text-align:center; padding:12px;">📭 لا توجد مواد مسجلة</p></div>`;
+                container.innerHTML =
+                    `<div class="card"><p style="color:#a0aec0; text-align:center; padding:12px;">📭 لا توجد مواد مسجلة</p></div>`;
                 return;
             }
-            let html = `<div class="card"><h4>📘 مواد ${getLevelName(level)}</h4><div class="table-wrapper"><table>
+            let html =
+                `<div class="card"><h4>📘 مواد ${getLevelName(level)}</h4><div class="table-wrapper"><table>
                 <tr><th>#</th><th>المادة</th><th>النوع</th><th>س/أسبوع</th><th>الأستاذ</th><th>ECTS</th></tr>`;
             stats.subjects.forEach((sub, idx) => {
                 const prof = state.professors.find(p => p.id === sub.professorId);
                 const typeIcon = sub.groupType === 'نظري' ? '📖' : sub.groupType === 'عملي' ? '🔬' : '📖🔬';
                 const typeClass = sub.groupType === 'نظري' ? 'bg-blue' : sub.groupType === 'عملي' ? 'bg-green' : 'bg-purple';
-                html += `<tr><td>${idx + 1}</td><td>${sub.name}</td><td><span class="badge ${typeClass}">${typeIcon} ${sub.groupType}</span></td><td>${sub.hoursPerWeek}</td><td>${prof ? prof.name : 'غير معين'}</td><td>${sub.ects || '-'}</td></tr>`;
+                html +=
+                    `<tr><td>${idx + 1}</td><td>${sub.name}</td><td><span class="badge ${typeClass}">${typeIcon} ${sub.groupType}</span></td><td>${sub.hoursPerWeek}</td><td>${prof ? prof.name : 'غير معين'}</td><td>${sub.ects || '-'}</td></tr>`;
             });
             html += `</table></div></div>`;
             container.innerHTML = html;
@@ -1306,13 +1318,16 @@
         function showLevelStudents(level, stats) {
             const container = document.getElementById('levelDetailContent');
             if (stats.students.length === 0) {
-                container.innerHTML = `<div class="card"><p style="color:#a0aec0; text-align:center; padding:12px;">👨‍🎓 لا يوجد طلاب مسجلين</p></div>`;
+                container.innerHTML =
+                    `<div class="card"><p style="color:#a0aec0; text-align:center; padding:12px;">👨‍🎓 لا يوجد طلاب مسجلين</p></div>`;
                 return;
             }
-            let html = `<div class="card"><h4>👨‍🎓 طلاب ${getLevelName(level)}</h4><div class="table-wrapper"><table>
+            let html =
+                `<div class="card"><h4>👨‍🎓 طلاب ${getLevelName(level)}</h4><div class="table-wrapper"><table>
                 <tr><th>#</th><th>الاسم</th><th>الشعبة</th><th>المجموعة</th><th>تليفون</th><th>ولي الأمر</th></tr>`;
             stats.students.forEach((st, idx) => {
-                html += `<tr><td>${idx + 1}</td><td>${st.name}</td><td>${st.group || st.section || '-'}</td><td>${st.groupType}</td><td>${st.phone || '-'}</td><td>${st.guardianPhone || '-'}</td></tr>`;
+                html +=
+                    `<tr><td>${idx + 1}</td><td>${st.name}</td><td>${st.group || st.section || '-'}</td><td>${st.groupType}</td><td>${st.phone || '-'}</td><td>${st.guardianPhone || '-'}</td></tr>`;
             });
             html += `</table></div></div>`;
             container.innerHTML = html;
@@ -1321,10 +1336,12 @@
         function showLevelProfessors(level, stats) {
             const container = document.getElementById('levelDetailContent');
             if (stats.professors.length === 0) {
-                container.innerHTML = `<div class="card"><p style="color:#a0aec0; text-align:center; padding:12px;">👨‍🏫 لا يوجد أساتذة</p></div>`;
+                container.innerHTML =
+                    `<div class="card"><p style="color:#a0aec0; text-align:center; padding:12px;">👨‍🏫 لا يوجد أساتذة</p></div>`;
                 return;
             }
-            let html = `<div class="card"><h4>👨‍🏫 أساتذة ${getLevelName(level)}</h4><div class="table-wrapper"><table>
+            let html =
+                `<div class="card"><h4>👨‍🏫 أساتذة ${getLevelName(level)}</h4><div class="table-wrapper"><table>
                 <tr><th>#</th><th>الاسم</th><th>كلمة المرور</th><th>المواد</th></tr>`;
             stats.professors.forEach((prof, idx) => {
                 const profSubjects = stats.subjects.filter(s => s.professorId === prof.id);
@@ -1332,7 +1349,8 @@
                 const passDisplay = state.currentUser.role === 'admin' ?
                     `<span style="font-family:monospace;background:#edf2f7;padding:2px 6px;border-radius:4px;font-size:10px;">${prof.password.substring(0,8)}...</span>` :
                     `<span class="password-hidden"></span>`;
-                html += `<tr><td>${idx + 1}</td><td>${prof.name}</td><td>${passDisplay}</td><td style="font-size:11px;">${subjectsNames}</td></tr>`;
+                html +=
+                    `<tr><td>${idx + 1}</td><td>${prof.name}</td><td>${passDisplay}</td><td style="font-size:11px;">${subjectsNames}</td></tr>`;
             });
             html += `</table></div></div>`;
             container.innerHTML = html;
@@ -1403,26 +1421,35 @@
             setTimeout(() => {
                 const canvas = document.getElementById('levelChart');
                 if (!canvas) return;
-                if (state.chartInstance) { state.chartInstance.destroy(); state.chartInstance = null; }
+                if (state.chartInstance) { state.chartInstance.destroy();
+                    state.chartInstance = null; }
                 const ctx = canvas.getContext('2d');
                 state.chartInstance = new Chart(ctx, {
                     type: 'bar',
-                    data: { labels, datasets: [{ label: 'ساعات الغياب', data: dataValues, backgroundColor: colors, borderColor: '#2d3748', borderWidth: 1 }] },
+                    data: { labels, datasets: [{ label: 'ساعات الغياب', data: dataValues, backgroundColor: colors,
+                            borderColor: '#2d3748', borderWidth: 1 }] },
                     options: {
                         responsive: true,
                         maintainAspectRatio: true,
-                        plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(context) { return context.raw + ' ساعة'; } } } },
-                        scales: { y: { beginAtZero: true, title: { display: true, text: 'عدد الساعات' } }, x: { ticks: { maxRotation: 45, minRotation: 30 } } }
+                        plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(context) {
+                                    return context.raw + ' ساعة';
+                                } } } },
+                        scales: { y: { beginAtZero: true, title: { display: true, text: 'عدد الساعات' } },
+                        x: { ticks: { maxRotation: 45, minRotation: 30 } } }
                     }
                 });
             }, 100);
         }
 
+        // ==============================================================
+        //  إدارة المرحلة (نوافذ منبثقة)
+        // ==============================================================
         function openLevelManagement(level) {
             currentManagementLevel = level;
             const modal = document.getElementById('levelManagementModal');
             modal.classList.add('active');
-            document.getElementById('levelManagementTitle').innerHTML = `📚 إدارة ${getLevelName(level)} - ${getLevelSystem(level) === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي'}`;
+            document.getElementById('levelManagementTitle').innerHTML =
+                `📚 إدارة ${getLevelName(level)} - ${getLevelSystem(level) === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي'}`;
             renderLevelProfessors(level);
             renderLevelSubjects(level);
             populateLevelSubjectSelect(level);
@@ -1438,7 +1465,8 @@
             const container = document.getElementById('levelProfessorsList');
             const stats = getLevelStats(level);
             if (stats.professors.length === 0) {
-                container.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px; font-size:12px;">لا يوجد أساتذة</p>';
+                container.innerHTML =
+                    '<p style="color:#a0aec0; text-align:center; padding:8px; font-size:12px;">لا يوجد أساتذة</p>';
                 return;
             }
             let html = '';
@@ -1463,7 +1491,8 @@
             const container = document.getElementById('levelSubjectsList');
             const stats = getLevelStats(level);
             if (stats.subjects.length === 0) {
-                container.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px; font-size:12px;">لا توجد مواد</p>';
+                container.innerHTML =
+                    '<p style="color:#a0aec0; text-align:center; padding:8px; font-size:12px;">لا توجد مواد</p>';
                 return;
             }
             let html = '';
@@ -1515,13 +1544,16 @@
             if (!professorId) { alert('يرجى اختيار أستاذ مسؤول للمادة'); return; }
             const systemType = level === 1 ? 'بولونيا' : 'سنوي';
             const id = 's_' + Date.now();
-            state.subjects.push({ id, name, english: name, professorId, level, systemType, groupType: type, hoursPerWeek: hours, totalWeeks: 30, totalHours: hours * 30, code: '', ects: 0 });
+            state.subjects.push({ id, name, english: name, professorId, level, systemType, groupType: type, hoursPerWeek: hours,
+                totalWeeks: 30, totalHours: hours * 30, code: '', ects: 0 });
             saveAll();
             const studentsInLevel = state.students.filter(s => s.level === level && s.groupType === type);
             studentsInLevel.forEach(student => {
                 const existing = state.attendances.some(a => a.studentId === student.id && a.subjectId === id);
                 if (!existing) {
-                    state.attendances.push({ id: 'a_link_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4), studentId: student.id, subjectId: id, date: new Date().toISOString().split('T')[0], hours: 0, excused: 0 });
+                    state.attendances.push({ id: 'a_link_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+                        studentId: student.id, subjectId: id, date: new Date().toISOString().split('T')[0], hours: 0,
+                        excused: 0 });
                 }
             });
             document.getElementById('newSubjectName').value = '';
@@ -1668,13 +1700,19 @@
             if (!subjectData) { alert('لم يتم العثور على المادة في المنهج'); return; }
             const systemType = currentManagementLevel === 1 ? 'بولونيا' : 'سنوي';
             const id = 's_' + Date.now();
-            state.subjects.push({ id, name: subjectData.name, english: subjectData.english || '', professorId, level: currentManagementLevel, systemType, groupType: subjectData.type || 'نظري', hoursPerWeek: subjectData.hours || 2, totalWeeks: 30, totalHours: (subjectData.hours || 2) * 30, code: subjectData.code || '', ects: subjectData.ects || 0 });
+            state.subjects.push({ id, name: subjectData.name, english: subjectData.english || '', professorId,
+                level: currentManagementLevel, systemType, groupType: subjectData.type || 'نظري',
+                hoursPerWeek: subjectData.hours || 2, totalWeeks: 30, totalHours: (subjectData.hours || 2) * 30,
+                code: subjectData.code || '', ects: subjectData.ects || 0 });
             saveAll();
-            const studentsInLevel = state.students.filter(s => s.level === currentManagementLevel && s.groupType === subjectData.type);
+            const studentsInLevel = state.students.filter(s => s.level === currentManagementLevel && s.groupType === subjectData
+                .type);
             studentsInLevel.forEach(student => {
                 const existing = state.attendances.some(a => a.studentId === student.id && a.subjectId === id);
                 if (!existing) {
-                    state.attendances.push({ id: 'a_link_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4), studentId: student.id, subjectId: id, date: new Date().toISOString().split('T')[0], hours: 0, excused: 0 });
+                    state.attendances.push({ id: 'a_link_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+                        studentId: student.id, subjectId: id, date: new Date().toISOString().split('T')[0], hours: 0,
+                        excused: 0 });
                 }
             });
             renderLevelSubjects(currentManagementLevel);
@@ -1769,11 +1807,15 @@
             let linkedCount = 0;
             let alreadyLinked = 0;
             state.students.forEach(student => {
-                const matchingSubjects = state.subjects.filter(s => s.level === student.level && s.groupType === student.groupType);
+                const matchingSubjects = state.subjects.filter(s => s.level === student.level && s.groupType === student
+                    .groupType);
                 matchingSubjects.forEach(subject => {
-                    const existing = state.attendances.some(a => a.studentId === student.id && a.subjectId === subject.id);
+                    const existing = state.attendances.some(a => a.studentId === student.id && a.subjectId ===
+                        subject.id);
                     if (!existing) {
-                        state.attendances.push({ id: 'a_link_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4), studentId: student.id, subjectId: subject.id, date: new Date().toISOString().split('T')[0], hours: 0, excused: 0 });
+                        state.attendances.push({ id: 'a_link_' + Date.now() + '_' + Math.random().toString(36)
+                                .substr(2, 4), studentId: student.id, subjectId: subject.id, date: new Date()
+                                .toISOString().split('T')[0], hours: 0, excused: 0 });
                         linkedCount++;
                     } else { alreadyLinked++; }
                 });
@@ -1787,18 +1829,16 @@
         }
 
         function resetAllData() {
-            if (!confirm('⚠️ تحذير: سيتم حذف جميع البيانات الحالية. هل أنت متأكد؟')) return;
+            if (!confirm('⚠️ تحذير: سيتم حذف جميع البيانات الحالية من السحابة. هل أنت متأكد؟')) return;
             if (!confirm('تأكيد نهائي: هل أنت متأكد من رغبتك في حذف جميع البيانات؟')) return;
-            localStorage.clear();
-            initializeDefaultData().then(() => {
-                state.professors = DB.get('professors', []);
-                state.subjects = DB.get('subjects', []);
-                state.students = DB.get('students', []);
-                state.attendances = DB.get('attendances', []);
-                state.notifications = DB.get('notifications', []);
-                renderAll();
-                alert('✅ تم إعادة ضبط جميع البيانات');
-            });
+            state.professors = [];
+            state.subjects = [];
+            state.students = [];
+            state.attendances = [];
+            state.notifications = [];
+            saveAll();
+            renderAll();
+            alert('✅ تم إعادة ضبط جميع البيانات');
         }
 
         function showAddLevelPanel() {
@@ -1814,7 +1854,7 @@
         }
 
         // ==============================================================
-        //  OFFICER (نفسه)
+        //  OFFICER (مختصر)
         // ==============================================================
         function renderOfficer() {
             if (state.currentLevel) {
@@ -1862,7 +1902,8 @@
             const stats = getLevelStats(level);
             const system = getLevelSystem(level);
             const systemLabel = system === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي';
-            document.getElementById('officerLevelDetailTitle').innerHTML = `${getLevelIcon(level)} ${getLevelName(level)} - ${systemLabel} <span style="font-size:0.7rem;font-weight:normal;">(${stats.studentCount} طلاب | ${stats.subjectCount} مواد)</span>`;
+            document.getElementById('officerLevelDetailTitle').innerHTML =
+                `${getLevelIcon(level)} ${getLevelName(level)} - ${systemLabel} <span style="font-size:0.7rem;font-weight:normal;">(${stats.studentCount} طلاب | ${stats.subjectCount} مواد)</span>`;
             document.querySelectorAll('#officerDetailContent .tab-pane').forEach(el => el.classList.remove('active'));
             switchOfficerTab('reports');
         }
@@ -1873,11 +1914,12 @@
             document.getElementById('officerLevelDetailView').classList.remove('active');
             document.getElementById('officerLevelView').classList.remove('hidden');
             renderOfficerLevels();
-            if (state.chartInstance) { state.chartInstance.destroy(); state.chartInstance = null; }
+            if (state.chartInstance) { state.chartInstance.destroy();
+                state.chartInstance = null; }
         }
 
         // ==============================================================
-        //  OFFICER TABS (مطور)
+        //  OFFICER TABS
         // ==============================================================
         function switchOfficerTab(tab) {
             document.querySelectorAll('.level-detail-tabs button').forEach(btn => btn.classList.remove('active-tab'));
@@ -1929,7 +1971,7 @@
                 document.getElementById('reportPrintDate').innerText = new Date().toLocaleDateString('ar-EG');
                 updateReportDateDisplay();
                 renderOfficerReport(level);
-                
+
                 document.getElementById('reportDateFrom').addEventListener('change', function() {
                     updateReportDateDisplay();
                     if (state.currentLevel) renderOfficerReport(state.currentLevel);
@@ -1940,6 +1982,7 @@
                 });
 
             } else if (tab === 'statistics') {
+                // مشابه للاحصائيات السابقة
                 const students = state.students.filter(st => st.level === level);
                 if (students.length === 0) {
                     container.innerHTML = `<div class="card"><p style="color:#a0aec0;">لا يوجد طلاب لعرض الإحصائيات</p></div>`;
@@ -1992,16 +2035,21 @@
                 setTimeout(() => {
                     const canvas = document.getElementById('officerChart');
                     if (!canvas) return;
-                    if (state.chartInstance) { state.chartInstance.destroy(); state.chartInstance = null; }
+                    if (state.chartInstance) { state.chartInstance.destroy();
+                        state.chartInstance = null; }
                     const ctx = canvas.getContext('2d');
                     state.chartInstance = new Chart(ctx, {
                         type: 'bar',
-                        data: { labels, datasets: [{ label: 'ساعات الغياب', data: dataValues, backgroundColor: colors, borderColor: '#2d3748', borderWidth: 1 }] },
+                        data: { labels, datasets: [{ label: 'ساعات الغياب', data: dataValues,
+                                backgroundColor: colors, borderColor: '#2d3748', borderWidth: 1 }] },
                         options: {
                             responsive: true,
                             maintainAspectRatio: true,
-                            plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(context) { return context.raw + ' ساعة'; } } } },
-                            scales: { y: { beginAtZero: true, title: { display: true, text: 'عدد الساعات' } }, x: { ticks: { maxRotation: 45, minRotation: 30 } } }
+                            plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(
+                                        context) { return context.raw + ' ساعة'; } } } },
+                            scales: { y: { beginAtZero: true, title: { display: true,
+                                        text: 'عدد الساعات' } }, x: { ticks: { maxRotation: 45,
+                                        minRotation: 30 } } }
                         }
                     });
                 }, 100);
@@ -2038,22 +2086,7 @@
         }
 
         // ==============================================================
-        //  دالتا تطبيق ومسح الفلترة الزمنية
-        // ==============================================================
-        function applyDateFilter() {
-            updateReportDateDisplay();
-            if (state.currentLevel) renderOfficerReport(state.currentLevel);
-        }
-
-        function clearDateFilter() {
-            document.getElementById('reportDateFrom').value = '';
-            document.getElementById('reportDateTo').value = '';
-            updateReportDateDisplay();
-            if (state.currentLevel) renderOfficerReport(state.currentLevel);
-        }
-
-        // ==============================================================
-        //  📊 OFFICER REPORT (نفسه)
+        //  دوال التقارير (Officer Reports)
         // ==============================================================
         function getReportSubjects(level) {
             let curriculumSubjects = [];
@@ -2116,14 +2149,14 @@
                 .filter(a => Number(a.excused) === 1)
                 .reduce((sum, a) => sum + (Number(a.hours) || 0), 0);
 
-            const annualCourseHours = Number(subject.totalHours) > 0
-                ? Number(subject.totalHours)
-                : (Number(subject.hoursPerWeek) || 1) * (Number(subject.totalWeeks) || 30);
+            const annualCourseHours = Number(subject.totalHours) > 0 ?
+                Number(subject.totalHours) :
+                (Number(subject.hoursPerWeek) || 1) * (Number(subject.totalWeeks) || 30);
 
-            const absencePercentage = annualCourseHours > 0
-                ? (totalAbsentHours / annualCourseHours) * 100 : 0;
-            const unexcusedPercentage = annualCourseHours > 0
-                ? (unexcusedHours / annualCourseHours) * 100 : 0;
+            const absencePercentage = annualCourseHours > 0 ?
+                (totalAbsentHours / annualCourseHours) * 100 : 0;
+            const unexcusedPercentage = annualCourseHours > 0 ?
+                (unexcusedHours / annualCourseHours) * 100 : 0;
 
             const status = getStatus(unexcusedPercentage, absencePercentage);
             return { records, totalAbsentHours, unexcusedHours, excusedHours,
@@ -2131,10 +2164,10 @@
         }
 
         function getStatusStyle(status) {
-            if (status === 'راسب') return { cls:'status-fail', bg:'#fed7d7', fg:'#9b2c2c' };
-            if (status === 'إنذار نهائي') return { cls:'status-final-warning', bg:'#feebc8', fg:'#7b341e' };
-            if (status === 'إنذار أولي') return { cls:'status-first-warning', bg:'#fefcbf', fg:'#744210' };
-            return { cls:'status-good', bg:'#c6f6d5', fg:'#22543d' };
+            if (status === 'راسب') return { cls: 'status-fail', bg: '#fed7d7', fg: '#9b2c2c' };
+            if (status === 'إنذار نهائي') return { cls: 'status-final-warning', bg: '#feebc8', fg: '#7b341e' };
+            if (status === 'إنذار أولي') return { cls: 'status-first-warning', bg: '#fefcbf', fg: '#744210' };
+            return { cls: 'status-good', bg: '#c6f6d5', fg: '#22543d' };
         }
 
         function renderOfficerReport(level) {
@@ -2175,14 +2208,19 @@
                             <thead><tr><th>اسم الطالب</th>${finalSubjects.map(s => `<th title="${s.name}">${s.name}</th>`).join('')}</tr></thead>
                             <tbody>`;
 
-            const sortedStudents = [...studentsInLevel].sort((a,b) => a.name.localeCompare(b.name, 'ar'));
+            const sortedStudents = [...studentsInLevel].sort((a, b) => a.name.localeCompare(b.name, 'ar'));
             sortedStudents.forEach(st => {
                 html += `<tr><td class="student-name">${st.name}</td>`;
                 finalSubjects.forEach(sub => {
                     const d = sub._curriculumOnly ? {
-                        totalAbsentHours:0, unexcusedHours:0, excusedHours:0,
-                        annualCourseHours:Number(sub.totalHours)||((Number(sub.hoursPerWeek)||1)*(Number(sub.totalWeeks)||30)),
-                        absencePercentage:0, unexcusedPercentage:0, status:'جيد'
+                        totalAbsentHours: 0,
+                        unexcusedHours: 0,
+                        excusedHours: 0,
+                        annualCourseHours: Number(sub.totalHours) || ((Number(sub.hoursPerWeek) || 1) * (
+                            Number(sub.totalWeeks) || 30)),
+                        absencePercentage: 0,
+                        unexcusedPercentage: 0,
+                        status: 'جيد'
                     } : calculateAnnualAbsence(st.id, sub);
                     const style = getStatusStyle(d.status);
                     const pct = d.absencePercentage.toFixed(1);
@@ -2208,16 +2246,12 @@
             container.innerHTML = html;
         }
 
-        // ==============================================================
-        //  📄 تصدير التقرير إلى PDF متعدد الصفحات
-        // ==============================================================
         function exportOfficerReportPDF() {
             const element = document.getElementById('printable-report');
             if (!element) {
                 alert('⚠️ لا يوجد تقرير لتصديره. الرجاء اختيار مرحلة أولاً.');
                 return;
             }
-
             const btns = document.querySelectorAll('.btn-pdf, .btn-print, .btn-excel');
             btns.forEach(b => b.style.display = 'none');
 
@@ -2231,44 +2265,34 @@
             }).then(canvas => {
                 const { jsPDF } = window.jspdf;
                 const pdf = new jsPDF('l', 'mm', 'a4');
-
                 const pageW = pdf.internal.pageSize.getWidth();
                 const pageH = pdf.internal.pageSize.getHeight();
                 const margin = 7;
                 const usableW = pageW - (margin * 2);
                 const usableH = pageH - (margin * 2);
-
                 const scale = usableW / canvas.width;
                 const slicePx = Math.floor(usableH / scale);
-
                 let y = 0;
                 let page = 0;
-
                 while (y < canvas.height) {
                     if (page > 0) pdf.addPage();
-
                     const h = Math.min(slicePx, canvas.height - y);
                     const pageCanvas = document.createElement('canvas');
                     pageCanvas.width = canvas.width;
                     pageCanvas.height = h;
-
                     const ctx = pageCanvas.getContext('2d');
                     ctx.fillStyle = '#ffffff';
                     ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
                     ctx.drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
-
                     const imgData = pageCanvas.toDataURL('image/png');
                     const imgH = h * scale;
                     pdf.addImage(imgData, 'PNG', margin, margin, usableW, imgH, undefined, 'FAST');
-
                     y += h;
                     page++;
                 }
-
                 const levelName = getLevelName(state.currentLevel) || 'المرحلة';
                 const date = new Date().toISOString().split('T')[0];
                 pdf.save(`تقرير_الغيابات_التراكمي_${levelName}_${date}.pdf`);
-
                 btns.forEach(b => b.style.display = '');
                 alert(`✅ تم إنشاء تقرير PDF بنجاح (${page} صفحة).`);
             }).catch(err => {
@@ -2277,36 +2301,28 @@
             });
         }
 
-        // ==============================================================
-        //  📊 تصدير التقرير إلى Excel
-        // ==============================================================
         function exportOfficerReportExcel() {
             const level = state.currentLevel;
             if (!level) { alert('الرجاء اختيار مرحلة أولاً'); return; }
-            
             const studentsInLevel = state.students.filter(st => st.level === level);
             if (studentsInLevel.length === 0) { alert('لا يوجد طلاب في هذه المرحلة'); return; }
-            
             const finalSubjects = getReportSubjects(level);
             const data = [];
-            
             studentsInLevel.forEach(st => {
                 const row = { 'الطالب': st.name };
                 finalSubjects.forEach(sub => {
                     const d = calculateAnnualAbsence(st.id, sub);
-                    row[sub.name] = `${d.status} (${d.absencePercentage.toFixed(1)}% - ${d.totalAbsentHours.toFixed(1)} س)`;
+                    row[sub.name] =
+                        `${d.status} (${d.absencePercentage.toFixed(1)}% - ${d.totalAbsentHours.toFixed(1)} س)`;
                 });
                 data.push(row);
             });
-            
             const ws = XLSX.utils.json_to_sheet(data);
             const colWidths = [{ wch: 20 }];
             finalSubjects.forEach(() => colWidths.push({ wch: 22 }));
             ws['!cols'] = colWidths;
-            
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'الغيابات التراكمية');
-            
             const levelName = getLevelName(level);
             const date = new Date().toISOString().split('T')[0];
             XLSX.writeFile(wb, `تقرير_الغيابات_التراكمي_${levelName}_${date}.xlsx`);
@@ -2314,7 +2330,7 @@
         }
 
         // ==============================================================
-        //  PROFESSOR PANEL (مع خصوصية كاملة)
+        //  PROFESSOR PANEL
         // ==============================================================
         function getProfessorSubject() {
             const profId = state.currentUser.id;
@@ -2324,13 +2340,12 @@
         function getStudentsForProfessor() {
             const sub = getProfessorSubject();
             if (!sub) return [];
-            // جلب الطلاب المرتبطين بهذه المادة فقط
             const studentIds = state.attendances.filter(a => a.subjectId === sub.id).map(a => a.studentId);
             const uniqueIds = [...new Set(studentIds)];
             return state.students.filter(st => uniqueIds.includes(st.id));
         }
 
-        // ========== دوال الماسح الضوئي ==========
+        // دوال الماسح والوضع السريع (كما هي)
         function toggleScanner() {
             const container = document.getElementById('scannerContainer');
             if (container.style.display === 'none' || container.style.display === '') {
@@ -2345,33 +2360,25 @@
                 alert('❌ مكتبة الباركود غير محملة. تأكد من اتصال الإنترنت.');
                 return;
             }
-
             const container = document.getElementById('scannerContainer');
             container.style.display = 'block';
             document.getElementById('scanToggleBtn').textContent = '⏳ جاري التشغيل...';
             document.getElementById('scanToggleBtn').disabled = true;
-
             if (html5QrCode) {
                 stopScanner().then(() => { startScanner(); });
                 return;
             }
-
             html5QrCode = new Html5Qrcode("reader");
             const config = { fps: 15, qrbox: { width: 280, height: 160 } };
-
-            html5QrCode.start(
-                { facingMode: "environment" },
-                config,
-                onScanSuccess,
-                onScanError
-            ).then(() => {
-                document.getElementById('scanToggleBtn').textContent = '📷 إيقاف الماسح';
-                document.getElementById('scanToggleBtn').disabled = false;
-                isScanning = true;
-            }).catch(err => {
-                alert('❌ تعذر تشغيل الكاميرا: ' + err);
-                stopScanner();
-            });
+            html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, onScanError)
+                .then(() => {
+                    document.getElementById('scanToggleBtn').textContent = '📷 إيقاف الماسح';
+                    document.getElementById('scanToggleBtn').disabled = false;
+                    isScanning = true;
+                }).catch(err => {
+                    alert('❌ تعذر تشغيل الكاميرا: ' + err);
+                    stopScanner();
+                });
         }
 
         function stopScanner() {
@@ -2405,45 +2412,37 @@
 
         function onScanSuccess(decodedText, decodedResult) {
             if (!isScanning) return;
-            
             const sub = getProfessorSubject();
             if (!sub) {
                 alert('⚠️ لم يتم تعيين مادة لك. لا يمكن تسجيل الغياب.');
                 return;
             }
-
             const studentId = decodedText.trim();
             let student = state.students.find(s => s.id === studentId);
             if (!student) student = state.students.find(s => s.name === studentId);
-
             if (!student) {
                 alert(`❌ لم يتم العثور على طالب بالرقم: ${studentId}`);
                 return;
             }
-
             const today = new Date().toISOString().split('T')[0];
             const hours = parseFloat(document.getElementById('quickAbsentHours').value) || 1;
             const excused = parseInt(document.getElementById('quickExcused').value);
-
             const existing = state.attendances.find(a => a.studentId === student.id && a.subjectId === sub.id && a.date === today);
             if (existing) {
                 existing.hours = hours;
                 existing.excused = excused;
             } else {
-                state.attendances.push({ id: 'a_' + Date.now(), studentId: student.id, subjectId: sub.id, date: today, hours: hours, excused: excused });
+                state.attendances.push({ id: 'a_' + Date.now(), studentId: student.id, subjectId: sub.id, date: today,
+                    hours: hours, excused: excused });
             }
             saveAll();
             renderProfessor();
-            
             stopScanner();
             alert(`✅ تم تسجيل غياب للطالب ${student.name} (${hours} ساعات)`);
         }
 
-        function onScanError(err) {
-            // ignore
-        }
+        function onScanError(err) {}
 
-        // ========== تبديل الوضع السريع ==========
         function toggleQuickMode() {
             state.quickMode = !state.quickMode;
             const btn = document.getElementById('quickModeToggle');
@@ -2465,7 +2464,8 @@
                 infoDiv.innerHTML = '<p style="color:red; font-size:12px;">⚠️ لم يتم تعيين مادة لك</p>';
                 stuSelect.innerHTML = '<option>--</option>';
                 document.getElementById('profAttendanceTable').innerHTML = '';
-                document.getElementById('profGroupsContainer').innerHTML = '<p style="color:#a0aec0; text-align:center; padding:10px;">لا توجد بيانات</p>';
+                document.getElementById('profGroupsContainer').innerHTML =
+                    '<p style="color:#a0aec0; text-align:center; padding:10px;">لا توجد بيانات</p>';
                 return;
             }
             const prof = state.professors.find(p => p.id === sub.professorId);
@@ -2495,26 +2495,24 @@
             renderProfessorAttendance(sub.id);
         }
 
-        // ========== دالة عرض الشعب والطلاب مع الوضع السريع (معدلة للهواتف) ==========
         function renderProfessorGroups(students) {
             const container = document.getElementById('profGroupsContainer');
             if (students.length === 0) {
-                container.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:10px;">📭 لا يوجد طلاب مرتبطون بهذه المادة</p>';
+                container.innerHTML =
+                    '<p style="color:#a0aec0; text-align:center; padding:10px;">📭 لا يوجد طلاب مرتبطون بهذه المادة</p>';
                 return;
             }
-
             const sub = getProfessorSubject();
             const totalHours = sub ? sub.totalHours : 1;
             const today = new Date().toISOString().split('T')[0];
-
             const groups = {};
             students.forEach(st => {
                 const groupName = st.group || st.section || 'غير محدد';
                 if (!groups[groupName]) groups[groupName] = [];
                 groups[groupName].push(st);
             });
-
-            const icons = { 'A': '🟦', 'B': '🟩', 'C': '🟧', 'D': '🟥', 'A1': '🔵', 'A2': '🟢', 'A3': '🟠', 'A4': '🔴', 'B1': '🟣', 'B2': '🟡', 'B3': '🟤', 'B4': '⚪' };
+            const icons = { 'A': '🟦', 'B': '🟩', 'C': '🟧', 'D': '🟥', 'A1': '🔵', 'A2': '🟢', 'A3': '🟠', 'A4': '🔴', 'B1': '🟣',
+                'B2': '🟡', 'B3': '🟤', 'B4': '⚪' };
             let html = `<div class="groups-grid">`;
             for (const [groupName, groupStudents] of Object.entries(groups)) {
                 const icon = icons[groupName] || '📚';
@@ -2533,10 +2531,10 @@
                         </div>
                         <div class="students-grid">
                 `;
-
                 if (state.quickMode) {
                     groupStudents.forEach(st => {
-                        const atts = state.attendances.filter(a => a.studentId === st.id && a.subjectId === sub?.id);
+                        const atts = state.attendances.filter(a => a.studentId === st.id && a.subjectId === sub
+                            ?.id);
                         const totalAbsent = atts.reduce((s, a) => s + a.hours, 0);
                         const unexcusedAbsent = atts.filter(a => a.excused === 0).reduce((s, a) => s + a.hours, 0);
                         const pctUnexcused = (unexcusedAbsent / totalHours) * 100;
@@ -2547,9 +2545,8 @@
                         else if (status === 'إنذار أولي') statusIcon = '🟡';
                         else if (status === 'إنذار نهائي') statusIcon = '🟠';
                         else if (status === 'راسب') statusIcon = '🔴';
-
-                        const hasAbsence = state.attendances.some(a => a.studentId === st.id && a.subjectId === sub?.id && a.date === today && a.hours > 0);
-
+                        const hasAbsence = state.attendances.some(a => a.studentId === st.id && a.subjectId === sub
+                            ?.id && a.date === today && a.hours > 0);
                         html += `
                             <div class="student-quick-item">
                                 <span class="student-name">${st.name} ${statusIcon}</span>
@@ -2562,7 +2559,8 @@
                     });
                 } else {
                     groupStudents.forEach(st => {
-                        const atts = state.attendances.filter(a => a.studentId === st.id && a.subjectId === sub?.id);
+                        const atts = state.attendances.filter(a => a.studentId === st.id && a.subjectId === sub
+                            ?.id);
                         const totalAbsent = atts.reduce((s, a) => s + a.hours, 0);
                         const unexcusedAbsent = atts.filter(a => a.excused === 0).reduce((s, a) => s + a.hours, 0);
                         const pctUnexcused = (unexcusedAbsent / totalHours) * 100;
@@ -2573,10 +2571,11 @@
                         else if (status === 'إنذار أولي') statusIcon = '🟡';
                         else if (status === 'إنذار نهائي') statusIcon = '🟠';
                         else if (status === 'راسب') statusIcon = '🔴';
-
-                        const hasAbsence = state.attendances.some(a => a.studentId === st.id && a.subjectId === sub?.id && a.date === today && a.hours > 0);
-                        const statusBadge = hasAbsence ? '<span class="badge bg-red" style="font-size:8px;">غائب اليوم</span>' : '<span class="badge bg-green" style="font-size:8px;">حاضر اليوم</span>';
-
+                        const hasAbsence = state.attendances.some(a => a.studentId === st.id && a.subjectId === sub
+                            ?.id && a.date === today && a.hours > 0);
+                        const statusBadge = hasAbsence ?
+                            '<span class="badge bg-red" style="font-size:8px;">غائب اليوم</span>' :
+                            '<span class="badge bg-green" style="font-size:8px;">حاضر اليوم</span>';
                         html += `
                             <div class="student-item">
                                 <span class="student-name">👨‍🎓 ${st.name} ${statusIcon} ${statusBadge}</span>
@@ -2593,7 +2592,6 @@
             container.innerHTML = html;
         }
 
-        // ========== دوال التسجيل السريع ==========
         function quickRecord(studentId, action) {
             const sub = getProfessorSubject();
             if (!sub) { alert('لم يتم تعيين مادة لك'); return; }
@@ -2602,9 +2600,8 @@
             const today = new Date().toISOString().split('T')[0];
             const hours = parseFloat(document.getElementById('quickAbsentHours').value) || 1;
             const excused = parseInt(document.getElementById('quickExcused').value);
-
-            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date === today);
-            
+            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date ===
+                today);
             if (action === 'present') {
                 if (existing) {
                     if (existing.hours === 0) {
@@ -2613,7 +2610,8 @@
                     }
                     existing.hours = 0;
                 } else {
-                    state.attendances.push({ id: 'a_' + Date.now(), studentId, subjectId: sub.id, date: today, hours: 0, excused: 0 });
+                    state.attendances.push({ id: 'a_' + Date.now(), studentId, subjectId: sub.id, date: today, hours: 0,
+                        excused: 0 });
                 }
                 alert(`✅ تم تسجيل حضور ${student.name}`);
             } else if (action === 'absent') {
@@ -2625,7 +2623,8 @@
                     existing.hours = hours;
                     existing.excused = excused;
                 } else {
-                    state.attendances.push({ id: 'a_' + Date.now(), studentId, subjectId: sub.id, date: today, hours: hours, excused: excused });
+                    state.attendances.push({ id: 'a_' + Date.now(), studentId, subjectId: sub.id, date: today, hours: hours,
+                        excused: excused });
                 }
                 alert(`❌ تم تسجيل غياب ${student.name} (${hours} ساعات)`);
             }
@@ -2639,14 +2638,13 @@
             const students = getStudentsForProfessor().filter(st => st.group === groupName || st.section === groupName);
             if (students.length === 0) { alert('لا يوجد طلاب في هذه الشعبة'); return; }
             if (!confirm(`⚠️ هل أنت متأكد من تسجيل غياب لجميع طلاب الشعبة ${groupName} (${students.length} طالب)؟`)) return;
-            
             const today = new Date().toISOString().split('T')[0];
             const hours = parseFloat(document.getElementById('quickAbsentHours').value) || 1;
             const excused = parseInt(document.getElementById('quickExcused').value);
             let count = 0;
-
             students.forEach(st => {
-                const existing = state.attendances.find(a => a.studentId === st.id && a.subjectId === sub.id && a.date === today);
+                const existing = state.attendances.find(a => a.studentId === st.id && a.subjectId === sub.id && a
+                    .date === today);
                 if (existing) {
                     if (existing.hours === 0) {
                         existing.hours = hours;
@@ -2654,7 +2652,8 @@
                         count++;
                     }
                 } else {
-                    state.attendances.push({ id: 'a_' + Date.now(), studentId: st.id, subjectId: sub.id, date: today, hours: hours, excused: excused });
+                    state.attendances.push({ id: 'a_' + Date.now(), studentId: st.id, subjectId: sub.id, date: today,
+                        hours: hours, excused: excused });
                     count++;
                 }
             });
@@ -2669,19 +2668,19 @@
             const students = getStudentsForProfessor().filter(st => st.group === groupName || st.section === groupName);
             if (students.length === 0) { alert('لا يوجد طلاب في هذه الشعبة'); return; }
             if (!confirm(`⚠️ هل أنت متأكد من تسجيل حضور لجميع طلاب الشعبة ${groupName} (${students.length} طالب)؟`)) return;
-            
             const today = new Date().toISOString().split('T')[0];
             let count = 0;
-
             students.forEach(st => {
-                const existing = state.attendances.find(a => a.studentId === st.id && a.subjectId === sub.id && a.date === today);
+                const existing = state.attendances.find(a => a.studentId === st.id && a.subjectId === sub.id && a
+                    .date === today);
                 if (existing) {
                     if (existing.hours > 0) {
                         existing.hours = 0;
                         count++;
                     }
                 } else {
-                    state.attendances.push({ id: 'a_' + Date.now(), studentId: st.id, subjectId: sub.id, date: today, hours: 0, excused: 0 });
+                    state.attendances.push({ id: 'a_' + Date.now(), studentId: st.id, subjectId: sub.id, date: today,
+                        hours: 0, excused: 0 });
                     count++;
                 }
             });
@@ -2690,7 +2689,6 @@
             alert(`✅ تم تسجيل حضور لـ ${count} طالب في الشعبة ${groupName}`);
         }
 
-        // ========== دالة عرض جدول الغيابات (نفسها) ==========
         function renderProfessorAttendance(subjectId) {
             const div = document.getElementById('profAttendanceTable');
             const allAttendances = state.attendances.filter(a => a.subjectId === subjectId && a.hours > 0);
@@ -2698,10 +2696,8 @@
                 div.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px;">📭 لا توجد غيابات مسجلة</p>';
                 return;
             }
-
             const subject = state.subjects.find(s => s.id === subjectId);
             const totalHours = subject ? subject.totalHours : 1;
-
             const studentIds = [...new Set(allAttendances.map(a => a.studentId))];
             const studentTotals = {};
             studentIds.forEach(id => {
@@ -2713,7 +2709,6 @@
                 const status = getStatus(pctUnexcused, pctTotal);
                 studentTotals[id] = { totalAbsent, unexcusedAbsent, pctUnexcused, pctTotal, status };
             });
-
             const sortedAttendances = [...allAttendances].sort((a, b) => b.date.localeCompare(a.date));
             let html = `<div class="table-wrapper"><table>
                 <tr>
@@ -2731,17 +2726,16 @@
                 const studentName = student ? student.name : 'غير معروف';
                 const excusedText = att.excused === 1 ? 'بعذر' : 'بدون عذر';
                 const excusedBadge = att.excused === 1 ? 'bg-green' : 'bg-red';
-
                 const unexcused = att.excused === 0 ? att.hours : 0;
                 const pctUnexcusedSingle = (unexcused / totalHours) * 100;
                 const pctTotalSingle = (att.hours / totalHours) * 100;
                 const statusSingle = getStatus(pctUnexcusedSingle, pctTotalSingle);
-                const statusBadgeSingle = statusSingle === 'جيد' ? 'bg-green' : statusSingle === 'إنذار أولي' ? 'bg-yellow' : statusSingle === 'إنذار نهائي' ? 'bg-orange' : 'bg-red';
-
+                const statusBadgeSingle = statusSingle === 'جيد' ? 'bg-green' : statusSingle === 'إنذار أولي' ?
+                    'bg-yellow' : statusSingle === 'إنذار نهائي' ? 'bg-orange' : 'bg-red';
                 const total = studentTotals[att.studentId];
                 const statusCumulative = total ? total.status : 'جيد';
-                const statusBadgeCumulative = statusCumulative === 'جيد' ? 'bg-green' : statusCumulative === 'إنذار أولي' ? 'bg-yellow' : statusCumulative === 'إنذار نهائي' ? 'bg-orange' : 'bg-red';
-
+                const statusBadgeCumulative = statusCumulative === 'جيد' ? 'bg-green' : statusCumulative ===
+                    'إنذار أولي' ? 'bg-yellow' : statusCumulative === 'إنذار نهائي' ? 'bg-orange' : 'bg-red';
                 html += `<tr>
                     <td>${idx + 1}</td>
                     <td>${studentName}</td>
@@ -2760,7 +2754,6 @@
             div.innerHTML = html;
         }
 
-        // ========== دوال الأستاذ الأخرى ==========
         function markStudentAbsent(studentId) {
             const sub = getProfessorSubject();
             if (!sub) { alert('لم يتم تعيين مادة لك'); return; }
@@ -2770,9 +2763,11 @@
             const hours = prompt(`تسجيل غياب للطالب ${student.name}\nعدد ساعات الغياب:`, '1');
             if (hours === null) return;
             const excused = confirm('هل الغياب بعذر مشروع؟\nموافق = بعذر، إلغاء = بدون عذر');
-            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date === today);
-            if (existing) { existing.hours = parseFloat(hours) || 1; existing.excused = excused ? 1 : 0; }
-            else { state.attendances.push({ id: 'a_' + Date.now(), studentId, subjectId: sub.id, date: today, hours: parseFloat(hours) || 1, excused: excused ? 1 : 0 }); }
+            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date ===
+                today);
+            if (existing) { existing.hours = parseFloat(hours) || 1;
+                existing.excused = excused ? 1 : 0; } else { state.attendances.push({ id: 'a_' + Date.now(), studentId,
+                    subjectId: sub.id, date: today, hours: parseFloat(hours) || 1, excused: excused ? 1 : 0 }); }
             saveAll();
             renderProfessor();
             alert(`✅ تم تسجيل غياب الطالب ${student.name} بنجاح`);
@@ -2788,10 +2783,12 @@
             if (!studentId) { alert('اختر طالباً'); return; }
             if (!hours || hours <= 0) { alert('أدخل عدد ساعات صحيح'); return; }
             if (!date) { alert('أدخل التاريخ'); return; }
-            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date === date);
+            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date ===
+                date);
             if (existing) {
                 if (!confirm('⚠️ يوجد تسجيل سابق لهذا الطالب في هذا اليوم. هل تريد تحديثه؟')) return;
-                existing.hours = hours; existing.excused = excused;
+                existing.hours = hours;
+                existing.excused = excused;
             } else {
                 state.attendances.push({ id: 'a_' + Date.now(), studentId, subjectId: sub.id, date, hours, excused });
             }
@@ -2824,7 +2821,8 @@
         function sendToOfficer() {
             const sub = getProfessorSubject();
             if (!sub) { alert('لا توجد مادة'); return; }
-            state.notifications.push({ msg: `📨 الأستاذ ${state.currentUser.name} أرسل إشعاراً (مادة: ${sub.name})`, time: new Date().toLocaleString() });
+            state.notifications.push({ msg: `📨 الأستاذ ${state.currentUser.name} أرسل إشعاراً (مادة: ${sub.name})`, time: new Date()
+                    .toLocaleString() });
             saveAll();
             alert('✅ تم الإرسال');
         }
@@ -2839,14 +2837,16 @@
             const studentsInLevel = state.students.filter(st => st.level === level);
             if (studentsInLevel.length === 0) { container.innerHTML = '<p style="color:#a0aec0;">لا يوجد طلاب</p>'; return; }
             if (state.selectedStudents.length === 0) {
-                state.selectedStudents = studentsInLevel.filter(st => state.attendances.some(a => a.studentId === st.id && a.hours > 0)).map(st => st.id);
+                state.selectedStudents = studentsInLevel.filter(st => state.attendances.some(a => a.studentId === st.id &&
+                    a.hours > 0)).map(st => st.id);
                 if (state.selectedStudents.length === 0) state.selectedStudents = studentsInLevel.map(st => st.id);
             }
             let html = '';
             studentsInLevel.forEach(st => {
                 const hasAbsence = state.attendances.some(a => a.studentId === st.id && a.hours > 0);
                 const checked = state.selectedStudents.includes(st.id) ? 'checked' : '';
-                const badge = hasAbsence ? '<span class="badge bg-red" style="font-size:8px;">غائب</span>' : '<span class="badge bg-green" style="font-size:8px;">حاضر</span>';
+                const badge = hasAbsence ? '<span class="badge bg-red" style="font-size:8px;">غائب</span>' :
+                    '<span class="badge bg-green" style="font-size:8px;">حاضر</span>';
                 html += `<label style="display:inline-block; margin:3px 6px; font-size:13px;">
                     <input type="checkbox" class="student-checkbox" value="${st.id}" ${checked} onchange="toggleStudent('${st.id}')">
                     ${st.name} (${st.group || st.section || '-'}) ${badge}
@@ -2878,20 +2878,24 @@
         function selectStudentsWithAbsence() {
             const level = state.currentLevel;
             if (!level) return;
-            state.selectedStudents = state.students.filter(st => st.level === level && state.attendances.some(a => a.studentId === st.id && a.hours > 0)).map(st => st.id);
-            document.querySelectorAll('.student-checkbox').forEach(cb => { cb.checked = state.selectedStudents.includes(cb.value); });
+            state.selectedStudents = state.students.filter(st => st.level === level && state.attendances.some(a => a
+                .studentId === st.id && a.hours > 0)).map(st => st.id);
+            document.querySelectorAll('.student-checkbox').forEach(cb => { cb.checked = state.selectedStudents.includes(cb
+                    .value); });
             if (state.selectedStudents.length === 0) alert('لا يوجد طلاب لديهم غيابات');
         }
 
         // ==============================================================
-        //  WHATSAPP FUNCTIONS (كما هي)
+        //  WHATSAPP FUNCTIONS (مختصرة)
         // ==============================================================
         function getStudentAttendanceSummary(studentId) {
             const student = state.students.find(s => s.id === studentId);
             if (!student) return null;
-            const relevantSubjects = state.subjects.filter(s => s.level === student.level && s.groupType === student.groupType);
+            const relevantSubjects = state.subjects.filter(s => s.level === student.level && s.groupType === student
+                .groupType);
             let summary = [];
-            let totalAbsent = 0, totalHours = 0;
+            let totalAbsent = 0,
+                totalHours = 0;
             relevantSubjects.forEach(sub => {
                 const atts = state.attendances.filter(a => a.studentId === studentId && a.subjectId === sub.id);
                 const totalH = atts.reduce((s, a) => s + a.hours, 0);
@@ -2900,11 +2904,14 @@
                 const pctTotal = (totalH / sub.totalHours) * 100;
                 const status = getStatus(pctUnexcused, pctTotal);
                 if (totalH > 0) {
-                    summary.push({ subject: sub.name, hours: totalH.toFixed(1), percentage: pctTotal.toFixed(1), status: status });
-                    totalAbsent += totalH; totalHours += sub.totalHours;
+                    summary.push({ subject: sub.name, hours: totalH.toFixed(1), percentage: pctTotal.toFixed(1),
+                        status: status });
+                    totalAbsent += totalH;
+                    totalHours += sub.totalHours;
                 }
             });
-            return { student, summary, totalAbsent: totalAbsent.toFixed(1), totalPercentage: totalHours > 0 ? ((totalAbsent / totalHours) * 100).toFixed(1) : '0' };
+            return { student, summary, totalAbsent: totalAbsent.toFixed(1), totalPercentage: totalHours > 0 ? ((totalAbsent /
+                    totalHours) * 100).toFixed(1) : '0' };
         }
 
         function getSelectedStudentsWithData() {
@@ -2923,7 +2930,8 @@
             const st = data.student;
             let msg = '';
             if (type === 'student') msg = `السلام عليكم ${st.name}،\nتقرير الغياب الخاص بك:\n`;
-            else msg = `السلام عليكم، ولي أمر الطالب ${st.name} (الشعبة ${st.group || st.section || '-'})\nتقرير الغياب:\n`;
+            else msg =
+                `السلام عليكم، ولي أمر الطالب ${st.name} (الشعبة ${st.group || st.section || '-'})\nتقرير الغياب:\n`;
             msg += `━━━━━━━━━━━━━━━━\n`;
             data.summary.forEach(item => {
                 msg += `📚 ${item.subject}: ${item.hours} س (${item.percentage}%)\n   الحالة: ${item.status}\n`;
@@ -2939,12 +2947,14 @@
             if (!senderNumber) { alert('أدخل رقم واتساب المسؤول'); return; }
             const studentsData = getSelectedStudentsWithData();
             if (studentsData.length === 0) return;
-            let linksHtml = '', count = 0;
+            let linksHtml = '',
+                count = 0;
             studentsData.forEach(data => {
                 const st = data.student;
                 if (!st.phone) return;
                 const msg = generateMessageForStudent(data, 'student');
-                linksHtml += `<div class="whatsapp-link-box">📱 <a href="https://wa.me/${st.phone}?text=${encodeURIComponent(msg)}" target="_blank">${st.name}</a></div>`;
+                linksHtml +=
+                    `<div class="whatsapp-link-box">📱 <a href="https://wa.me/${st.phone}?text=${encodeURIComponent(msg)}" target="_blank">${st.name}</a></div>`;
                 count++;
             });
             if (count === 0) { alert('لا توجد أرقام هواتف'); return; }
@@ -2974,12 +2984,14 @@
             if (!senderNumber) { alert('أدخل رقم واتساب المسؤول'); return; }
             const studentsData = getSelectedStudentsWithData();
             if (studentsData.length === 0) return;
-            let linksHtml = '', count = 0;
+            let linksHtml = '',
+                count = 0;
             studentsData.forEach(data => {
                 const st = data.student;
                 if (!st.guardianPhone) return;
                 const msg = generateMessageForStudent(data, 'guardian');
-                linksHtml += `<div class="whatsapp-link-box">👨‍👦 <a href="https://wa.me/${st.guardianPhone}?text=${encodeURIComponent(msg)}" target="_blank">${st.name}</a></div>`;
+                linksHtml +=
+                    `<div class="whatsapp-link-box">👨‍👦 <a href="https://wa.me/${st.guardianPhone}?text=${encodeURIComponent(msg)}" target="_blank">${st.name}</a></div>`;
                 count++;
             });
             if (count === 0) { alert('لا توجد أرقام أولياء أمور'); return; }
@@ -3038,13 +3050,15 @@
             studentsData.forEach(data => {
                 const st = data.student;
                 if (st.phone) links.push({ number: st.phone, msg: generateMessageForStudent(data, 'student') });
-                if (st.guardianPhone) links.push({ number: st.guardianPhone, msg: generateMessageForStudent(data, 'guardian') });
+                if (st.guardianPhone) links.push({ number: st.guardianPhone, msg: generateMessageForStudent(data,
+                        'guardian') });
             });
             if (links.length === 0) { alert('لا توجد أرقام'); return; }
             const total = links.length;
             let opened = 0;
             const progressDiv = document.createElement('div');
-            progressDiv.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#1a3a5e; color:white; padding:12px 24px; border-radius:12px; z-index:9999; font-size:14px; text-align:center; box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+            progressDiv.style.cssText =
+                'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#1a3a5e; color:white; padding:12px 24px; border-radius:12px; z-index:9999; font-size:14px; text-align:center; box-shadow:0 4px 12px rgba(0,0,0,0.3);';
             progressDiv.id = 'whatsappProgress';
             progressDiv.innerHTML = `جاري فتح الروابط 0/${total}`;
             document.body.appendChild(progressDiv);
@@ -3055,7 +3069,8 @@
                     const progress = document.getElementById('whatsappProgress');
                     if (progress) {
                         progress.innerHTML = `جاري فتح الروابط ${opened}/${total}`;
-                        if (opened === total) { progress.innerHTML = `✅ تم فتح جميع ${total} الرسائل`; setTimeout(() => progress.remove(), 3000); }
+                        if (opened === total) { progress.innerHTML = `✅ تم فتح جميع ${total} الرسائل`;
+                            setTimeout(() => progress.remove(), 3000); }
                     }
                 }, index * 1200);
             });
@@ -3064,10 +3079,26 @@
         // ==============================================================
         //  DATE RANGE FUNCTIONS
         // ==============================================================
+        function applyDateFilter() {
+            updateReportDateDisplay();
+            if (state.currentLevel) renderOfficerReport(state.currentLevel);
+        }
+
+        function clearDateFilter() {
+            document.getElementById('reportDateFrom').value = '';
+            document.getElementById('reportDateTo').value = '';
+            updateReportDateDisplay();
+            if (state.currentLevel) renderOfficerReport(state.currentLevel);
+        }
+
         function setAutoDateRange() {
-            if (state.attendances.length === 0) { document.getElementById('reportDateFrom').value = ''; document.getElementById('reportDateTo').value = ''; updateReportDateDisplay(); return; }
+            if (state.attendances.length === 0) { document.getElementById('reportDateFrom').value = '';
+                document.getElementById('reportDateTo').value = '';
+                updateReportDateDisplay(); return; }
             const dates = state.attendances.map(a => a.date).filter(d => d);
-            if (dates.length === 0) { document.getElementById('reportDateFrom').value = ''; document.getElementById('reportDateTo').value = ''; updateReportDateDisplay(); return; }
+            if (dates.length === 0) { document.getElementById('reportDateFrom').value = '';
+                document.getElementById('reportDateTo').value = '';
+                updateReportDateDisplay(); return; }
             dates.sort();
             document.getElementById('reportDateFrom').value = dates[0];
             document.getElementById('reportDateTo').value = dates[dates.length - 1];
@@ -3091,10 +3122,9 @@
         }
 
         // ==============================================================
-        //  INIT
+        //  INITIALIZATION
         // ==============================================================
-        console.log('🏛️ نظام الغيابات v46.0 - حفظ دائم + خصوصية كاملة للأساتذة');
-        console.log('👤 بيانات الدخول: admin/admin123 | officer/officer123 | د. أحمد/1234 | د. سارة/5678');
+        console.log('🏛️ نظام الغيابات v47.0 - مزامنة سحابية مع Firebase');
 
         document.addEventListener('change', function(e) {
             if (e.target.id === 'reportDateFrom' || e.target.id === 'reportDateTo') {
@@ -3103,18 +3133,13 @@
             }
         });
 
-        (async function init() {
-            await initializeDefaultData();
-            state.professors = DB.get('professors', []);
-            state.subjects = DB.get('subjects', []);
-            state.students = DB.get('students', []);
-            state.attendances = DB.get('attendances', []);
-            state.notifications = DB.get('notifications', []);
-            populateAllSelects();
-            renderFullProfessorsList();
-            renderFullSubjectsList();
-        })();
-    </script>
+        // تحميل البيانات من Firebase ثم بدء التطبيق
+        loadFromFirebase();
+        // الاستماع للتغييرات في الوقت الفعلي
+        listenToFirebase();
 
+        // بيانات الدخول الافتراضية للتذكير
+        console.log('👤 بيانات الدخول: admin/admin123 | officer/officer123 | د. أحمد/1234 | د. سارة/5678');
+    </script>
 </body>
 </html>
