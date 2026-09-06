@@ -1,0 +1,3120 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+    <title>نظام إدارة الغيابات - قسم الفيزياء</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js">
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js">
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js">
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js">
+    </script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js">
+    </script>
+
+    <style>
+        /* === الأنماط (نفسها مع إضافة ألوان للخصوصية) === */
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Tahoma', 'Segoe UI', sans-serif; }
+        body { background: #f0f4f8; padding: 10px; min-height: 100vh; }
+        .hidden { display: none !important; }
+        .container { max-width: 1400px; margin: 0 auto; background: white; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); padding: 15px; }
+        @media (min-width: 768px) { .container { padding: 25px; } body { padding: 20px; } }
+        h1, h2, h3, h4 { color: #1a3a5e; margin-bottom: 10px; }
+        .flex-between { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+        .card { background: #f8fafc; border-radius: 12px; padding: 12px; margin-bottom: 12px; border: 1px solid #e2e8f0; }
+        .grid-2 { display: grid; grid-template-columns: 1fr; gap: 12px; }
+        @media (min-width: 992px) { .grid-2 { grid-template-columns: 1fr 1fr; gap: 18px; } }
+        .grid-3 { display: grid; grid-template-columns: 1fr; gap: 12px; }
+        @media (min-width: 768px) { .grid-3 { grid-template-columns: 1fr 1fr 1fr; gap: 18px; } }
+        label { font-weight: bold; display: block; margin-top: 6px; margin-bottom: 2px; font-size: 0.85rem; }
+        input, select, button { padding: 8px 12px; border-radius: 10px; border: 1px solid #cbd5e1; font-size: 14px; width: 100%; background: white; }
+        button { background: #1a3a5e; color: white; font-weight: bold; border: none; cursor: pointer; transition: 0.3s; min-height: 40px; font-size: 14px; }
+        @media (min-width: 768px) { button { width: auto; min-width: 90px; } }
+        button:hover { background: #2b4f7a; transform: scale(1.02); }
+        .btn-success { background: #2f855a; } .btn-success:hover { background: #38a169; }
+        .btn-danger { background: #c53030; } .btn-danger:hover { background: #e53e3e; }
+        .btn-warning { background: #d69e2e; } .btn-warning:hover { background: #ecc94b; }
+        .btn-sm { padding: 4px 8px; font-size: 11px; min-height: 28px; }
+        .btn-info { background: #3182ce; } .btn-info:hover { background: #2b6cb0; }
+        .btn-secondary { background: #718096; } .btn-secondary:hover { background: #4a5568; }
+        .btn-pdf { background: #dc2626; } .btn-pdf:hover { background: #b91c1c; }
+        .btn-export { background: #805ad5; } .btn-export:hover { background: #6b46c1; }
+        .btn-import { background: #2b6cb0; } .btn-import:hover { background: #1a4f7a; }
+        .btn-excel { background: #217346; } .btn-excel:hover { background: #1e6b3e; }
+        .btn-print { background: #1a3a5e; } .btn-print:hover { background: #2b4f7a; }
+        .btn-upload-excel { background: #0d9488; } .btn-upload-excel:hover { background: #0f766e; }
+        .btn-backup { background: #6d28d9; } .btn-backup:hover { background: #5b21b6; }
+
+        /* === أنماط الوضع السريع والماسح === */
+        .btn-present { background: #48bb78; color: white; font-weight: bold; padding: 6px 12px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; min-width: 60px; transition: 0.2s; }
+        .btn-present:hover { background: #38a169; transform: scale(1.05); }
+        .btn-absent { background: #fc8181; color: white; font-weight: bold; padding: 6px 12px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; min-width: 60px; transition: 0.2s; }
+        .btn-absent:hover { background: #e53e3e; transform: scale(1.05); }
+        .quick-mode-toggle { background: #805ad5; color: white; border: none; padding: 6px 16px; border-radius: 30px; font-weight: bold; cursor: pointer; transition: 0.3s; font-size: 14px; }
+        .quick-mode-toggle.active { background: #6b46c1; box-shadow: 0 0 0 3px #d6bcf7; }
+        .student-quick-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: #f7fafc; border-radius: 8px; border: 1px solid #e2e8f0; flex-wrap: wrap; justify-content: space-between; }
+        .student-quick-item .student-name { font-weight: bold; font-size: 14px; flex: 1; min-width: 80px; }
+        .student-quick-item .btn-group { display: flex; gap: 4px; }
+        .student-quick-item .btn-group button { min-width: 55px; padding: 4px 12px; font-size: 13px; }
+
+        @media (max-width: 480px) {
+            .student-quick-item { flex-direction: column; align-items: stretch; gap: 4px; }
+            .student-quick-item .student-name { text-align: center; width: 100%; font-size: 15px; }
+            .student-quick-item .btn-group { width: 100%; justify-content: center; gap: 8px; }
+            .student-quick-item .btn-group button { flex: 1; min-width: 60px; font-size: 15px; padding: 8px 6px; }
+            .btn-present, .btn-absent { font-size: 15px; padding: 8px 6px; }
+            .group-card .students-grid { grid-template-columns: 1fr; }
+            #reader { width: 100% !important; max-width: 100% !important; }
+        }
+
+        /* جداول التقرير */
+        .report-table-wrapper { overflow-x: auto; margin-top: 10px; }
+        .report-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 800px; }
+        .report-table th, .report-table td { border: 1px solid #cbd5e1; padding: 4px 3px; text-align: center; vertical-align: middle; }
+        .report-table th { background: #1a3a5e; color: white; font-weight: bold; font-size: 11px; padding: 6px 3px; position: sticky; top: 0; z-index: 10; }
+        .report-table .student-name { font-weight: bold; background: #ebf8ff; text-align: right; padding-right: 8px; min-width: 140px; position: sticky; right: 0; z-index: 5; }
+        
+        .subject-cell { padding: 4px 3px !important; min-width: 90px; text-align: center; }
+        .subject-cell .status-text { font-weight: bold; font-size: 12px; display: block; }
+        .subject-cell .percentage { font-size: 10px; display: block; }
+        .subject-cell .hours-detail { font-size: 10px; display: block; }
+        
+        .status-good { background: #c6f6d5; }
+        .status-good .status-text { color: #22543d; }
+        .status-good .percentage { color: #22543d; }
+        .status-good .hours-detail { color: #22543d; }
+        
+        .status-first-warning { background: #fefcbf; }
+        .status-first-warning .status-text { color: #744210; }
+        .status-first-warning .percentage { color: #744210; }
+        .status-first-warning .hours-detail { color: #744210; }
+        
+        .status-final-warning { background: #feebc8; }
+        .status-final-warning .status-text { color: #7b341e; }
+        .status-final-warning .percentage { color: #7b341e; }
+        .status-final-warning .hours-detail { color: #7b341e; }
+        
+        .status-fail { background: #fed7d7; }
+        .status-fail .status-text { color: #9b2c2c; }
+        .status-fail .percentage { color: #9b2c2c; }
+        .status-fail .hours-detail { color: #9b2c2c; }
+        
+        .status-none { background: #f7fafc; }
+        .status-none .status-text { color: #a0aec0; }
+        .status-none .percentage { color: #a0aec0; }
+        .status-none .hours-detail { color: #a0aec0; }
+
+        /* باقي الأنماط */
+        .tab-buttons { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+        .tab-buttons button { background: #edf2f7; color: #2d3748; min-width: 60px; flex: 1; font-size: 12px; padding: 6px 4px; min-height: 36px; }
+        @media (min-width: 768px) { .tab-buttons button { flex: none; min-width: 90px; font-size: 13px; padding: 8px 12px; } }
+        .tab-buttons button.active { background: #1a3a5e; color: white; }
+        .login-box { max-width: 380px; margin: 30px auto; padding: 20px; background: white; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+        .tab-content { display: none; } .tab-content.active { display: block; }
+        .level-card { background: white; border-radius: 16px; padding: 14px; border: 2px solid #e2e8f0; cursor: pointer; transition: all 0.3s; text-align: center; }
+        .level-card:hover { transform: translateY(-4px); box-shadow: 0 8px 25px rgba(0,0,0,0.12); border-color: #3182ce; }
+        .level-card .level-icon { font-size: 2rem; margin-bottom: 6px; display: block; }
+        .level-card .level-name { font-size: 1rem; font-weight: bold; color: #1a3a5e; }
+        .level-card .level-stats { display: flex; justify-content: center; gap: 8px; font-size: 0.75rem; color: #4a5568; flex-wrap: wrap; }
+        .level-card .level-stats span { background: #edf2f7; padding: 2px 8px; border-radius: 20px; }
+        .level-detail-header { background: #1a3a5e; color: white; padding: 10px 14px; border-radius: 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
+        .level-detail-header h2 { color: white; margin: 0; font-size: 1rem; }
+        .level-detail-header .back-btn { background: rgba(255,255,255,0.2); color: white; border: none; padding: 4px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; min-height: 30px; }
+        .level-detail-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+        .level-detail-tabs button { background: #edf2f7; color: #2d3748; flex: 1; min-width: 40px; font-size: 11px; padding: 6px 6px; min-height: 32px; border-radius: 10px; }
+        .level-detail-tabs button.active-tab { background: #1a3a5e; color: white; }
+        .level-view { display: block; } .level-detail-view { display: none; } .level-detail-view.active { display: block; } .level-view.hidden { display: none; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; padding: 10px; }
+        .modal-overlay.active { display: flex; }
+        .modal-box { background: white; border-radius: 16px; padding: 12px; max-width: 95%; max-height: 90vh; overflow: auto; width: 100%; max-width: 850px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+        .modal-box .close-btn { float: left; font-size: 24px; cursor: pointer; color: #a0aec0; background: none; border: none; min-width: auto; padding: 0 6px; width: auto; min-height: auto; }
+        .modal-box .close-btn:hover { color: #e53e3e; }
+        .groups-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+        @media (min-width: 768px) { .groups-grid { grid-template-columns: 1fr 1fr; } }
+        @media (min-width: 992px) { .groups-grid { grid-template-columns: 1fr 1fr 1fr; } }
+        .group-card { background: white; border-radius: 12px; padding: 12px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+        .group-card .group-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 8px; }
+        .group-card .group-title { display: flex; align-items: center; gap: 6px; }
+        .group-card .group-icon { font-size: 1.3rem; }
+        .group-card .group-name { font-weight: bold; font-size: 0.95rem; }
+        .group-card .group-count { font-size: 0.7rem; color: #718096; }
+        .group-card .students-grid { display: grid; grid-template-columns: 1fr; gap: 4px; max-height: 350px; overflow-y: auto; }
+        @media (min-width: 500px) { .group-card .students-grid { grid-template-columns: 1fr 1fr; } }
+        .group-card .students-grid .student-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; background: #f7fafc; border-radius: 6px; border: 1px solid #edf2f7; font-size: 12px; }
+        .back-to-top { position: fixed; bottom: 12px; right: 12px; background: #1a3a5e; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; font-size: 18px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 999; display: none; align-items: center; justify-content: center; min-width: auto; min-height: auto; padding: 0; }
+        .back-to-top.show { display: flex; }
+        .chart-container { background: white; border-radius: 12px; padding: 10px; border: 1px solid #e2e8f0; margin-top: 10px; }
+        .chart-container canvas { max-height: 300px; max-width: 100%; }
+        .badge { padding: 2px 6px; border-radius: 30px; font-size: 9px; font-weight: bold; display: inline-block; white-space: nowrap; }
+        .bg-green { background: #c6f6d5; color: #22543d; }
+        .bg-yellow { background: #fefcbf; color: #744210; }
+        .bg-orange { background: #feebc8; color: #7b341e; }
+        .bg-red { background: #fed7d7; color: #9b2c2c; }
+        .bg-blue { background: #bee3f8; color: #2a4365; }
+        .bg-purple { background: #e9d5ff; color: #6b21a8; }
+        .password-hidden { display: inline-block; background: #edf2f7; color: #4a5568; padding: 2px 8px; border-radius: 4px; font-family: monospace; letter-spacing: 2px; }
+        .password-hidden::before { content: "••••••••"; }
+        small { color: #718096; display: block; margin-top: 3px; font-size: 10px; }
+        .file-upload-wrapper { border: 2px dashed #cbd5e1; padding: 12px; text-align: center; border-radius: 12px; background: #f7fafc; }
+
+        /* ====== التقرير النهائي PDF ====== */
+        #printable-report.pdf-report { width: 100%; background: #fff; direction: rtl; }
+        #printable-report.pdf-report .report-table-wrapper { overflow: visible !important; }
+        #printable-report.pdf-report .report-table { width: 100%; min-width: 0; table-layout: fixed; font-size: 10px; border-collapse: collapse; }
+        #printable-report.pdf-report .report-table th, #printable-report.pdf-report .report-table td { border: 1px solid #9ca3af; padding: 5px 3px; text-align: center; vertical-align: middle; word-break: normal; }
+        #printable-report.pdf-report .report-table th { background: #1a3a5e !important; color: #fff !important; font-size: 9px; line-height: 1.25; height: 48px; }
+        #printable-report.pdf-report .report-table th:first-child, #printable-report.pdf-report .report-table td:first-child { width: 17%; }
+        #printable-report.pdf-report .report-table th:not(:first-child) { width: auto; }
+        #printable-report.pdf-report .student-name { min-width: 0; background: #ebf8ff !important; color: #1f2937; font-size: 10px; white-space: normal; }
+        #printable-report.pdf-report .subject-cell { min-width: 0 !important; height: 55px; padding: 4px 2px !important; }
+        #printable-report.pdf-report .subject-cell .status-text { font-size: 9px; line-height: 1.15; }
+        #printable-report.pdf-report .subject-cell .percentage, #printable-report.pdf-report .subject-cell .hours-detail { font-size: 9px; line-height: 1.15; }
+        #printable-report.pdf-report .report-legend { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; font-size: 9px; margin: 5px 0 7px; }
+        #printable-report.pdf-report .report-legend span { padding: 3px 7px; border-radius: 4px; border: 1px solid rgba(0,0,0,.08); }
+
+        @media print {
+            #printable-report.pdf-report .report-table { font-size: 8px; }
+            #printable-report.pdf-report .report-table th { font-size: 7px; }
+            #printable-report.pdf-report .subject-cell .status-text,
+            #printable-report.pdf-report .subject-cell .percentage,
+            #printable-report.pdf-report .subject-cell .hours-detail { font-size: 7px; }
+            .subject-cell { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+            .report-table td { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+        }
+
+        @media print {
+            body * { visibility: hidden; }
+            #printable-report, #printable-report * { visibility: visible; }
+            #printable-report { position: absolute; top: 0; right: 0; width: 100%; background: white; padding: 12px; }
+            .no-print { display: none !important; }
+            .card { border: none !important; box-shadow: none !important; padding: 4px !important; margin: 0 !important; }
+            .report-table { font-size: 9px; }
+            .report-table th { font-size: 8px; }
+            .report-table .student-name { min-width: 100px; }
+            .status-good { background: #c6f6d5 !important; }
+            .status-first-warning { background: #fefcbf !important; }
+            .status-final-warning { background: #feebc8 !important; }
+            .status-fail { background: #fed7d7 !important; }
+            .status-none { background: #f7fafc !important; }
+            .no-print { display: none !important; }
+            .chart-container { display: none !important; }
+            .subject-cell { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+            .report-table td { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ==================== شاشة تسجيل الدخول ==================== -->
+    <div id="loginPage" class="login-box">
+        <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات</h3>
+        <label>اسم المستخدم</label>
+        <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username" value="admin">
+        <label>كلمة المرور</label>
+        <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password" value="admin123">
+        <button onclick="handleLogin()" style="margin-top:10px; width:100%;">دخول</button>
+        <p id="loginError" style="color:red; margin-top:6px; text-align:center; font-size:12px;"></p>
+        <div style="text-align:center; margin-top:12px; font-size:12px; color:#4a5568; border-top:1px solid #e2e8f0; padding-top:8px;">
+            اعداد وتصميم وتنفيذ م. دموسى محمد مهدي<br>رئيس قسم الفيزياء
+        </div>
+    </div>
+
+    <!-- ==================== التطبيق الرئيسي ==================== -->
+    <div id="appContainer" class="container hidden">
+
+        <div class="flex-between" style="margin-bottom:10px;">
+            <h1 style="font-size:1rem; margin:0;">🏛️ قسم الفيزياء</h1>
+            <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
+                <span id="currentUserDisplay" style="font-weight:bold; background:#edf2f7; padding:4px 8px; border-radius:30px; font-size:11px;"></span>
+                <button onclick="logout()" class="btn-danger btn-sm" style="min-width:40px; padding:4px 8px; font-size:11px;">خروج</button>
+            </div>
+        </div>
+
+        <div id="tabButtonsContainer" class="tab-buttons"></div>
+
+        <!-- ==================== تبويب رئيس القسم ==================== -->
+        <div id="tab-admin" class="tab-content">
+            <div class="card" style="background:#f0fdf4; border:2px solid #48bb78;">
+                <div class="flex-between">
+                    <h4 style="margin:0;">📦 إدارة البيانات</h4>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                        <button onclick="exportData()" class="btn-export btn-sm" style="min-width:60px;">📤 تصدير</button>
+                        <button onclick="document.getElementById('importFileInput').click()" class="btn-import btn-sm" style="min-width:60px;">📥 استيراد</button>
+                        <input type="file" id="importFileInput" accept=".json" style="display:none;" onchange="importData(event)">
+                        <button onclick="exportToExcel()" class="btn-excel btn-sm" style="min-width:60px;">📊 إكسل (الكل)</button>
+                        <button onclick="exportBackup()" class="btn-backup btn-sm" style="min-width:60px;">💾 نسخة احتياطية</button>
+                        <button onclick="document.getElementById('restoreBackupInput').click()" class="btn-import btn-sm" style="min-width:60px;">🔄 استعادة</button>
+                        <input type="file" id="restoreBackupInput" accept=".json" style="display:none;" onchange="restoreBackup(event)">
+                    </div>
+                </div>
+                <small>📌 تصدير JSON للنسخ الاحتياطي، أو إكسل للبيانات. استخدم "نسخة احتياطية" لحفظ كامل البيانات بأمان.</small>
+            </div>
+
+            <!-- ====== بطاقة استيراد الطلاب من Excel ====== -->
+            <div class="card" style="background:#ecfdf5; border:2px solid #0d9488;">
+                <div class="flex-between">
+                    <h4 style="margin:0;">📤 استيراد الطلاب من Excel</h4>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                        <button onclick="document.getElementById('excelImportInput').click()" class="btn-upload-excel btn-sm" style="min-width:60px;">📂 رفع ملف</button>
+                        <input type="file" id="excelImportInput" accept=".xlsx,.xls" style="display:none;" onchange="importStudentsFromExcel(event)">
+                        <button onclick="downloadStudentsTemplate()" class="btn-info btn-sm" style="min-width:60px;">📄 نموذج</button>
+                    </div>
+                </div>
+                <small>📌 قم برفع ملف Excel يحتوي على أعمدة: name, group, groupType, level, phone (اختياري), guardianPhone (اختياري)</small>
+                <div id="excelImportStatus" style="margin-top:4px; font-size:12px; color:#4a5568;"></div>
+            </div>
+
+            <div id="levelView" class="level-view">
+                <div class="flex-between" style="margin-bottom:8px;">
+                    <h2 style="font-size:1rem; margin:0;">📚 المراحل الدراسية</h2>
+                    <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                        <button onclick="linkStudentsToSubjects()" class="btn-link btn-sm" style="min-width:60px; padding:4px 10px; font-size:11px;">🔗 ربط الطلاب</button>
+                        <button onclick="showAddLevelPanel()" class="btn-success btn-sm" style="min-width:50px; padding:4px 10px; font-size:11px;">➕ إدارة</button>
+                    </div>
+                </div>
+                <div id="levelsContainer" class="grid-3" style="margin-top:8px;"></div>
+            </div>
+
+            <div id="levelDetailView" class="level-detail-view">
+                <div class="level-detail-header">
+                    <h2 id="levelDetailTitle">المرحلة</h2>
+                    <button onclick="backToLevels()" class="back-btn">↩️ العودة</button>
+                </div>
+                <div class="level-detail-tabs">
+                    <button onclick="switchLevelTab('groups')" class="active-tab" id="tab-groups">👥 الشعب</button>
+                    <button onclick="switchLevelTab('subjects')" id="tab-subjects">📘 المواد</button>
+                    <button onclick="switchLevelTab('students')" id="tab-students">👨‍🎓 الطلاب</button>
+                    <button onclick="switchLevelTab('professors')" id="tab-professors">👨‍🏫 الأساتذة</button>
+                    <button onclick="switchLevelTab('reports')" id="tab-reports">📋 التقارير</button>
+                    <button onclick="switchLevelTab('statistics')" id="tab-statistics">📊 الإحصائيات</button>
+                </div>
+                <div id="levelDetailContent"></div>
+            </div>
+
+            <!-- ====== لوحة إدارة المرحلة ====== -->
+            <div id="addLevelPanel" style="display:none;">
+                <div class="flex-between" style="margin-bottom:10px;">
+                    <h3 style="font-size:0.95rem;">⚙️ إدارة المراحل</h3>
+                    <button onclick="hideAddLevelPanel()" class="btn-secondary btn-sm">✕ إغلاق</button>
+                </div>
+                <div class="card">
+                    <h4>👨‍🏫 إضافة أستاذ جديد</h4>
+                    <div class="grid-2">
+                        <div>
+                            <label>اسم الأستاذ</label>
+                            <input type="text" id="newProfName" placeholder="مثال: د. خالد">
+                            <label>كلمة المرور</label>
+                            <input type="text" id="newProfPass" placeholder="كلمة مرور الأستاذ">
+                        </div>
+                        <div>
+                            <label>المرحلة</label>
+                            <select id="newProfLevel">
+                                <option value="1">المرحلة الأولى (بولونيا)</option>
+                                <option value="2">المرحلة الثانية (سنوي)</option>
+                                <option value="3">المرحلة الثالثة (سنوي)</option>
+                            </select>
+                            <button onclick="addProfessor()" class="btn-add" style="margin-top:6px;">➕ إضافة أستاذ</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <h4>📘 إضافة مادة جديدة</h4>
+                    <div class="grid-2">
+                        <div>
+                            <label>اسم المادة</label>
+                            <input type="text" id="newSubjectName" placeholder="مثال: فيزياء نووية">
+                            <label>عدد الساعات في الأسبوع</label>
+                            <input type="number" id="newSubjectHours" value="2" min="1" max="10">
+                        </div>
+                        <div>
+                            <label>المرحلة</label>
+                            <select id="newSubjectLevel">
+                                <option value="1">المرحلة الأولى (بولونيا)</option>
+                                <option value="2">المرحلة الثانية (سنوي)</option>
+                                <option value="3">المرحلة الثالثة (سنوي)</option>
+                            </select>
+                            <label>نوع المادة</label>
+                            <select id="newSubjectType">
+                                <option value="نظري">نظري</option>
+                                <option value="عملي">عملي</option>
+                                <option value="نظري+عملي">نظري+عملي</option>
+                            </select>
+                            <label>الأستاذ المسؤول</label>
+                            <select id="newSubjectProfessor"></select>
+                            <button onclick="addSubject()" class="btn-add" style="margin-top:6px;">➕ إضافة مادة</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <h4>📋 قائمة الأساتذة</h4>
+                    <div id="fullProfessorsList" style="max-height:250px; overflow-y:auto;"></div>
+                </div>
+                <div class="card">
+                    <h4>📋 قائمة المواد</h4>
+                    <div id="fullSubjectsList" style="max-height:250px; overflow-y:auto;"></div>
+                </div>
+                <div class="card">
+                    <h4>⚠️ إدارة البيانات</h4>
+                    <button onclick="resetAllData()" class="btn-danger" style="width:100%;">إعادة ضبط جميع البيانات</button>
+                    <small>سيتم حذف جميع البيانات وإعادة تعيينها إلى البيانات الافتراضية</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== تبويب الأستاذ ==================== -->
+        <div id="tab-professor" class="tab-content">
+            <div class="grid-2">
+                <div>
+                    <div class="card">
+                        <h4>📖 تفاصيل المادة</h4>
+                        <div id="profSubjectInfo"><p style="color:red; font-size:12px;">⚠️ لم يتم تعيين مادة لك بعد.</p></div>
+                    </div>
+                    <div class="card">
+                        <h4>⚡ الإعدادات السريعة</h4>
+                        <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                            <label style="font-size:12px; margin:0;">ساعات الغياب الافتراضية:</label>
+                            <input type="number" id="quickAbsentHours" value="1" min="0.5" step="0.5" style="width:80px;">
+                            <label style="font-size:12px; margin:0;">النوع:</label>
+                            <select id="quickExcused" style="width:120px;">
+                                <option value="0">بدون عذر</option>
+                                <option value="1">بعذر</option>
+                            </select>
+                            <button onclick="toggleQuickMode()" class="quick-mode-toggle" id="quickModeToggle">⚡ وضع سريع</button>
+                        </div>
+                        <small>في الوضع السريع، اضغط على ✅ حاضر أو ❌ غائب لتسجيل الحالة مباشرة.</small>
+                    </div>
+                    <div class="card">
+                        <h4>📷 مسح باركود الطالب</h4>
+                        <button onclick="toggleScanner()" class="btn-info" id="scanToggleBtn" style="width:100%;">📷 فتح الماسح</button>
+                        <div id="scannerContainer" style="display:none; margin-top:8px;">
+                            <div id="reader" style="width:100%; max-width:400px; margin:0 auto; background:#000; border-radius:12px; overflow:hidden;"></div>
+                            <button onclick="stopScanner()" class="btn-danger btn-sm" style="margin-top:6px; width:100%;">✕ إغلاق الكاميرا</button>
+                        </div>
+                        <small>ضع باركود الطالب (الذي يحوي معرفه) أمام الكاميرا لتسجيل الغياب تلقائياً.</small>
+                    </div>
+                    <div class="card">
+                        <h4>📅 تسجيل غياب (يدوي)</h4>
+                        <label>اختر الطالب</label>
+                        <select id="profStudentSelect"></select>
+                        <label>عدد ساعات الغياب</label>
+                        <input type="number" id="profAbsentHours" value="1" min="0.5" step="0.5">
+                        <label>تاريخ الغياب</label>
+                        <input type="date" id="profAbsentDate">
+                        <label>نوع الغياب</label>
+                        <select id="profExcused">
+                            <option value="0">بدون عذر</option>
+                            <option value="1">بعذر مشروع</option>
+                        </select>
+                        <button onclick="recordAttendance()" class="btn-success" style="margin-top:6px;">تسجيل الغياب</button>
+                    </div>
+                </div>
+                <div>
+                    <div class="card">
+                        <h4>📤 إرسال التقارير</h4>
+                        <button onclick="sendToOfficer()" style="background:#805ad5; width:100%; margin-bottom:4px;">📨 إرسال لمسؤول الغيابات</button>
+                        <small style="display:block; margin-top:3px; color:#718096;">⚠️ إرسال الرسائل يتم من قبل مسؤول الغيابات</small>
+                    </div>
+                    <div class="card">
+                        <h4>👥 الشعب والطلاب</h4>
+                        <div id="profGroupsContainer" style="margin-top:8px;"></div>
+                    </div>
+                    <div class="card">
+                        <h4>📊 سجل الغيابات والحالة التراكمية</h4>
+                        <div id="profAttendanceTable"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== تبويب مسؤول الغيابات ==================== -->
+        <div id="tab-officer" class="tab-content">
+            <div id="officerLevelView" class="level-view">
+                <h2 style="font-size:1rem;">📚 المراحل الدراسية</h2>
+                <p style="color:#4a5568; margin-bottom:8px; font-size:12px;">اختر مرحلة لعرض التقارير والغيابات والإحصائيات</p>
+                <div id="officerLevelsContainer" class="grid-3" style="margin-top:8px;"></div>
+            </div>
+
+            <div id="officerLevelDetailView" class="level-detail-view">
+                <div class="level-detail-header">
+                    <h2 id="officerLevelDetailTitle">المرحلة</h2>
+                    <button onclick="backToOfficerLevels()" class="back-btn">↩️ العودة</button>
+                </div>
+
+                <div class="level-detail-tabs">
+                    <button onclick="switchOfficerTab('reports')" class="active-tab" id="otab-reports">📋 التقارير</button>
+                    <button onclick="switchOfficerTab('statistics')" id="otab-statistics">📊 الإحصائيات</button>
+                    <button onclick="switchOfficerTab('messages')" id="otab-messages">📱 المراسلة</button>
+                </div>
+                <div id="officerDetailContent"></div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ==================== نافذة إدارة المرحلة ==================== -->
+    <div id="levelManagementModal" class="modal-overlay">
+        <div class="modal-box">
+            <button class="close-btn" onclick="closeLevelManagement()">&times;</button>
+            <h2 id="levelManagementTitle" style="font-size:1.1rem;">📚 إدارة المرحلة</h2>
+            <div class="grid-2">
+                <div>
+                    <div class="card">
+                        <h4>👨‍🏫 الأساتذة</h4>
+                        <div id="levelProfessorsList" style="max-height:220px; overflow-y:auto;"></div>
+                        <div style="margin-top:8px; border-top:1px solid #e2e8f0; padding-top:8px;">
+                            <label>إضافة أستاذ جديد</label>
+                            <input type="text" id="newProfNameLevel" placeholder="اسم الأستاذ">
+                            <input type="text" id="newProfPassLevel" placeholder="كلمة المرور" style="margin-top:3px;">
+                            <button onclick="addProfessorToLevel()" class="btn-success" style="margin-top:4px;">➕ إضافة أستاذ</button>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <div class="card">
+                        <h4>📘 المواد</h4>
+                        <div id="levelSubjectsList" style="max-height:220px; overflow-y:auto;"></div>
+                        <div style="margin-top:8px; border-top:1px solid #e2e8f0; padding-top:8px;">
+                            <label>إضافة مادة من المنهج</label>
+                            <select id="levelSubjectSelect"></select>
+                            <label style="margin-top:3px;">الأستاذ المسؤول</label>
+                            <select id="levelSubjectProfessor"></select>
+                            <button onclick="addSubjectToLevel()" class="btn-success" style="margin-top:4px;">➕ إضافة مادة</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== زر العودة للأعلى ==================== -->
+    <button id="backToTop" class="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+
+    <script>
+        // ==============================================================
+        //  CURRICULUM DATA (نفسه)
+        // ==============================================================
+        const CURRICULUM = {
+            semester1: {
+                name: 'الفصل الأول - المرحلة الأولى (نظام بولونيا)',
+                system: 'بولونيا',
+                level: 1,
+                semester: 1,
+                subjects: [
+                    { name: 'ميكانيك I', english: 'Mechanics I', type: 'نظري+عملي', hours: 3, ects: 7, code: 'PHY101' },
+                    { name: 'كهرباء', english: 'Electricity', type: 'نظري+عملي', hours: 3, ects: 7, code: 'PHY102' },
+                    { name: 'حرارة', english: 'Heat', type: 'نظري', hours: 2, ects: 4, code: 'PHY103' },
+                    { name: 'تفاضل', english: 'Differential Calculus', type: 'نظري', hours: 2, ects: 4, code: 'PHY104' },
+                    { name: 'أساسيات التربية', english: 'Fundamentals of Education', type: 'نظري', hours: 2, ects: 2, code: 'COE101' },
+                    { name: 'لغة عربية I', english: 'Arabic Language I', type: 'نظري', hours: 2, ects: 2, code: 'UOB101' },
+                    { name: 'حاسوب I', english: 'Computer I', type: 'عملي', hours: 1, ects: 3, code: 'UOB102' }
+                ]
+            },
+            semester2: {
+                name: 'الفصل الثاني - المرحلة الأولى (نظام بولونيا)',
+                system: 'بولونيا',
+                level: 1,
+                semester: 2,
+                subjects: [
+                    { name: 'ميكانيك II', english: 'Mechanics II', type: 'نظري+عملي', hours: 3, ects: 7, code: 'PHY105' },
+                    { name: 'مغناطيسية', english: 'Magnetism', type: 'نظري+عملي', hours: 3, ects: 7, code: 'PHY106' },
+                    { name: 'خواص المادة', english: 'Properties of the Material', type: 'نظري', hours: 2, ects: 4, code: 'PHY107' },
+                    { name: 'تكامل', english: 'Integral Calculus', type: 'نظري', hours: 2, ects: 4, code: 'PHY108' },
+                    { name: 'أساسيات علم النفس', english: 'Basics of Psychology', type: 'نظري', hours: 2, ects: 2, code: 'COE102' },
+                    { name: 'لغة إنجليزية I', english: 'English Language I', type: 'نظري', hours: 2, ects: 2, code: 'UOB103' },
+                    { name: 'الديمقراطية وحقوق الإنسان', english: 'Democracy and Human Rights', type: 'نظري', hours: 2, ects: 2, code: 'UOB104' }
+                ]
+            },
+            level2: {
+                name: 'المرحلة الثانية (نظام سنوي)',
+                system: 'سنوي',
+                level: 2,
+                subjects: [
+                    { name: 'ميكانيك', english: 'Mechanics', type: 'نظري', hours: 2 },
+                    { name: 'كهرباء', english: 'Electricity', type: 'نظري', hours: 2 },
+                    { name: 'حرارة', english: 'Heat', type: 'نظري', hours: 2 },
+                    { name: 'حاسوب', english: 'Computer', type: 'نظري', hours: 1 },
+                    { name: 'علم النفس', english: 'Psychology', type: 'نظري', hours: 2 },
+                    { name: 'أصول التربية', english: 'Principles of Education', type: 'نظري', hours: 2 },
+                    { name: 'حقوق الإنسان', english: 'Human Rights', type: 'نظري', hours: 2 },
+                    { name: 'لغة إنجليزية', english: 'English Language', type: 'نظري', hours: 2 },
+                    { name: 'لغة عربية', english: 'Arabic Language', type: 'نظري', hours: 2 },
+                    { name: 'كهرباء عملي', english: 'Electricity Practical', type: 'عملي', hours: 1 },
+                    { name: 'ميكانيك عملي', english: 'Mechanics Practical', type: 'عملي', hours: 1 },
+                    { name: 'مناقشة ميكانيك', english: 'Mechanics Discussion', type: 'نظري', hours: 1 },
+                    { name: 'مناقشة كهرباء', english: 'Electricity Discussion', type: 'نظري', hours: 1 },
+                    { name: 'مناقشة حرارة', english: 'Heat Discussion', type: 'نظري', hours: 1 }
+                ]
+            },
+            level3: {
+                name: 'المرحلة الثالثة (نظام سنوي)',
+                system: 'سنوي',
+                level: 3,
+                subjects: [
+                    { name: 'الإلكترونيات', english: 'Electronics', type: 'نظري+عملي', hours: 3 },
+                    { name: 'الفيزياء الذرية والجزيئية', english: 'Atomic and Molecular Physics', type: 'نظري+عملي', hours: 3 },
+                    { name: 'مادة اختيارية', english: 'Elective Subject', type: 'نظري', hours: 3 },
+                    { name: 'الثرموديناميك', english: 'Thermodynamic', type: 'نظري', hours: 3 },
+                    { name: 'الدوال المعقدة', english: 'Complex Functions', type: 'نظري', hours: 3 },
+                    { name: 'الميكانيك التحليلي', english: 'Analytical Mechanics', type: 'نظري', hours: 3 },
+                    { name: 'الإرشاد والصحة النفسية', english: 'Counseling and Psychological Health', type: 'نظري', hours: 1 },
+                    { name: 'طرائق التدريس', english: 'Teaching Methods', type: 'نظري', hours: 1 },
+                    { name: 'تكنولوجيا التعليم وتطبيقاتها', english: 'Educational Technology and its Applications', type: 'نظري', hours: 1 }
+                ]
+            }
+        };
+
+        // ==============================================================
+        //  DATA LAYER (localStorage) مع دعم النسخ الاحتياطي
+        // ==============================================================
+        const DB = {
+            get(key, def) { try { return JSON.parse(localStorage.getItem(key)) || def; } catch(e) { return def; } },
+            set(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
+        };
+
+        let state = {
+            professors: [],
+            subjects: [],
+            students: [],
+            attendances: [],
+            notifications: [],
+            currentUser: null,
+            selectedStudents: [],
+            currentLevel: null,
+            currentLevelKey: null,
+            selectedStudentsForAttendance: [],
+            chartInstance: null,
+            quickMode: false
+        };
+
+        let html5QrCode = null;
+        let isScanning = false;
+
+        // ========== دالة الحفظ مع تأكيد ==========
+        function saveAll() {
+            DB.set('professors', state.professors);
+            DB.set('subjects', state.subjects);
+            DB.set('students', state.students);
+            DB.set('attendances', state.attendances);
+            DB.set('notifications', state.notifications);
+            // تسجيل وقت آخر حفظ
+            DB.set('lastBackupTime', new Date().toISOString());
+            // عرض رسالة تأكيد في واجهة المستخدم (اختياري)
+            const statusEl = document.getElementById('saveStatus');
+            if (statusEl) {
+                statusEl.textContent = '✅ تم الحفظ في ' + new Date().toLocaleString();
+                statusEl.style.color = '#2f855a';
+                setTimeout(() => { statusEl.textContent = ''; }, 3000);
+            }
+            console.log('✅ تم حفظ البيانات بنجاح في ' + new Date().toLocaleString());
+        }
+
+        // ========== تصدير نسخة احتياطية كاملة ==========
+        function exportBackup() {
+            const data = {
+                professors: state.professors,
+                subjects: state.subjects,
+                students: state.students,
+                attendances: state.attendances,
+                notifications: state.notifications,
+                backupDate: new Date().toISOString(),
+                version: '1.0'
+            };
+            const json = JSON.stringify(data, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `نسخة_احتياطية_الغيابات_${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            alert('✅ تم تحميل النسخة الاحتياطية بنجاح.');
+        }
+
+        // ========== استعادة نسخة احتياطية ==========
+        function restoreBackup(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (!data.professors || !data.subjects || !data.students) {
+                        alert('❌ الملف غير صالح. تأكد من أنه نسخة احتياطية صحيحة.');
+                        return;
+                    }
+                    if (!confirm('⚠️ سيتم استبدال جميع البيانات الحالية بالنسخة الاحتياطية. هل أنت متأكد؟')) return;
+                    state.professors = data.professors || [];
+                    state.subjects = data.subjects || [];
+                    state.students = data.students || [];
+                    state.attendances = data.attendances || [];
+                    state.notifications = data.notifications || [];
+                    saveAll();
+                    renderAll();
+                    alert('✅ تم استعادة النسخة الاحتياطية بنجاح.');
+                } catch(err) {
+                    alert('❌ خطأ: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+        // ==============================================================
+        //  HASH PASSWORD (SHA-256)
+        // ==============================================================
+        async function hashPassword(password) {
+            const enc = new TextEncoder().encode(password);
+            const hash = await crypto.subtle.digest('SHA-256', enc);
+            return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
+        }
+
+        // ==============================================================
+        //  INIT
+        // ==============================================================
+        async function initializeDefaultData() {
+            const hasProfessors = DB.get('professors', null);
+            const hasStudents = DB.get('students', null);
+            const hasSubjects = DB.get('subjects', null);
+            if (hasProfessors && hasProfessors.length > 0 && hasStudents && hasStudents.length > 0 && hasSubjects && hasSubjects.length > 0) return;
+
+            const hash1 = await hashPassword('1234');
+            const hash2 = await hashPassword('5678');
+            const defaultData = {
+                professors: [
+                    { id: 'p_1', name: 'د. أحمد', password: hash1, level: 1 },
+                    { id: 'p_2', name: 'د. سارة', password: hash2, level: 1 }
+                ],
+                subjects: [{
+                    id: 's_1',
+                    name: 'ميكانيك I (نظري)',
+                    english: 'Mechanics I (Theoretical)',
+                    professorId: 'p_1',
+                    level: 1,
+                    systemType: 'بولونيا',
+                    groupType: 'نظري',
+                    hoursPerWeek: 3,
+                    totalWeeks: 30,
+                    totalHours: 90,
+                    code: 'PHY101',
+                    ects: 7
+                }, {
+                    id: 's_2',
+                    name: 'كهرباء (عملي)',
+                    english: 'Electricity (Practical)',
+                    professorId: 'p_2',
+                    level: 1,
+                    systemType: 'بولونيا',
+                    groupType: 'عملي',
+                    hoursPerWeek: 3,
+                    totalWeeks: 30,
+                    totalHours: 90,
+                    code: 'PHY102',
+                    ects: 7
+                }],
+                students: [
+                    { id: 'st_1', name: 'علي حسن', section: 'A', group: 'A', phone: '07901234567', guardianPhone: '07801234567', level: 1, groupType: 'نظري' },
+                    { id: 'st_2', name: 'حسين محمد', section: 'A', group: 'A', phone: '07901234568', guardianPhone: '07801234568', level: 1, groupType: 'نظري' },
+                    { id: 'st_3', name: 'زينب علي', section: 'A', group: 'A', phone: '07901234569', guardianPhone: '07801234569', level: 1, groupType: 'نظري' },
+                    { id: 'st_4', name: 'أحمد رشيد', section: 'B', group: 'B', phone: '07901234570', guardianPhone: '07801234570', level: 1, groupType: 'نظري' },
+                    { id: 'st_5', name: 'نورا سامي', section: 'B', group: 'B', phone: '07901234571', guardianPhone: '07801234571', level: 1, groupType: 'نظري' },
+                    { id: 'st_6', name: 'سارة أحمد', section: 'C', group: 'C', phone: '07902345678', guardianPhone: '07802345678', level: 1, groupType: 'عملي' },
+                    { id: 'st_7', name: 'نور حسين', section: 'C', group: 'C', phone: '07902345679', guardianPhone: '07802345679', level: 1, groupType: 'عملي' },
+                    { id: 'st_8', name: 'ليلى عمر', section: 'D', group: 'D', phone: '07902345680', guardianPhone: '07802345680', level: 1, groupType: 'عملي' },
+                    { id: 'st_9', name: 'مروة خالد', section: 'D', group: 'D', phone: '07902345681', guardianPhone: '07802345681', level: 1, groupType: 'عملي' }
+                ],
+                attendances: [
+                    { id: 'a_1', studentId: 'st_1', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
+                    { id: 'a_2', studentId: 'st_2', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
+                    { id: 'a_3', studentId: 'st_3', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
+                    { id: 'a_4', studentId: 'st_4', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
+                    { id: 'a_5', studentId: 'st_5', subjectId: 's_1', date: '2026-08-20', hours: 0, excused: 0 },
+                    { id: 'a_6', studentId: 'st_6', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
+                    { id: 'a_7', studentId: 'st_7', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
+                    { id: 'a_8', studentId: 'st_8', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
+                    { id: 'a_9', studentId: 'st_9', subjectId: 's_2', date: '2026-08-20', hours: 0, excused: 0 },
+                    { id: 'a_10', studentId: 'st_1', subjectId: 's_1', date: '2026-08-21', hours: 2, excused: 0 },
+                    { id: 'a_11', studentId: 'st_6', subjectId: 's_2', date: '2026-08-21', hours: 1.5, excused: 1 }
+                ],
+                notifications: [{ msg: '📌 تم إنشاء النظام مع بيانات افتراضية (مشفرة)', time: new Date().toLocaleString() }]
+            };
+
+            if (!hasProfessors || hasProfessors.length === 0) DB.set('professors', defaultData.professors);
+            if (!hasStudents || hasStudents.length === 0) DB.set('students', defaultData.students);
+            if (!hasSubjects || hasSubjects.length === 0) DB.set('subjects', defaultData.subjects);
+            if (!DB.get('attendances', null) || DB.get('attendances', []).length === 0) DB.set('attendances', defaultData.attendances);
+            if (!DB.get('notifications', null) || DB.get('notifications', []).length === 0) DB.set('notifications', defaultData.notifications);
+            DB.set('lastBackupTime', new Date().toISOString());
+        }
+
+        // ==============================================================
+        //  AUTH
+        // ==============================================================
+        async function handleLogin() {
+            const username = document.getElementById('loginUsername').value.trim();
+            const password = document.getElementById('loginPassword').value.trim();
+            document.getElementById('loginError').innerText = '';
+
+            const adminHash = await hashPassword('admin123');
+            const officerHash = await hashPassword('officer123');
+
+            if (username === 'admin') {
+                if (await hashPassword(password) === adminHash) {
+                    state.currentUser = { role: 'admin', id: 'admin', name: 'رئيس القسم' };
+                    enterApp(); return;
+                }
+            }
+            if (username === 'officer') {
+                if (await hashPassword(password) === officerHash) {
+                    state.currentUser = { role: 'officer', id: 'officer', name: 'مسؤول الغيابات' };
+                    enterApp(); return;
+                }
+            }
+
+            for (let prof of state.professors) {
+                if (prof.name === username) {
+                    if (typeof prof.password === 'string' && prof.password.length !== 64) {
+                        const newHash = await hashPassword(prof.password);
+                        prof.password = newHash;
+                        saveAll();
+                    }
+                    if (await hashPassword(password) === prof.password) {
+                        state.currentUser = { role: 'professor', id: prof.id, name: prof.name };
+                        enterApp(); return;
+                    }
+                }
+            }
+            document.getElementById('loginError').innerText = '❌ اسم المستخدم أو كلمة المرور غير صحيحة.';
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !document.getElementById('loginPage').classList.contains('hidden')) handleLogin();
+        });
+
+        function enterApp() {
+            document.getElementById('loginPage').classList.add('hidden');
+            document.getElementById('appContainer').classList.remove('hidden');
+            document.getElementById('currentUserDisplay').innerText = '👤 ' + state.currentUser.name;
+            renderAll();
+            setAutoDateRange();
+            // إضافة عنصر حالة الحفظ
+            const saveStatus = document.createElement('div');
+            saveStatus.id = 'saveStatus';
+            saveStatus.style.cssText = 'position:fixed; bottom:70px; left:50%; transform:translateX(-50%); background:#1a3a5e; color:white; padding:6px 18px; border-radius:30px; font-size:12px; z-index:9999; box-shadow:0 2px 10px rgba(0,0,0,0.2); display:none;';
+            document.body.appendChild(saveStatus);
+            // إظهار رسالة ترحيب
+            const lastBackup = DB.get('lastBackupTime', null);
+            if (lastBackup) {
+                console.log('📅 آخر نسخة احتياطية: ' + new Date(lastBackup).toLocaleString());
+            }
+        }
+
+        function logout() {
+            state.currentUser = null;
+            document.getElementById('appContainer').classList.add('hidden');
+            document.getElementById('loginPage').classList.remove('hidden');
+            document.getElementById('loginPassword').value = '';
+            if (state.chartInstance) { state.chartInstance.destroy(); state.chartInstance = null; }
+            if (html5QrCode) {
+                try { html5QrCode.stop(); html5QrCode.clear(); } catch(e) {}
+                html5QrCode = null;
+            }
+            const statusEl = document.getElementById('saveStatus');
+            if (statusEl) statusEl.remove();
+        }
+
+        // ==============================================================
+        //  EXPORT / IMPORT (الوظائف العادية)
+        // ==============================================================
+        function exportData() {
+            const data = { professors: state.professors, subjects: state.subjects, students: state.students, attendances: state.attendances, notifications: state.notifications };
+            const json = JSON.stringify(data, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'بيانات_الغيابات_' + new Date().toLocaleDateString() + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            alert('✅ تم تصدير البيانات بنجاح!');
+        }
+
+        function importData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (!data.professors || !data.subjects || !data.students) { alert('❌ الملف غير صالح.'); return; }
+                    if (!confirm('⚠️ سيتم استبدال جميع البيانات الحالية. هل أنت متأكد؟')) return;
+                    state.professors = data.professors || [];
+                    state.subjects = data.subjects || [];
+                    state.students = data.students || [];
+                    state.attendances = data.attendances || [];
+                    state.notifications = data.notifications || [];
+                    saveAll();
+                    renderAll();
+                    alert('✅ تم استيراد البيانات بنجاح!');
+                } catch(err) { alert('❌ خطأ: ' + err.message); }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+        function exportToExcel(levelOnly = false) {
+            let filteredAttendances = state.attendances;
+            if (levelOnly && state.currentLevel) {
+                const studentIdsInLevel = state.students.filter(st => st.level === state.currentLevel).map(st => st.id);
+                const subjectIdsInLevel = state.subjects.filter(s => s.level === state.currentLevel).map(s => s.id);
+                filteredAttendances = state.attendances.filter(a => studentIdsInLevel.includes(a.studentId) && subjectIdsInLevel.includes(a.subjectId));
+                if (filteredAttendances.length === 0) { alert('⚠️ لا توجد غيابات مسجلة للمرحلة ' + getLevelName(state.currentLevel)); return; }
+            } else if (state.attendances.length === 0) { alert('⚠️ لا توجد غيابات لتصديرها.'); return; }
+
+            const data = filteredAttendances.map(a => {
+                const student = state.students.find(s => s.id === a.studentId);
+                const subject = state.subjects.find(s => s.id === a.subjectId);
+                return {
+                    'الطالب': student ? student.name : 'غير معروف',
+                    'المادة': subject ? subject.name : 'غير معروفة',
+                    'التاريخ': a.date,
+                    'عدد الساعات': a.hours,
+                    'النوع': a.excused === 1 ? 'بعذر' : 'بدون عذر',
+                    'المرحلة': subject ? getLevelName(subject.level) : '-',
+                    'الشعبة': student ? student.group || student.section : '-'
+                };
+            });
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'الغيابات');
+            XLSX.writeFile(wb, `تقرير_الغيابات_${new Date().toISOString().split('T')[0]}.xlsx`);
+            alert('✅ تم تصدير ملف Excel بنجاح!');
+        }
+
+        // ==============================================================
+        //  📤 استيراد الطلاب من Excel
+        // ==============================================================
+        function importStudentsFromExcel(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const statusDiv = document.getElementById('excelImportStatus');
+            statusDiv.textContent = '⏳ جاري قراءة الملف...';
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const rows = XLSX.utils.sheet_to_json(firstSheet);
+
+                    if (rows.length === 0) {
+                        statusDiv.textContent = '❌ الملف فارغ.';
+                        return;
+                    }
+
+                    const requiredCols = ['name', 'group', 'groupType', 'level'];
+                    const firstRow = rows[0];
+                    const missing = requiredCols.filter(col => !(col in firstRow));
+                    if (missing.length > 0) {
+                        statusDiv.textContent = '❌ الأعمدة الناقصة: ' + missing.join(', ') + '. تأكد من وجودها في الملف.';
+                        return;
+                    }
+
+                    let added = 0;
+                    let skipped = 0;
+                    let errors = [];
+
+                    rows.forEach((row, index) => {
+                        const name = row['name']?.trim();
+                        const group = row['group']?.toString().trim() || 'غير محدد';
+                        const groupType = row['groupType']?.toString().trim() || 'نظري';
+                        const level = parseInt(row['level']) || 1;
+                        const phone = row['phone']?.toString().trim() || '';
+                        const guardianPhone = row['guardianPhone']?.toString().trim() || '';
+
+                        if (!name) {
+                            errors.push(`الصف ${index+1}: الاسم فارغ`);
+                            return;
+                        }
+
+                        const existing = state.students.find(s => s.name === name && s.level === level && s.group === group);
+                        if (existing) {
+                            skipped++;
+                            return;
+                        }
+
+                        const id = 'st_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+                        state.students.push({
+                            id,
+                            name,
+                            section: group,
+                            group: group,
+                            groupType: groupType,
+                            level: level,
+                            phone: phone,
+                            guardianPhone: guardianPhone
+                        });
+                        added++;
+                    });
+
+                    saveAll();
+                    renderAll();
+                    statusDiv.textContent = `✅ تم استيراد ${added} طالب بنجاح. ${skipped} مكرر. ${errors.length} خطأ.`;
+                    if (errors.length > 0) {
+                        statusDiv.textContent += `\n⚠️ الأخطاء: ${errors.slice(0,5).join('; ')}${errors.length > 5 ? ' ...' : ''}`;
+                    }
+                    alert(`✅ تم استيراد ${added} طالب بنجاح!`);
+
+                } catch(err) {
+                    statusDiv.textContent = '❌ خطأ: ' + err.message;
+                    alert('❌ حدث خطأ أثناء قراءة الملف: ' + err.message);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+            event.target.value = '';
+        }
+
+        // ==============================================================
+        //  📄 تحميل نموذج Excel للطلاب
+        // ==============================================================
+        function downloadStudentsTemplate() {
+            const template = [
+                { name: 'علي حسن', group: 'A', groupType: 'نظري', level: 1, phone: '07901234567', guardianPhone: '07801234567' },
+                { name: 'سارة أحمد', group: 'C', groupType: 'عملي', level: 1, phone: '07902345678', guardianPhone: '07802345678' }
+            ];
+            const ws = XLSX.utils.json_to_sheet(template);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'الطلاب');
+            XLSX.writeFile(wb, 'نموذج_استيراد_الطلاب.xlsx');
+            alert('✅ تم تحميل ملف النموذج بنجاح.');
+        }
+
+        // ==============================================================
+        //  RENDER ENGINE
+        // ==============================================================
+        function renderAll() {
+            if (!state.currentUser) return;
+            renderTabs();
+            if (state.currentUser.role === 'admin') renderAdmin();
+            else if (state.currentUser.role === 'professor') renderProfessor();
+            else if (state.currentUser.role === 'officer') renderOfficer();
+        }
+
+        function renderTabs() {
+            const container = document.getElementById('tabButtonsContainer');
+            container.innerHTML = '';
+            const tabs = [];
+            if (state.currentUser.role === 'admin') tabs.push({ id: 'tab-admin', label: '📚 المراحل' });
+            else if (state.currentUser.role === 'professor') tabs.push({ id: 'tab-professor', label: '📚 لوحة الأستاذ' });
+            else if (state.currentUser.role === 'officer') tabs.push({ id: 'tab-officer', label: '📊 مسؤول الغيابات' });
+
+            tabs.forEach((tab, idx) => {
+                const btn = document.createElement('button');
+                btn.innerText = tab.label;
+                btn.dataset.target = tab.id;
+                if (idx === 0) btn.classList.add('active');
+                btn.onclick = () => switchTab(tab.id, btn);
+                container.appendChild(btn);
+            });
+            const firstTab = tabs[0]?.id;
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            if (firstTab) document.getElementById(firstTab).classList.add('active');
+            populateAllSelects();
+        }
+
+        function switchTab(tabId, btn) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            document.querySelectorAll('.tab-buttons button').forEach(b => b.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+            state.currentLevel = null;
+            state.currentLevelKey = null;
+            if (tabId === 'tab-admin') {
+                document.getElementById('levelView').classList.remove('hidden');
+                document.getElementById('levelDetailView').classList.remove('active');
+                renderAdmin();
+            } else if (tabId === 'tab-professor') {
+                renderProfessor();
+            } else if (tabId === 'tab-officer') {
+                document.getElementById('officerLevelView').classList.remove('hidden');
+                document.getElementById('officerLevelDetailView').classList.remove('active');
+                renderOfficer();
+            }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function populateAllSelects() {
+            const profSelect = document.getElementById('newSubjectProfessor');
+            if (profSelect) {
+                profSelect.innerHTML = '<option value="">-- اختر أستاذ --</option>';
+                state.professors.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.innerText = p.name + (p.level ? ' (المرحلة ' + p.level + ')' : '');
+                    profSelect.appendChild(opt);
+                });
+            }
+            ['subProf', 'levelSubjectProfessor'].forEach(id => {
+                const sel = document.getElementById(id);
+                if (!sel) return;
+                sel.innerHTML = '<option value="">-- اختر --</option>';
+                state.professors.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.innerText = p.name;
+                    sel.appendChild(opt);
+                });
+            });
+            populateLevelSubjectSelect(1);
+        }
+
+        // ==============================================================
+        //  HELPERS
+        // ==============================================================
+        function getLevelStats(level) {
+            const levelSubjects = state.subjects.filter(s => s.level === level);
+            const levelStudents = state.students.filter(s => s.level === level);
+            const professorsIds = [...new Set(levelSubjects.map(s => s.professorId))];
+            const levelProfessors = state.professors.filter(p => professorsIds.includes(p.id) || p.level === level);
+            return { subjects: levelSubjects, students: levelStudents, professors: levelProfessors, subjectCount: levelSubjects.length, studentCount: levelStudents.length, professorCount: levelProfessors.length };
+        }
+
+        function getLevelName(level) {
+            const names = { 1: 'المرحلة الأولى', 2: 'المرحلة الثانية', 3: 'المرحلة الثالثة' };
+            return names[level] || `المرحلة ${level}`;
+        }
+
+        function getLevelSystem(level) { return level === 1 ? 'بولونيا' : 'سنوي'; }
+        function getLevelIcon(level) { const icons = { 1: '🟦', 2: '🟩', 3: '🟧' }; return icons[level] || '📚'; }
+
+        // ==============================================================
+        //  دالة حساب حالة الغياب
+        // ==============================================================
+        function getStatus(unexcusedPct, totalPct) {
+            if (unexcusedPct > 10) return 'راسب';
+            if (totalPct > 15) return 'راسب';
+            if (totalPct >= 10) return 'إنذار نهائي';
+            if (totalPct >= 5) return 'إنذار أولي';
+            return 'جيد';
+        }
+
+        // ==============================================================
+        //  ADMIN FUNCTIONS (مختصرة - كما هي)
+        // ==============================================================
+        let currentManagementLevel = null;
+
+        function renderAdmin() {
+            if (state.currentLevel) { showLevelDetail(state.currentLevel, state.currentLevelKey); return; }
+            renderLevels();
+            populateAllSelects();
+            renderFullProfessorsList();
+            renderFullSubjectsList();
+            document.getElementById('excelImportStatus').textContent = '';
+        }
+
+        function renderLevels() {
+            const container = document.getElementById('levelsContainer');
+            const levels = [1, 2, 3];
+            let html = '';
+            levels.forEach(level => {
+                const stats = getLevelStats(level);
+                const system = getLevelSystem(level);
+                const icon = getLevelIcon(level);
+                const systemLabel = system === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي';
+                html += `
+                    <div class="level-card" onclick="selectLevel(${level})">
+                        <span class="level-icon">${icon}</span>
+                        <div class="level-name">${getLevelName(level)}</div>
+                        <div class="level-system" style="font-size:0.8rem; color:#718096;">${systemLabel}</div>
+                        <div class="level-stats">
+                            <span>📘 ${stats.subjectCount} مواد</span>
+                            <span>👨‍🎓 ${stats.studentCount} طلاب</span>
+                            <span>👨‍🏫 ${stats.professorCount} أساتذة</span>
+                        </div>
+                        <div style="display:flex; gap:4px; justify-content:center; margin-top:6px; flex-wrap:wrap;">
+                            <button onclick="event.stopPropagation(); openLevelManagement(${level})" class="btn-sm btn-info" style="min-width:45px; padding:3px 6px; font-size:10px;">⚙️ إدارة</button>
+                            <button onclick="event.stopPropagation(); selectLevel(${level})" class="btn-sm btn-secondary" style="min-width:45px; padding:3px 6px; font-size:10px;">📋 عرض</button>
+                        </div>
+                        <div class="click-hint" style="font-size:0.65rem; color:#a0aec0; margin-top:4px;">👆 اضغط للعرض</div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function selectLevel(level) {
+            state.currentLevel = level;
+            state.currentLevelKey = 'level' + level;
+            document.getElementById('levelView').classList.add('hidden');
+            document.getElementById('levelDetailView').classList.add('active');
+            showLevelDetail(level, state.currentLevelKey);
+        }
+
+        function showLevelDetail(level, levelKey) {
+            const stats = getLevelStats(level);
+            const system = getLevelSystem(level);
+            const systemLabel = system === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي';
+            document.getElementById('levelDetailTitle').innerHTML = `${getLevelIcon(level)} ${getLevelName(level)} - ${systemLabel} <span style="font-size:0.7rem;font-weight:normal;">(${stats.subjectCount} مواد | ${stats.studentCount} طلاب | ${stats.professorCount} أساتذة)</span>`;
+            showLevelGroups(level);
+            document.querySelectorAll('.level-detail-tabs button').forEach(btn => btn.classList.remove('active-tab'));
+            document.getElementById('tab-groups').classList.add('active-tab');
+        }
+
+        function switchLevelTab(tab) {
+            document.querySelectorAll('.level-detail-tabs button').forEach(btn => btn.classList.remove('active-tab'));
+            document.getElementById('tab-' + tab).classList.add('active-tab');
+            const level = state.currentLevel;
+            const stats = getLevelStats(level);
+            if (tab === 'groups') showLevelGroups(level);
+            else if (tab === 'subjects') showLevelSubjects(level, stats);
+            else if (tab === 'students') showLevelStudents(level, stats);
+            else if (tab === 'professors') showLevelProfessors(level, stats);
+            else if (tab === 'reports') showLevelReports(level);
+            else if (tab === 'statistics') showLevelStatistics(level);
+        }
+
+        function backToLevels() {
+            state.currentLevel = null;
+            state.currentLevelKey = null;
+            document.getElementById('levelDetailView').classList.remove('active');
+            document.getElementById('levelView').classList.remove('hidden');
+            renderLevels();
+        }
+
+        function getGroupsForLevel(level, groupType) {
+            const students = state.students.filter(st => st.level === level && st.groupType === groupType);
+            const groups = {};
+            students.forEach(st => {
+                const groupName = st.group || st.section || 'غير محدد';
+                if (!groups[groupName]) groups[groupName] = [];
+                groups[groupName].push(st);
+            });
+            return groups;
+        }
+
+        function showLevelGroups(level) {
+            const container = document.getElementById('levelDetailContent');
+            const theoreticalGroups = getGroupsForLevel(level, 'نظري');
+            const practicalGroups = getGroupsForLevel(level, 'عملي');
+            let html = '';
+            if (Object.keys(theoreticalGroups).length > 0) {
+                html += `<h4 style="margin-top:10px; color:#2b6cb0; font-size:0.95rem;">📖 المجموعة النظرية</h4><div class="groups-grid">`;
+                for (const [groupName, students] of Object.entries(theoreticalGroups)) {
+                    html += createGroupCard(groupName, students, level, 'نظري');
+                }
+                html += `</div>`;
+            }
+            if (Object.keys(practicalGroups).length > 0) {
+                html += `<h4 style="margin-top:10px; color:#2f855a; font-size:0.95rem;">🔬 المجموعة العملية</h4><div class="groups-grid">`;
+                for (const [groupName, students] of Object.entries(practicalGroups)) {
+                    html += createGroupCard(groupName, students, level, 'عملي');
+                }
+                html += `</div>`;
+            }
+            if (!html) html = `<div class="card"><p style="color:#a0aec0; text-align:center; padding:15px;">📭 لا توجد شعب مسجلة في هذه المرحلة</p></div>`;
+            container.innerHTML = html;
+        }
+
+        function createGroupCard(groupName, students, level, groupType) {
+            const icons = { 'A': '🟦', 'B': '🟩', 'C': '🟧', 'D': '🟥', 'A1': '🔵', 'A2': '🟢', 'A3': '🟠', 'A4': '🔴', 'B1': '🟣', 'B2': '🟡', 'B3': '🟤', 'B4': '⚪' };
+            const icon = icons[groupName] || '📚';
+            let html = `
+                <div class="group-card">
+                    <div class="group-header">
+                        <div class="group-title">
+                            <span class="group-icon">${icon}</span>
+                            <span class="group-name">الشعبة ${groupName}</span>
+                            <span class="group-count">(${students.length} طلاب)</span>
+                        </div>
+                        <div style="display:flex; gap:4px;">
+                            <button onclick="addStudentToGroup(${level}, '${groupName}', '${groupType}')" class="btn-sm btn-success" style="min-width:25px; padding:2px 6px; font-size:10px;">➕</button>
+                        </div>
+                    </div>
+                    <div class="students-grid">
+            `;
+            students.forEach(st => {
+                html += `
+                    <div class="student-item">
+                        <span class="student-name">👨‍🎓 ${st.name}</span>
+                        <div class="student-actions">
+                            <button onclick="moveStudentGroup('${st.id}', '${groupName}', '${groupType}', ${level})" class="btn-sm btn-warning" style="min-width:20px; padding:1px 4px; font-size:8px;" title="نقل">↕</button>
+                            <button onclick="removeStudentFromGroup('${st.id}')" class="btn-sm btn-danger" style="min-width:20px; padding:1px 4px; font-size:8px;" title="إزالة">✕</button>
+                        </div>
+                    </div>
+                `;
+            });
+            html += `</div></div>`;
+            return html;
+        }
+
+        function addStudentToGroup(level, groupName, groupType) {
+            const studentName = prompt(`إضافة طالب جديد إلى الشعبة ${groupName}:`);
+            if (!studentName) return;
+            const id = 'st_' + Date.now();
+            state.students.push({ id, name: studentName, section: groupName, group: groupName, phone: '', guardianPhone: '', level, groupType });
+            saveAll();
+            linkStudentsToSubjects();
+            renderAdmin();
+            alert(`✅ تم إضافة الطالب ${studentName} إلى الشعبة ${groupName}`);
+        }
+
+        function removeStudentFromGroup(studentId) {
+            if (!confirm('⚠️ هل أنت متأكد من إزالة هذا الطالب من الشعبة؟')) return;
+            const student = state.students.find(s => s.id === studentId);
+            if (!student) { alert('الطالب غير موجود'); return; }
+            student.group = 'غير محدد';
+            student.section = 'غير محدد';
+            saveAll();
+            renderAdmin();
+            alert('✅ تم إزالة الطالب من الشعبة');
+        }
+
+        function moveStudentGroup(studentId, currentGroup, groupType, level) {
+            const student = state.students.find(s => s.id === studentId);
+            if (!student) { alert('الطالب غير موجود'); return; }
+            const newGroup = prompt(`نقل الطالب ${student.name} من الشعبة ${currentGroup} إلى شعبة جديدة:`, currentGroup);
+            if (!newGroup) return;
+            student.group = newGroup;
+            student.section = newGroup;
+            saveAll();
+            renderAdmin();
+            alert(`✅ تم نقل الطالب ${student.name} إلى الشعبة ${newGroup}`);
+        }
+
+        function showLevelSubjects(level, stats) {
+            const container = document.getElementById('levelDetailContent');
+            if (stats.subjects.length === 0) {
+                container.innerHTML = `<div class="card"><p style="color:#a0aec0; text-align:center; padding:12px;">📭 لا توجد مواد مسجلة</p></div>`;
+                return;
+            }
+            let html = `<div class="card"><h4>📘 مواد ${getLevelName(level)}</h4><div class="table-wrapper"><table>
+                <tr><th>#</th><th>المادة</th><th>النوع</th><th>س/أسبوع</th><th>الأستاذ</th><th>ECTS</th></tr>`;
+            stats.subjects.forEach((sub, idx) => {
+                const prof = state.professors.find(p => p.id === sub.professorId);
+                const typeIcon = sub.groupType === 'نظري' ? '📖' : sub.groupType === 'عملي' ? '🔬' : '📖🔬';
+                const typeClass = sub.groupType === 'نظري' ? 'bg-blue' : sub.groupType === 'عملي' ? 'bg-green' : 'bg-purple';
+                html += `<tr><td>${idx + 1}</td><td>${sub.name}</td><td><span class="badge ${typeClass}">${typeIcon} ${sub.groupType}</span></td><td>${sub.hoursPerWeek}</td><td>${prof ? prof.name : 'غير معين'}</td><td>${sub.ects || '-'}</td></tr>`;
+            });
+            html += `</table></div></div>`;
+            container.innerHTML = html;
+        }
+
+        function showLevelStudents(level, stats) {
+            const container = document.getElementById('levelDetailContent');
+            if (stats.students.length === 0) {
+                container.innerHTML = `<div class="card"><p style="color:#a0aec0; text-align:center; padding:12px;">👨‍🎓 لا يوجد طلاب مسجلين</p></div>`;
+                return;
+            }
+            let html = `<div class="card"><h4>👨‍🎓 طلاب ${getLevelName(level)}</h4><div class="table-wrapper"><table>
+                <tr><th>#</th><th>الاسم</th><th>الشعبة</th><th>المجموعة</th><th>تليفون</th><th>ولي الأمر</th></tr>`;
+            stats.students.forEach((st, idx) => {
+                html += `<tr><td>${idx + 1}</td><td>${st.name}</td><td>${st.group || st.section || '-'}</td><td>${st.groupType}</td><td>${st.phone || '-'}</td><td>${st.guardianPhone || '-'}</td></tr>`;
+            });
+            html += `</table></div></div>`;
+            container.innerHTML = html;
+        }
+
+        function showLevelProfessors(level, stats) {
+            const container = document.getElementById('levelDetailContent');
+            if (stats.professors.length === 0) {
+                container.innerHTML = `<div class="card"><p style="color:#a0aec0; text-align:center; padding:12px;">👨‍🏫 لا يوجد أساتذة</p></div>`;
+                return;
+            }
+            let html = `<div class="card"><h4>👨‍🏫 أساتذة ${getLevelName(level)}</h4><div class="table-wrapper"><table>
+                <tr><th>#</th><th>الاسم</th><th>كلمة المرور</th><th>المواد</th></tr>`;
+            stats.professors.forEach((prof, idx) => {
+                const profSubjects = stats.subjects.filter(s => s.professorId === prof.id);
+                const subjectsNames = profSubjects.map(s => s.name).join('، ') || 'لا يوجد';
+                const passDisplay = state.currentUser.role === 'admin' ?
+                    `<span style="font-family:monospace;background:#edf2f7;padding:2px 6px;border-radius:4px;font-size:10px;">${prof.password.substring(0,8)}...</span>` :
+                    `<span class="password-hidden"></span>`;
+                html += `<tr><td>${idx + 1}</td><td>${prof.name}</td><td>${passDisplay}</td><td style="font-size:11px;">${subjectsNames}</td></tr>`;
+            });
+            html += `</table></div></div>`;
+            container.innerHTML = html;
+        }
+
+        function showLevelReports(level) {
+            const container = document.getElementById('levelDetailContent');
+            container.innerHTML = `
+                <div class="card">
+                    <h4>📋 تقرير الغيابات التراكمي - ${getLevelName(level)}</h4>
+                    <p style="font-size:12px; color:#4a5568;">يمكنك مشاهدة التقرير المفصل في لوحة مسؤول الغيابات.</p>
+                    <button onclick="switchTab('tab-officer', document.querySelector('.tab-buttons button[data-target=\\'tab-officer\\']'))" class="btn-info" style="margin-top:6px;">📊 الانتقال إلى تقرير مسؤول الغيابات</button>
+                </div>
+            `;
+        }
+
+        function showLevelStatistics(level) {
+            const container = document.getElementById('levelDetailContent');
+            const students = state.students.filter(st => st.level === level);
+            if (students.length === 0) {
+                container.innerHTML = `<div class="card"><p style="color:#a0aec0;">لا يوجد طلاب لعرض الإحصائيات</p></div>`;
+                return;
+            }
+            const labels = [];
+            const dataValues = [];
+            const colors = [];
+            students.forEach(st => {
+                const atts = state.attendances.filter(a => a.studentId === st.id);
+                const totalHours = atts.reduce((s, a) => s + a.hours, 0);
+                labels.push(st.name);
+                dataValues.push(totalHours);
+                if (totalHours === 0) colors.push('#48bb78');
+                else if (totalHours < 5) colors.push('#ecc94b');
+                else if (totalHours < 10) colors.push('#ed8936');
+                else colors.push('#fc8181');
+            });
+            let html = `
+                <div class="card">
+                    <h4>📊 إجمالي ساعات الغياب لكل طالب - ${getLevelName(level)}</h4>
+                    <div class="chart-container">
+                        <canvas id="levelChart"></canvas>
+                    </div>
+                    <small style="display:block; margin-top:4px;">🟢 جيد | 🟡 إنذار أولي | 🟠 إنذار نهائي | 🔴 راسب</small>
+                </div>
+                <div class="card">
+                    <h4>📈 ملخص سريع</h4>
+                    <div class="grid-3" style="margin-top:6px;">
+                        <div style="background:#c6f6d5; padding:8px; border-radius:8px; text-align:center;">
+                            <div style="font-size:20px; font-weight:bold; color:#22543d;">${students.filter(st => { const atts = state.attendances.filter(a => a.studentId === st.id); return atts.reduce((s,a) => s + a.hours, 0) === 0; }).length}</div>
+                            <div style="font-size:12px; color:#22543d;">✅ طلاب بدون غياب</div>
+                        </div>
+                        <div style="background:#fefcbf; padding:8px; border-radius:8px; text-align:center;">
+                            <div style="font-size:20px; font-weight:bold; color:#744210;">${students.filter(st => { const atts = state.attendances.filter(a => a.studentId === st.id); const total = atts.reduce((s,a) => s + a.hours, 0); return total > 0 && total < 5; }).length}</div>
+                            <div style="font-size:12px; color:#744210;">🟡 إنذار أولي</div>
+                        </div>
+                        <div style="background:#feebc8; padding:8px; border-radius:8px; text-align:center;">
+                            <div style="font-size:20px; font-weight:bold; color:#7b341e;">${students.filter(st => { const atts = state.attendances.filter(a => a.studentId === st.id); const total = atts.reduce((s,a) => s + a.hours, 0); return total >= 5 && total < 10; }).length}</div>
+                            <div style="font-size:12px; color:#7b341e;">🟠 إنذار نهائي</div>
+                        </div>
+                        <div style="background:#fed7d7; padding:8px; border-radius:8px; text-align:center; grid-column: span 3;">
+                            <div style="font-size:20px; font-weight:bold; color:#9b2c2c;">${students.filter(st => { const atts = state.attendances.filter(a => a.studentId === st.id); return atts.reduce((s,a) => s + a.hours, 0) >= 10; }).length}</div>
+                            <div style="font-size:12px; color:#9b2c2c;">🔴 راسب (غياب 10 ساعات فأكثر)</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.innerHTML = html;
+            setTimeout(() => {
+                const canvas = document.getElementById('levelChart');
+                if (!canvas) return;
+                if (state.chartInstance) { state.chartInstance.destroy(); state.chartInstance = null; }
+                const ctx = canvas.getContext('2d');
+                state.chartInstance = new Chart(ctx, {
+                    type: 'bar',
+                    data: { labels, datasets: [{ label: 'ساعات الغياب', data: dataValues, backgroundColor: colors, borderColor: '#2d3748', borderWidth: 1 }] },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(context) { return context.raw + ' ساعة'; } } } },
+                        scales: { y: { beginAtZero: true, title: { display: true, text: 'عدد الساعات' } }, x: { ticks: { maxRotation: 45, minRotation: 30 } } }
+                    }
+                });
+            }, 100);
+        }
+
+        function openLevelManagement(level) {
+            currentManagementLevel = level;
+            const modal = document.getElementById('levelManagementModal');
+            modal.classList.add('active');
+            document.getElementById('levelManagementTitle').innerHTML = `📚 إدارة ${getLevelName(level)} - ${getLevelSystem(level) === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي'}`;
+            renderLevelProfessors(level);
+            renderLevelSubjects(level);
+            populateLevelSubjectSelect(level);
+            populateLevelProfessorSelect(level);
+        }
+
+        function closeLevelManagement() {
+            document.getElementById('levelManagementModal').classList.remove('active');
+            currentManagementLevel = null;
+        }
+
+        function renderLevelProfessors(level) {
+            const container = document.getElementById('levelProfessorsList');
+            const stats = getLevelStats(level);
+            if (stats.professors.length === 0) {
+                container.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px; font-size:12px;">لا يوجد أساتذة</p>';
+                return;
+            }
+            let html = '';
+            stats.professors.forEach(p => {
+                const subjects = stats.subjects.filter(s => s.professorId === p.id);
+                const subjectsNames = subjects.map(s => s.name).join('، ') || 'لا يوجد مواد';
+                html += `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 6px; border-bottom:1px solid #e2e8f0; flex-wrap:wrap; gap:3px;">
+                        <div style="font-size:12px;">
+                            <strong>${p.name}</strong>
+                            <span style="font-size:10px; color:#718096; margin-right:4px;">(${subjects.length} مواد)</span>
+                            <div style="font-size:10px; color:#4a5568;">${subjectsNames}</div>
+                        </div>
+                        <button onclick="deleteProfessorFromLevel('${p.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function renderLevelSubjects(level) {
+            const container = document.getElementById('levelSubjectsList');
+            const stats = getLevelStats(level);
+            if (stats.subjects.length === 0) {
+                container.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px; font-size:12px;">لا توجد مواد</p>';
+                return;
+            }
+            let html = '';
+            stats.subjects.forEach(s => {
+                const prof = state.professors.find(p => p.id === s.professorId);
+                html += `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 6px; border-bottom:1px solid #e2e8f0; flex-wrap:wrap; gap:3px;">
+                        <div style="font-size:12px;">
+                            <strong>${s.name}</strong>
+                            <span style="font-size:10px; color:#718096; margin-right:4px;">${s.hoursPerWeek} س/أ</span>
+                            <div style="font-size:10px; color:#4a5568;">👨‍🏫 ${prof ? prof.name : 'غير معين'}</div>
+                        </div>
+                        <div style="display:flex; gap:3px;">
+                            <button onclick="editSubjectProfessor('${s.id}')" class="btn-sm btn-warning" style="min-width:25px; padding:1px 4px; font-size:10px;">👤</button>
+                            <button onclick="deleteSubjectFromLevel('${s.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        async function addProfessor() {
+            const name = document.getElementById('newProfName').value.trim();
+            const pass = document.getElementById('newProfPass').value.trim();
+            const level = parseInt(document.getElementById('newProfLevel').value);
+            if (!name || !pass) { alert('يرجى إدخال اسم الأستاذ وكلمة المرور'); return; }
+            if (state.professors.find(p => p.name === name)) { alert('هذا الأستاذ موجود مسبقاً'); return; }
+            const id = 'p_' + Date.now();
+            const hashedPass = await hashPassword(pass);
+            state.professors.push({ id, name, password: hashedPass, level });
+            saveAll();
+            document.getElementById('newProfName').value = '';
+            document.getElementById('newProfPass').value = '';
+            renderFullProfessorsList();
+            populateAllSelects();
+            renderLevels();
+            alert(`✅ تم إضافة الأستاذ ${name} بنجاح!`);
+        }
+
+        function addSubject() {
+            const name = document.getElementById('newSubjectName').value.trim();
+            const hours = parseFloat(document.getElementById('newSubjectHours').value);
+            const level = parseInt(document.getElementById('newSubjectLevel').value);
+            const type = document.getElementById('newSubjectType').value;
+            const professorId = document.getElementById('newSubjectProfessor').value;
+            if (!name) { alert('يرجى إدخال اسم المادة'); return; }
+            if (!hours || hours <= 0) { alert('يرجى إدخال عدد ساعات صحيح'); return; }
+            if (!professorId) { alert('يرجى اختيار أستاذ مسؤول للمادة'); return; }
+            const systemType = level === 1 ? 'بولونيا' : 'سنوي';
+            const id = 's_' + Date.now();
+            state.subjects.push({ id, name, english: name, professorId, level, systemType, groupType: type, hoursPerWeek: hours, totalWeeks: 30, totalHours: hours * 30, code: '', ects: 0 });
+            saveAll();
+            const studentsInLevel = state.students.filter(s => s.level === level && s.groupType === type);
+            studentsInLevel.forEach(student => {
+                const existing = state.attendances.some(a => a.studentId === student.id && a.subjectId === id);
+                if (!existing) {
+                    state.attendances.push({ id: 'a_link_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4), studentId: student.id, subjectId: id, date: new Date().toISOString().split('T')[0], hours: 0, excused: 0 });
+                }
+            });
+            document.getElementById('newSubjectName').value = '';
+            document.getElementById('newSubjectHours').value = '2';
+            renderFullSubjectsList();
+            populateAllSelects();
+            renderLevels();
+            renderAdmin();
+            alert(`✅ تم إضافة المادة ${name} بنجاح وربط ${studentsInLevel.length} طالب بها`);
+        }
+
+        function renderFullProfessorsList() {
+            const container = document.getElementById('fullProfessorsList');
+            if (state.professors.length === 0) {
+                container.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px;">لا يوجد أساتذة</p>';
+                return;
+            }
+            let html = '';
+            state.professors.forEach(p => {
+                const subjects = state.subjects.filter(s => s.professorId === p.id);
+                const subjectsNames = subjects.map(s => s.name).join('، ') || 'لا يوجد مواد';
+                html += `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 6px; border-bottom:1px solid #e2e8f0; flex-wrap:wrap; gap:3px;">
+                        <div style="font-size:12px;">
+                            <strong>${p.name}</strong>
+                            <span style="font-size:10px; color:#718096; margin-right:4px;">(${subjects.length} مواد)</span>
+                            <span style="font-size:10px; color:#4a5568;">المرحلة ${p.level || '-'}</span>
+                            <div style="font-size:10px; color:#4a5568;">${subjectsNames}</div>
+                        </div>
+                        <button onclick="deleteProfessorFull('${p.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function renderFullSubjectsList() {
+            const container = document.getElementById('fullSubjectsList');
+            if (state.subjects.length === 0) {
+                container.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px;">لا توجد مواد</p>';
+                return;
+            }
+            let html = '';
+            state.subjects.forEach(s => {
+                const prof = state.professors.find(p => p.id === s.professorId);
+                html += `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 6px; border-bottom:1px solid #e2e8f0; flex-wrap:wrap; gap:3px;">
+                        <div style="font-size:12px;">
+                            <strong>${s.name}</strong>
+                            <span style="font-size:10px; color:#718096; margin-right:4px;">${s.hoursPerWeek} س/أ</span>
+                            <span style="font-size:10px; color:#4a5568;">المرحلة ${s.level}</span>
+                            <div style="font-size:10px; color:#4a5568;">👨‍🏫 ${prof ? prof.name : 'غير معين'}</div>
+                        </div>
+                        <button onclick="deleteSubjectFull('${s.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function deleteProfessorFull(professorId) {
+            if (!confirm('⚠️ هل أنت متأكد من حذف هذا الأستاذ؟')) return;
+            const hasSubjects = state.subjects.some(s => s.professorId === professorId);
+            if (hasSubjects) {
+                if (!confirm('⚠️ هذا الأستاذ مسؤول عن مواد. هل تريد حذفه مع إلغاء تعيينه من المواد؟')) return;
+                state.subjects.forEach(s => { if (s.professorId === professorId) s.professorId = null; });
+            }
+            state.professors = state.professors.filter(p => p.id !== professorId);
+            saveAll();
+            renderFullProfessorsList();
+            populateAllSelects();
+            renderLevels();
+            alert('✅ تم حذف الأستاذ بنجاح');
+        }
+
+        function deleteSubjectFull(subjectId) {
+            if (!confirm('⚠️ هل أنت متأكد من حذف هذه المادة؟ سيتم حذف جميع غياباتها أيضاً.')) return;
+            state.attendances = state.attendances.filter(a => a.subjectId !== subjectId);
+            state.subjects = state.subjects.filter(s => s.id !== subjectId);
+            saveAll();
+            renderFullSubjectsList();
+            populateAllSelects();
+            renderLevels();
+            renderAdmin();
+            alert('✅ تم حذف المادة بنجاح');
+        }
+
+        async function addProfessorToLevel() {
+            if (!currentManagementLevel) { alert('الرجاء اختيار مرحلة أولاً'); return; }
+            const name = document.getElementById('newProfNameLevel').value.trim();
+            const pass = document.getElementById('newProfPassLevel').value.trim();
+            if (!name || !pass) { alert('يرجى إدخال اسم الأستاذ وكلمة المرور'); return; }
+            if (state.professors.find(p => p.name === name)) { alert('هذا الأستاذ موجود مسبقاً'); return; }
+            const id = 'p_' + Date.now();
+            const hashedPass = await hashPassword(pass);
+            state.professors.push({ id, name, password: hashedPass, level: currentManagementLevel });
+            saveAll();
+            document.getElementById('newProfNameLevel').value = '';
+            document.getElementById('newProfPassLevel').value = '';
+            renderLevelProfessors(currentManagementLevel);
+            populateLevelProfessorSelect(currentManagementLevel);
+            renderFullProfessorsList();
+            populateAllSelects();
+            renderLevels();
+            alert(`✅ تم إضافة الأستاذ ${name} إلى ${getLevelName(currentManagementLevel)}`);
+        }
+
+        function deleteProfessorFromLevel(professorId) {
+            if (!confirm('⚠️ هل أنت متأكد من حذف هذا الأستاذ؟')) return;
+            const hasSubjects = state.subjects.some(s => s.professorId === professorId);
+            if (hasSubjects) {
+                if (!confirm('⚠️ هذا الأستاذ مسؤول عن مواد. هل تريد حذفه مع إلغاء تعيينه من المواد؟')) return;
+                state.subjects.forEach(s => { if (s.professorId === professorId) s.professorId = null; });
+            }
+            state.professors = state.professors.filter(p => p.id !== professorId);
+            saveAll();
+            renderLevelProfessors(currentManagementLevel);
+            populateLevelProfessorSelect(currentManagementLevel);
+            renderFullProfessorsList();
+            populateAllSelects();
+            renderLevels();
+            alert('✅ تم حذف الأستاذ بنجاح');
+        }
+
+        function addSubjectToLevel() {
+            if (!currentManagementLevel) { alert('الرجاء اختيار مرحلة أولاً'); return; }
+            const subjectSelect = document.getElementById('levelSubjectSelect');
+            const professorSelect = document.getElementById('levelSubjectProfessor');
+            const subjectKey = subjectSelect.value;
+            const professorId = professorSelect.value;
+            if (!subjectKey || subjectKey === 'جميع المواد مضافة بالفعل') { alert('الرجاء اختيار مادة من المنهج'); return; }
+            if (!professorId) { alert('الرجاء اختيار أستاذ مسؤول'); return; }
+            let subjectData = null;
+            for (const [key, level] of Object.entries(CURRICULUM)) {
+                const found = level.subjects.find(s => s.name === subjectKey || (s.code && s.code === subjectKey));
+                if (found) { subjectData = found; break; }
+            }
+            if (!subjectData) {
+                for (const [key, level] of Object.entries(CURRICULUM)) {
+                    const found = level.subjects.find(s => s.name.includes(subjectKey) || subjectKey.includes(s.name));
+                    if (found) { subjectData = found; break; }
+                }
+            }
+            if (!subjectData) { alert('لم يتم العثور على المادة في المنهج'); return; }
+            const systemType = currentManagementLevel === 1 ? 'بولونيا' : 'سنوي';
+            const id = 's_' + Date.now();
+            state.subjects.push({ id, name: subjectData.name, english: subjectData.english || '', professorId, level: currentManagementLevel, systemType, groupType: subjectData.type || 'نظري', hoursPerWeek: subjectData.hours || 2, totalWeeks: 30, totalHours: (subjectData.hours || 2) * 30, code: subjectData.code || '', ects: subjectData.ects || 0 });
+            saveAll();
+            const studentsInLevel = state.students.filter(s => s.level === currentManagementLevel && s.groupType === subjectData.type);
+            studentsInLevel.forEach(student => {
+                const existing = state.attendances.some(a => a.studentId === student.id && a.subjectId === id);
+                if (!existing) {
+                    state.attendances.push({ id: 'a_link_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4), studentId: student.id, subjectId: id, date: new Date().toISOString().split('T')[0], hours: 0, excused: 0 });
+                }
+            });
+            renderLevelSubjects(currentManagementLevel);
+            populateLevelSubjectSelect(currentManagementLevel);
+            renderFullSubjectsList();
+            populateAllSelects();
+            renderLevels();
+            renderAdmin();
+            alert(`✅ تم إضافة المادة ${subjectData.name} وربط ${studentsInLevel.length} طالب بها`);
+        }
+
+        function deleteSubjectFromLevel(subjectId) {
+            if (!confirm('⚠️ هل أنت متأكد من حذف هذه المادة؟ سيتم حذف جميع غياباتها أيضاً.')) return;
+            state.attendances = state.attendances.filter(a => a.subjectId !== subjectId);
+            state.subjects = state.subjects.filter(s => s.id !== subjectId);
+            saveAll();
+            renderLevelSubjects(currentManagementLevel);
+            populateLevelSubjectSelect(currentManagementLevel);
+            renderFullSubjectsList();
+            populateAllSelects();
+            renderLevels();
+            renderAdmin();
+            alert('✅ تم حذف المادة بنجاح');
+        }
+
+        function editSubjectProfessor(subjectId) {
+            const subject = state.subjects.find(s => s.id === subjectId);
+            if (!subject) { alert('المادة غير موجودة'); return; }
+            const professors = state.professors.filter(p => p.level === currentManagementLevel || !p.level);
+            if (professors.length === 0) { alert('لا يوجد أساتذة في هذه المرحلة'); return; }
+            let options = professors.map((p, i) => `${i+1}. ${p.name}`).join('\n');
+            const newIndex = prompt(`تغيير الأستاذ المسؤول عن "${subject.name}":\nاختر رقم الأستاذ:\n${options}`);
+            if (newIndex === null) return;
+            const index = parseInt(newIndex) - 1;
+            if (isNaN(index) || index < 0 || index >= professors.length) { alert('اختيار غير صحيح'); return; }
+            subject.professorId = professors[index].id;
+            saveAll();
+            renderLevelSubjects(currentManagementLevel);
+            renderFullSubjectsList();
+            renderLevels();
+            alert('✅ تم تغيير الأستاذ المسؤول بنجاح');
+        }
+
+        function populateLevelSubjectSelect(level) {
+            const select = document.getElementById('levelSubjectSelect');
+            if (!select) return;
+            select.innerHTML = '<option value="">-- اختر مادة --</option>';
+            let levelSubjects = [];
+            for (const [key, levelData] of Object.entries(CURRICULUM)) {
+                if (levelData.level === level || key.includes('level' + level) || key === 'semester' + level) {
+                    levelSubjects = levelData.subjects;
+                    break;
+                }
+            }
+            if (levelSubjects.length === 0) {
+                for (const [key, levelData] of Object.entries(CURRICULUM)) {
+                    if (levelData.level === level) { levelSubjects = levelData.subjects; break; }
+                }
+            }
+            const existingSubjects = state.subjects.filter(s => s.level === level);
+            const existingNames = existingSubjects.map(s => s.name);
+            levelSubjects.forEach(sub => {
+                if (!existingNames.includes(sub.name)) {
+                    const opt = document.createElement('option');
+                    opt.value = sub.name;
+                    opt.innerText = `${sub.name} (${sub.hours} س/أ)${sub.code ? ' - ' + sub.code : ''}`;
+                    select.appendChild(opt);
+                }
+            });
+            if (select.options.length === 1) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.innerText = 'جميع المواد مضافة بالفعل';
+                select.appendChild(opt);
+            }
+        }
+
+        function populateLevelProfessorSelect(level) {
+            const select = document.getElementById('levelSubjectProfessor');
+            if (!select) return;
+            select.innerHTML = '<option value="">-- اختر أستاذ --</option>';
+            const professors = state.professors.filter(p => p.level === level || !p.level);
+            professors.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.innerText = p.name;
+                select.appendChild(opt);
+            });
+        }
+
+        function linkStudentsToSubjects() {
+            let linkedCount = 0;
+            let alreadyLinked = 0;
+            state.students.forEach(student => {
+                const matchingSubjects = state.subjects.filter(s => s.level === student.level && s.groupType === student.groupType);
+                matchingSubjects.forEach(subject => {
+                    const existing = state.attendances.some(a => a.studentId === student.id && a.subjectId === subject.id);
+                    if (!existing) {
+                        state.attendances.push({ id: 'a_link_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4), studentId: student.id, subjectId: subject.id, date: new Date().toISOString().split('T')[0], hours: 0, excused: 0 });
+                        linkedCount++;
+                    } else { alreadyLinked++; }
+                });
+            });
+            saveAll();
+            renderAll();
+            let msg = `✅ تم ربط ${linkedCount} طالب/طلبة بالمواد بنجاح!`;
+            if (alreadyLinked > 0) msg += `\n📌 ${alreadyLinked} طالب كانوا مرتبطين مسبقاً.`;
+            if (linkedCount === 0 && alreadyLinked === 0) msg = '📭 لا يوجد طلاب أو مواد لربطها.';
+            alert(msg);
+        }
+
+        function resetAllData() {
+            if (!confirm('⚠️ تحذير: سيتم حذف جميع البيانات الحالية. هل أنت متأكد؟')) return;
+            if (!confirm('تأكيد نهائي: هل أنت متأكد من رغبتك في حذف جميع البيانات؟')) return;
+            localStorage.clear();
+            initializeDefaultData().then(() => {
+                state.professors = DB.get('professors', []);
+                state.subjects = DB.get('subjects', []);
+                state.students = DB.get('students', []);
+                state.attendances = DB.get('attendances', []);
+                state.notifications = DB.get('notifications', []);
+                renderAll();
+                alert('✅ تم إعادة ضبط جميع البيانات');
+            });
+        }
+
+        function showAddLevelPanel() {
+            const panel = document.getElementById('addLevelPanel');
+            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+            populateAllSelects();
+            renderFullProfessorsList();
+            renderFullSubjectsList();
+        }
+
+        function hideAddLevelPanel() {
+            document.getElementById('addLevelPanel').style.display = 'none';
+        }
+
+        // ==============================================================
+        //  OFFICER (نفسه)
+        // ==============================================================
+        function renderOfficer() {
+            if (state.currentLevel) {
+                showOfficerLevelDetail(state.currentLevel);
+                return;
+            }
+            renderOfficerLevels();
+        }
+
+        function renderOfficerLevels() {
+            const container = document.getElementById('officerLevelsContainer');
+            const levels = [1, 2, 3];
+            let html = '';
+            levels.forEach(level => {
+                const stats = getLevelStats(level);
+                const system = getLevelSystem(level);
+                const icon = getLevelIcon(level);
+                const systemLabel = system === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي';
+                html += `
+                    <div class="level-card" onclick="selectOfficerLevel(${level})">
+                        <span class="level-icon">${icon}</span>
+                        <div class="level-name">${getLevelName(level)}</div>
+                        <div class="level-system" style="font-size:0.8rem; color:#718096;">${systemLabel}</div>
+                        <div class="level-stats">
+                            <span>📘 ${stats.subjectCount} مواد</span>
+                            <span>👨‍🎓 ${stats.studentCount} طلاب</span>
+                            <span>👨‍🏫 ${stats.professorCount} أساتذة</span>
+                        </div>
+                        <div class="click-hint" style="font-size:0.65rem; color:#a0aec0; margin-top:4px;">👆 اضغط لعرض التقرير</div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function selectOfficerLevel(level) {
+            state.currentLevel = level;
+            state.currentLevelKey = 'level' + level;
+            document.getElementById('officerLevelView').classList.add('hidden');
+            document.getElementById('officerLevelDetailView').classList.add('active');
+            showOfficerLevelDetail(level);
+        }
+
+        function showOfficerLevelDetail(level) {
+            const stats = getLevelStats(level);
+            const system = getLevelSystem(level);
+            const systemLabel = system === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي';
+            document.getElementById('officerLevelDetailTitle').innerHTML = `${getLevelIcon(level)} ${getLevelName(level)} - ${systemLabel} <span style="font-size:0.7rem;font-weight:normal;">(${stats.studentCount} طلاب | ${stats.subjectCount} مواد)</span>`;
+            document.querySelectorAll('#officerDetailContent .tab-pane').forEach(el => el.classList.remove('active'));
+            switchOfficerTab('reports');
+        }
+
+        function backToOfficerLevels() {
+            state.currentLevel = null;
+            state.currentLevelKey = null;
+            document.getElementById('officerLevelDetailView').classList.remove('active');
+            document.getElementById('officerLevelView').classList.remove('hidden');
+            renderOfficerLevels();
+            if (state.chartInstance) { state.chartInstance.destroy(); state.chartInstance = null; }
+        }
+
+        // ==============================================================
+        //  OFFICER TABS (مطور)
+        // ==============================================================
+        function switchOfficerTab(tab) {
+            document.querySelectorAll('.level-detail-tabs button').forEach(btn => btn.classList.remove('active-tab'));
+            const btnMap = { 'reports': 'otab-reports', 'statistics': 'otab-statistics', 'messages': 'otab-messages' };
+            const btn = document.getElementById(btnMap[tab]);
+            if (btn) btn.classList.add('active-tab');
+
+            const container = document.getElementById('officerDetailContent');
+            const level = state.currentLevel;
+            if (!level) return;
+
+            if (tab === 'reports') {
+                let html = `
+                    <div class="flex-between no-print">
+                        <h2 style="font-size:0.95rem;">📄 تقرير الغيابات التراكمي</h2>
+                        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                            <button onclick="generatePDF()" style="background:#c53030; font-size:12px; padding:6px 12px;">🖨️ طباعة PDF</button>
+                            <button onclick="exportOfficerReportExcel()" class="btn-excel no-print" style="font-size:12px; padding:6px 12px;">📊 تصدير Excel</button>
+                        </div>
+                    </div>
+                    <div class="card no-print">
+                        <h4>📅 تحديد فترة عرض السجلات</h4>
+                        <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:end;">
+                            <div>
+                                <label style="font-size:12px;">من تاريخ:</label>
+                                <input type="date" id="reportDateFrom" style="width:150px;">
+                            </div>
+                            <div>
+                                <label style="font-size:12px;">إلى تاريخ:</label>
+                                <input type="date" id="reportDateTo" style="width:150px;">
+                            </div>
+                            <button onclick="applyDateFilter()" class="btn-info btn-sm" style="min-height:32px;">تطبيق</button>
+                            <button onclick="clearDateFilter()" class="btn-secondary btn-sm" style="min-height:32px;">مسح</button>
+                            <button onclick="setAutoDateRange()" class="btn-warning btn-sm" style="min-height:32px;">تلقائي</button>
+                        </div>
+                        <small>تحديد فترة زمنية لعرض سجلات الغياب فقط (الحساب التراكمي يبقى على جميع السجلات).</small>
+                    </div>
+                    <div id="printable-report">
+                        <div style="text-align:center; margin-bottom:6px;">
+                            <h2 style="font-size:14px;">قسم الفيزياء - تقرير الغيابات التراكمي</h2>
+                            <p style="font-size:11px; color:#4a5568;" id="reportDateRangeDisplay">📅 جميع الفترات</p>
+                            <p style="font-size:10px; color:#718096;">تاريخ الطباعة: <span id="reportPrintDate"></span></p>
+                            <hr style="margin:4px 0;">
+                        </div>
+                        <div id="officerReportContent"></div>
+                    </div>
+                `;
+                container.innerHTML = html;
+                document.getElementById('reportPrintDate').innerText = new Date().toLocaleDateString('ar-EG');
+                updateReportDateDisplay();
+                renderOfficerReport(level);
+                
+                document.getElementById('reportDateFrom').addEventListener('change', function() {
+                    updateReportDateDisplay();
+                    if (state.currentLevel) renderOfficerReport(state.currentLevel);
+                });
+                document.getElementById('reportDateTo').addEventListener('change', function() {
+                    updateReportDateDisplay();
+                    if (state.currentLevel) renderOfficerReport(state.currentLevel);
+                });
+
+            } else if (tab === 'statistics') {
+                const students = state.students.filter(st => st.level === level);
+                if (students.length === 0) {
+                    container.innerHTML = `<div class="card"><p style="color:#a0aec0;">لا يوجد طلاب لعرض الإحصائيات</p></div>`;
+                    return;
+                }
+                const labels = [];
+                const dataValues = [];
+                const colors = [];
+                students.forEach(st => {
+                    const atts = state.attendances.filter(a => a.studentId === st.id);
+                    const totalHours = atts.reduce((s, a) => s + a.hours, 0);
+                    labels.push(st.name);
+                    dataValues.push(totalHours);
+                    if (totalHours === 0) colors.push('#48bb78');
+                    else if (totalHours < 5) colors.push('#ecc94b');
+                    else if (totalHours < 10) colors.push('#ed8936');
+                    else colors.push('#fc8181');
+                });
+                let html = `
+                    <div class="card">
+                        <h4>📊 إجمالي ساعات الغياب لكل طالب - ${getLevelName(level)}</h4>
+                        <div class="chart-container">
+                            <canvas id="officerChart"></canvas>
+                        </div>
+                        <small>🟢 جيد | 🟡 إنذار أولي | 🟠 إنذار نهائي | 🔴 راسب</small>
+                    </div>
+                    <div class="card">
+                        <h4>📈 ملخص سريع</h4>
+                        <div class="grid-3" style="margin-top:6px;">
+                            <div style="background:#c6f6d5; padding:8px; border-radius:8px; text-align:center;">
+                                <div style="font-size:20px; font-weight:bold; color:#22543d;">${students.filter(st => { const atts = state.attendances.filter(a => a.studentId === st.id); return atts.reduce((s,a) => s + a.hours, 0) === 0; }).length}</div>
+                                <div style="font-size:12px; color:#22543d;">✅ طلاب بدون غياب</div>
+                            </div>
+                            <div style="background:#fefcbf; padding:8px; border-radius:8px; text-align:center;">
+                                <div style="font-size:20px; font-weight:bold; color:#744210;">${students.filter(st => { const atts = state.attendances.filter(a => a.studentId === st.id); const total = atts.reduce((s,a) => s + a.hours, 0); return total > 0 && total < 5; }).length}</div>
+                                <div style="font-size:12px; color:#744210;">🟡 إنذار أولي</div>
+                            </div>
+                            <div style="background:#feebc8; padding:8px; border-radius:8px; text-align:center;">
+                                <div style="font-size:20px; font-weight:bold; color:#7b341e;">${students.filter(st => { const atts = state.attendances.filter(a => a.studentId === st.id); const total = atts.reduce((s,a) => s + a.hours, 0); return total >= 5 && total < 10; }).length}</div>
+                                <div style="font-size:12px; color:#7b341e;">🟠 إنذار نهائي</div>
+                            </div>
+                            <div style="background:#fed7d7; padding:8px; border-radius:8px; text-align:center; grid-column: span 3;">
+                                <div style="font-size:20px; font-weight:bold; color:#9b2c2c;">${students.filter(st => { const atts = state.attendances.filter(a => a.studentId === st.id); return atts.reduce((s,a) => s + a.hours, 0) >= 10; }).length}</div>
+                                <div style="font-size:12px; color:#9b2c2c;">🔴 راسب (غياب 10 ساعات فأكثر)</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.innerHTML = html;
+                setTimeout(() => {
+                    const canvas = document.getElementById('officerChart');
+                    if (!canvas) return;
+                    if (state.chartInstance) { state.chartInstance.destroy(); state.chartInstance = null; }
+                    const ctx = canvas.getContext('2d');
+                    state.chartInstance = new Chart(ctx, {
+                        type: 'bar',
+                        data: { labels, datasets: [{ label: 'ساعات الغياب', data: dataValues, backgroundColor: colors, borderColor: '#2d3748', borderWidth: 1 }] },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: true,
+                            plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(context) { return context.raw + ' ساعة'; } } } },
+                            scales: { y: { beginAtZero: true, title: { display: true, text: 'عدد الساعات' } }, x: { ticks: { maxRotation: 45, minRotation: 30 } } }
+                        }
+                    });
+                }, 100);
+
+            } else if (tab === 'messages') {
+                let html = `
+                    <div class="card no-print">
+                        <h4>📱 المراسلة الجماعية</h4>
+                        <label>رقم واتساب المسؤول</label>
+                        <input type="text" id="whatsappSenderNumber" class="phone-input" value="07811290951" placeholder="07811290951">
+                        <small>سيتم استخدام هذا الرقم لفتح محادثة واتساب</small>
+                        <div class="btn-group" style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;">
+                            <button onclick="sendWhatsAppToStudents()" class="btn-send-whatsapp" style="flex:1;">📱 للطلاب</button>
+                            <button onclick="sendWhatsAppToGuardians()" class="btn-send-whatsapp-guardian" style="flex:1;">👨‍👦 للأمه</button>
+                            <button onclick="copyAllMessages()" class="btn-copy-all" style="flex:1;">📋 نسخ الكل</button>
+                            <button onclick="openAllWhatsAppLinks()" class="btn-open-all" style="flex:1;">🚀 فتح الكل</button>
+                        </div>
+                        <small>رسالة واحدة لكل طالب/ولي أمر</small>
+                    </div>
+                    <div class="card no-print">
+                        <h4>🎯 اختيار الطلاب</h4>
+                        <div class="flex-row" style="gap:4px; display:flex; flex-wrap:wrap;">
+                            <button onclick="selectAllStudents()" class="btn-select-all btn-sm" style="flex:1;">تحديد الكل</button>
+                            <button onclick="deselectAllStudents()" class="btn-deselect-all btn-sm" style="flex:1;">إلغاء الكل</button>
+                            <button onclick="selectStudentsWithAbsence()" class="btn-warning btn-sm" style="flex:1;">المتغيبين</button>
+                        </div>
+                        <div id="studentSelectionContainer" class="student-select-grid" style="margin-top:6px;"></div>
+                        <small>اختر الطلاب المستهدفين</small>
+                    </div>
+                `;
+                container.innerHTML = html;
+                renderStudentSelection();
+            }
+        }
+
+        // ==============================================================
+        //  دالتا تطبيق ومسح الفلترة الزمنية
+        // ==============================================================
+        function applyDateFilter() {
+            updateReportDateDisplay();
+            if (state.currentLevel) renderOfficerReport(state.currentLevel);
+        }
+
+        function clearDateFilter() {
+            document.getElementById('reportDateFrom').value = '';
+            document.getElementById('reportDateTo').value = '';
+            updateReportDateDisplay();
+            if (state.currentLevel) renderOfficerReport(state.currentLevel);
+        }
+
+        // ==============================================================
+        //  📊 OFFICER REPORT (نفسه)
+        // ==============================================================
+        function getReportSubjects(level) {
+            let curriculumSubjects = [];
+            if (level === 1) {
+                curriculumSubjects = [
+                    ...(CURRICULUM.semester1?.subjects || []),
+                    ...(CURRICULUM.semester2?.subjects || [])
+                ];
+            } else {
+                const found = Object.values(CURRICULUM).find(c => c.level === level && !c.semester);
+                if (found) curriculumSubjects = found.subjects || [];
+            }
+            const actualSubjects = state.subjects.filter(s => s.level === level);
+            const result = [];
+            const used = new Set();
+
+            curriculumSubjects.forEach(c => {
+                const actual = actualSubjects.find(s =>
+                    !used.has(s.id) &&
+                    (s.name === c.name || s.name.includes(c.name) || c.name.includes(s.name))
+                );
+                if (actual) {
+                    result.push(actual);
+                    used.add(actual.id);
+                } else {
+                    result.push({
+                        id: `curriculum_${level}_${c.code || c.name}`,
+                        name: c.name,
+                        english: c.english || '',
+                        level,
+                        systemType: level === 1 ? 'بولونيا' : 'سنوي',
+                        groupType: c.type || 'نظري',
+                        hoursPerWeek: c.hours || 1,
+                        totalWeeks: 30,
+                        totalHours: (c.hours || 1) * 30,
+                        code: c.code || '',
+                        ects: c.ects || 0,
+                        _curriculumOnly: true
+                    });
+                }
+            });
+
+            actualSubjects.forEach(s => {
+                if (!used.has(s.id) && !result.some(r => r.name === s.name)) result.push(s);
+            });
+
+            return result;
+        }
+
+        function calculateAnnualAbsence(studentId, subject) {
+            if (!subject) return { totalAbsentHours: 0, absencePercentage: 0, status: 'جيد' };
+            const records = state.attendances.filter(a =>
+                a.studentId === studentId && a.subjectId === subject.id && Number(a.hours) > 0
+            );
+            const totalAbsentHours = records.reduce((sum, a) => sum + (Number(a.hours) || 0), 0);
+            const unexcusedHours = records
+                .filter(a => Number(a.excused) === 0)
+                .reduce((sum, a) => sum + (Number(a.hours) || 0), 0);
+            const excusedHours = records
+                .filter(a => Number(a.excused) === 1)
+                .reduce((sum, a) => sum + (Number(a.hours) || 0), 0);
+
+            const annualCourseHours = Number(subject.totalHours) > 0
+                ? Number(subject.totalHours)
+                : (Number(subject.hoursPerWeek) || 1) * (Number(subject.totalWeeks) || 30);
+
+            const absencePercentage = annualCourseHours > 0
+                ? (totalAbsentHours / annualCourseHours) * 100 : 0;
+            const unexcusedPercentage = annualCourseHours > 0
+                ? (unexcusedHours / annualCourseHours) * 100 : 0;
+
+            const status = getStatus(unexcusedPercentage, absencePercentage);
+            return { records, totalAbsentHours, unexcusedHours, excusedHours,
+                annualCourseHours, absencePercentage, unexcusedPercentage, status };
+        }
+
+        function getStatusStyle(status) {
+            if (status === 'راسب') return { cls:'status-fail', bg:'#fed7d7', fg:'#9b2c2c' };
+            if (status === 'إنذار نهائي') return { cls:'status-final-warning', bg:'#feebc8', fg:'#7b341e' };
+            if (status === 'إنذار أولي') return { cls:'status-first-warning', bg:'#fefcbf', fg:'#744210' };
+            return { cls:'status-good', bg:'#c6f6d5', fg:'#22543d' };
+        }
+
+        function renderOfficerReport(level) {
+            const printDate = document.getElementById('reportPrintDate');
+            if (printDate) printDate.innerText = new Date().toLocaleDateString('ar-EG');
+            updateReportDateDisplay();
+
+            const container = document.getElementById('officerReportContent');
+            if (!container) return;
+            const studentsInLevel = state.students.filter(st => st.level === level);
+            if (studentsInLevel.length === 0) {
+                container.innerHTML = '<p>لا يوجد طلاب في هذه المرحلة</p>';
+                return;
+            }
+
+            const from = document.getElementById('reportDateFrom').value;
+            const to = document.getElementById('reportDateTo').value;
+            let filteredAttendances = state.attendances;
+            if (from) filteredAttendances = filteredAttendances.filter(a => a.date >= from);
+            if (to) filteredAttendances = filteredAttendances.filter(a => a.date <= to);
+
+            const finalSubjects = getReportSubjects(level);
+            let html = `
+                <div id="printable-report" class="pdf-report" style="margin-top:10px;">
+                    <div style="text-align:center; margin-bottom:7px;">
+                        <h3 style="color:#1a3a5e; margin:0 0 3px; font-size:15px;">📊 تقرير الغياب السنوي التراكمي</h3>
+                        <p style="color:#4a5568; font-size:11px; margin:2px 0;">${getLevelName(level)} - ${getLevelSystem(level) === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي'}</p>
+                        <div class="report-legend">
+                            <span style="background:#c6f6d5; padding:2px 6px; border-radius:4px;">🟢 جيد: أقل من 5%</span>
+                            <span style="background:#fefcbf; padding:2px 6px; border-radius:4px;">🟡 إنذار أولي: 5%–أقل من 10%</span>
+                            <span style="background:#feebc8; padding:2px 6px; border-radius:4px;">🟠 إنذار نهائي: 10%–15%</span>
+                            <span style="background:#fed7d7; padding:2px 6px; border-radius:4px;">🔴 راسب: أكثر من 15% أو غير معذر أكثر من 10%</span>
+                        </div>
+                        <p style="font-size:9px; color:#718096; margin:2px 0;">التقرير يحسب <strong>مجموع ساعات غياب الطالب لجميع محاضرات السنة</strong> لكل مادة.</p>
+                    </div>
+                    <div class="report-table-wrapper">
+                        <table class="report-table" id="officerReportTable">
+                            <thead><tr><th>اسم الطالب</th>${finalSubjects.map(s => `<th title="${s.name}">${s.name}</th>`).join('')}</tr></thead>
+                            <tbody>`;
+
+            const sortedStudents = [...studentsInLevel].sort((a,b) => a.name.localeCompare(b.name, 'ar'));
+            sortedStudents.forEach(st => {
+                html += `<tr><td class="student-name">${st.name}</td>`;
+                finalSubjects.forEach(sub => {
+                    const d = sub._curriculumOnly ? {
+                        totalAbsentHours:0, unexcusedHours:0, excusedHours:0,
+                        annualCourseHours:Number(sub.totalHours)||((Number(sub.hoursPerWeek)||1)*(Number(sub.totalWeeks)||30)),
+                        absencePercentage:0, unexcusedPercentage:0, status:'جيد'
+                    } : calculateAnnualAbsence(st.id, sub);
+                    const style = getStatusStyle(d.status);
+                    const pct = d.absencePercentage.toFixed(1);
+                    const hours = d.totalAbsentHours.toFixed(1);
+                    html += `<td class="subject-cell ${style.cls}" style="background:${style.bg}; color:${style.fg}; border:1px solid #cbd5e0;">
+                        <span class="status-text" style="color:${style.fg}; font-weight:800;">${d.status}</span>
+                        <span class="percentage" style="color:${style.fg};">${pct}%</span>
+                        <span class="hours-detail" style="color:${style.fg};"><strong>${hours} س</strong> غياب سنوي</span>
+                    </td>`;
+                });
+                html += '</tr>';
+            });
+
+            html += `</tbody></table></div>
+                <div style="margin-top:7px;text-align:center;color:#718096;font-size:9px;border-top:1px solid #e2e8f0;padding-top:5px;">إعداد وتنفيذ <strong>م. دموسى محمد مهدي</strong> - رئيس قسم الفيزياء</div>
+                <div style="margin-top:4px;text-align:center;color:#9ca3af;font-size:8px;">كل خلية = الحالة الحالية حسب النسبة التراكمية / نسبة الغياب السنوية / مجموع ساعات الغياب طوال السنة.</div>
+                </div>
+                <div style="margin-top:10px;text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+                    <button onclick="window.print()" class="btn-print no-print">🖨️ طباعة التقرير</button>
+                    <button onclick="exportOfficerReportPDF()" class="btn-pdf no-print" style="background:#dc2626;">📄 تصدير تقرير PDF</button>
+                    <button onclick="exportOfficerReportExcel()" class="btn-excel no-print">📊 تصدير Excel</button>
+                </div>`;
+            container.innerHTML = html;
+        }
+
+        // ==============================================================
+        //  📄 تصدير التقرير إلى PDF متعدد الصفحات
+        // ==============================================================
+        function exportOfficerReportPDF() {
+            const element = document.getElementById('printable-report');
+            if (!element) {
+                alert('⚠️ لا يوجد تقرير لتصديره. الرجاء اختيار مرحلة أولاً.');
+                return;
+            }
+
+            const btns = document.querySelectorAll('.btn-pdf, .btn-print, .btn-excel');
+            btns.forEach(b => b.style.display = 'none');
+
+            html2canvas(element, {
+                scale: 2,
+                useCORS: true,
+                logging: false,
+                backgroundColor: '#ffffff',
+                allowTaint: true,
+                windowWidth: element.scrollWidth
+            }).then(canvas => {
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF('l', 'mm', 'a4');
+
+                const pageW = pdf.internal.pageSize.getWidth();
+                const pageH = pdf.internal.pageSize.getHeight();
+                const margin = 7;
+                const usableW = pageW - (margin * 2);
+                const usableH = pageH - (margin * 2);
+
+                const scale = usableW / canvas.width;
+                const slicePx = Math.floor(usableH / scale);
+
+                let y = 0;
+                let page = 0;
+
+                while (y < canvas.height) {
+                    if (page > 0) pdf.addPage();
+
+                    const h = Math.min(slicePx, canvas.height - y);
+                    const pageCanvas = document.createElement('canvas');
+                    pageCanvas.width = canvas.width;
+                    pageCanvas.height = h;
+
+                    const ctx = pageCanvas.getContext('2d');
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+                    ctx.drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
+
+                    const imgData = pageCanvas.toDataURL('image/png');
+                    const imgH = h * scale;
+                    pdf.addImage(imgData, 'PNG', margin, margin, usableW, imgH, undefined, 'FAST');
+
+                    y += h;
+                    page++;
+                }
+
+                const levelName = getLevelName(state.currentLevel) || 'المرحلة';
+                const date = new Date().toISOString().split('T')[0];
+                pdf.save(`تقرير_الغيابات_التراكمي_${levelName}_${date}.pdf`);
+
+                btns.forEach(b => b.style.display = '');
+                alert(`✅ تم إنشاء تقرير PDF بنجاح (${page} صفحة).`);
+            }).catch(err => {
+                btns.forEach(b => b.style.display = '');
+                alert('❌ حدث خطأ أثناء تصدير PDF: ' + err.message);
+            });
+        }
+
+        // ==============================================================
+        //  📊 تصدير التقرير إلى Excel
+        // ==============================================================
+        function exportOfficerReportExcel() {
+            const level = state.currentLevel;
+            if (!level) { alert('الرجاء اختيار مرحلة أولاً'); return; }
+            
+            const studentsInLevel = state.students.filter(st => st.level === level);
+            if (studentsInLevel.length === 0) { alert('لا يوجد طلاب في هذه المرحلة'); return; }
+            
+            const finalSubjects = getReportSubjects(level);
+            const data = [];
+            
+            studentsInLevel.forEach(st => {
+                const row = { 'الطالب': st.name };
+                finalSubjects.forEach(sub => {
+                    const d = calculateAnnualAbsence(st.id, sub);
+                    row[sub.name] = `${d.status} (${d.absencePercentage.toFixed(1)}% - ${d.totalAbsentHours.toFixed(1)} س)`;
+                });
+                data.push(row);
+            });
+            
+            const ws = XLSX.utils.json_to_sheet(data);
+            const colWidths = [{ wch: 20 }];
+            finalSubjects.forEach(() => colWidths.push({ wch: 22 }));
+            ws['!cols'] = colWidths;
+            
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'الغيابات التراكمية');
+            
+            const levelName = getLevelName(level);
+            const date = new Date().toISOString().split('T')[0];
+            XLSX.writeFile(wb, `تقرير_الغيابات_التراكمي_${levelName}_${date}.xlsx`);
+            alert('✅ تم تصدير التقرير إلى Excel بنجاح!');
+        }
+
+        // ==============================================================
+        //  PROFESSOR PANEL (مع خصوصية كاملة)
+        // ==============================================================
+        function getProfessorSubject() {
+            const profId = state.currentUser.id;
+            return state.subjects.find(s => s.professorId === profId);
+        }
+
+        function getStudentsForProfessor() {
+            const sub = getProfessorSubject();
+            if (!sub) return [];
+            // جلب الطلاب المرتبطين بهذه المادة فقط
+            const studentIds = state.attendances.filter(a => a.subjectId === sub.id).map(a => a.studentId);
+            const uniqueIds = [...new Set(studentIds)];
+            return state.students.filter(st => uniqueIds.includes(st.id));
+        }
+
+        // ========== دوال الماسح الضوئي ==========
+        function toggleScanner() {
+            const container = document.getElementById('scannerContainer');
+            if (container.style.display === 'none' || container.style.display === '') {
+                startScanner();
+            } else {
+                stopScanner();
+            }
+        }
+
+        function startScanner() {
+            if (typeof Html5Qrcode === 'undefined') {
+                alert('❌ مكتبة الباركود غير محملة. تأكد من اتصال الإنترنت.');
+                return;
+            }
+
+            const container = document.getElementById('scannerContainer');
+            container.style.display = 'block';
+            document.getElementById('scanToggleBtn').textContent = '⏳ جاري التشغيل...';
+            document.getElementById('scanToggleBtn').disabled = true;
+
+            if (html5QrCode) {
+                stopScanner().then(() => { startScanner(); });
+                return;
+            }
+
+            html5QrCode = new Html5Qrcode("reader");
+            const config = { fps: 15, qrbox: { width: 280, height: 160 } };
+
+            html5QrCode.start(
+                { facingMode: "environment" },
+                config,
+                onScanSuccess,
+                onScanError
+            ).then(() => {
+                document.getElementById('scanToggleBtn').textContent = '📷 إيقاف الماسح';
+                document.getElementById('scanToggleBtn').disabled = false;
+                isScanning = true;
+            }).catch(err => {
+                alert('❌ تعذر تشغيل الكاميرا: ' + err);
+                stopScanner();
+            });
+        }
+
+        function stopScanner() {
+            return new Promise((resolve) => {
+                if (html5QrCode) {
+                    html5QrCode.stop().then(() => {
+                        html5QrCode.clear();
+                        html5QrCode = null;
+                        document.getElementById('scannerContainer').style.display = 'none';
+                        document.getElementById('scanToggleBtn').textContent = '📷 فتح الماسح';
+                        document.getElementById('scanToggleBtn').disabled = false;
+                        isScanning = false;
+                        resolve();
+                    }).catch(err => {
+                        console.error('Error stopping scanner:', err);
+                        document.getElementById('scannerContainer').style.display = 'none';
+                        document.getElementById('scanToggleBtn').textContent = '📷 فتح الماسح';
+                        document.getElementById('scanToggleBtn').disabled = false;
+                        isScanning = false;
+                        resolve();
+                    });
+                } else {
+                    document.getElementById('scannerContainer').style.display = 'none';
+                    document.getElementById('scanToggleBtn').textContent = '📷 فتح الماسح';
+                    document.getElementById('scanToggleBtn').disabled = false;
+                    isScanning = false;
+                    resolve();
+                }
+            });
+        }
+
+        function onScanSuccess(decodedText, decodedResult) {
+            if (!isScanning) return;
+            
+            const sub = getProfessorSubject();
+            if (!sub) {
+                alert('⚠️ لم يتم تعيين مادة لك. لا يمكن تسجيل الغياب.');
+                return;
+            }
+
+            const studentId = decodedText.trim();
+            let student = state.students.find(s => s.id === studentId);
+            if (!student) student = state.students.find(s => s.name === studentId);
+
+            if (!student) {
+                alert(`❌ لم يتم العثور على طالب بالرقم: ${studentId}`);
+                return;
+            }
+
+            const today = new Date().toISOString().split('T')[0];
+            const hours = parseFloat(document.getElementById('quickAbsentHours').value) || 1;
+            const excused = parseInt(document.getElementById('quickExcused').value);
+
+            const existing = state.attendances.find(a => a.studentId === student.id && a.subjectId === sub.id && a.date === today);
+            if (existing) {
+                existing.hours = hours;
+                existing.excused = excused;
+            } else {
+                state.attendances.push({ id: 'a_' + Date.now(), studentId: student.id, subjectId: sub.id, date: today, hours: hours, excused: excused });
+            }
+            saveAll();
+            renderProfessor();
+            
+            stopScanner();
+            alert(`✅ تم تسجيل غياب للطالب ${student.name} (${hours} ساعات)`);
+        }
+
+        function onScanError(err) {
+            // ignore
+        }
+
+        // ========== تبديل الوضع السريع ==========
+        function toggleQuickMode() {
+            state.quickMode = !state.quickMode;
+            const btn = document.getElementById('quickModeToggle');
+            if (state.quickMode) {
+                btn.classList.add('active');
+                btn.textContent = '⚡ وضع سريع (نشط)';
+            } else {
+                btn.classList.remove('active');
+                btn.textContent = '⚡ وضع سريع';
+            }
+            renderProfessor();
+        }
+
+        function renderProfessor() {
+            const sub = getProfessorSubject();
+            const infoDiv = document.getElementById('profSubjectInfo');
+            const stuSelect = document.getElementById('profStudentSelect');
+            if (!sub) {
+                infoDiv.innerHTML = '<p style="color:red; font-size:12px;">⚠️ لم يتم تعيين مادة لك</p>';
+                stuSelect.innerHTML = '<option>--</option>';
+                document.getElementById('profAttendanceTable').innerHTML = '';
+                document.getElementById('profGroupsContainer').innerHTML = '<p style="color:#a0aec0; text-align:center; padding:10px;">لا توجد بيانات</p>';
+                return;
+            }
+            const prof = state.professors.find(p => p.id === sub.professorId);
+            const systemTag = sub.systemType === 'بولونيا' ? 'بولونيا' : 'سنوي';
+            const typeIcon = sub.groupType === 'نظري' ? '📖' : sub.groupType === 'عملي' ? '🔬' : '📖🔬';
+            const typeClass = sub.groupType === 'نظري' ? 'bg-blue' : sub.groupType === 'عملي' ? 'bg-green' : 'bg-purple';
+            const students = getStudentsForProfessor();
+            infoDiv.innerHTML = `
+                <p style="font-size:12px;"><strong>المادة:</strong> ${sub.name}</p>
+                <p style="font-size:12px;"><strong>النوع:</strong> <span class="badge ${typeClass}">${typeIcon} ${sub.groupType}</span></p>
+                <p style="font-size:12px;"><strong>النظام:</strong> ${systemTag} (المرحلة ${sub.level})</p>
+                <p style="font-size:12px;"><strong>إجمالي الساعات:</strong> ${sub.totalHours} س</p>
+                <p style="font-size:12px;"><strong>الأستاذ:</strong> ${prof ? prof.name : '--'}</p>
+                <p style="font-size:11px; color:#4a5568; margin-top:4px;">👨‍🎓 عدد الطلاب المرتبطين: ${students.length}</p>
+            `;
+            renderProfessorGroups(students);
+            stuSelect.innerHTML = '<option value="">-- اختر --</option>';
+            students.forEach(st => {
+                const opt = document.createElement('option');
+                opt.value = st.id;
+                opt.innerText = st.name + (st.group ? ' (' + st.group + ')' : '');
+                stuSelect.appendChild(opt);
+            });
+            if (!document.getElementById('profAbsentDate').value) {
+                document.getElementById('profAbsentDate').value = new Date().toISOString().split('T')[0];
+            }
+            renderProfessorAttendance(sub.id);
+        }
+
+        // ========== دالة عرض الشعب والطلاب مع الوضع السريع (معدلة للهواتف) ==========
+        function renderProfessorGroups(students) {
+            const container = document.getElementById('profGroupsContainer');
+            if (students.length === 0) {
+                container.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:10px;">📭 لا يوجد طلاب مرتبطون بهذه المادة</p>';
+                return;
+            }
+
+            const sub = getProfessorSubject();
+            const totalHours = sub ? sub.totalHours : 1;
+            const today = new Date().toISOString().split('T')[0];
+
+            const groups = {};
+            students.forEach(st => {
+                const groupName = st.group || st.section || 'غير محدد';
+                if (!groups[groupName]) groups[groupName] = [];
+                groups[groupName].push(st);
+            });
+
+            const icons = { 'A': '🟦', 'B': '🟩', 'C': '🟧', 'D': '🟥', 'A1': '🔵', 'A2': '🟢', 'A3': '🟠', 'A4': '🔴', 'B1': '🟣', 'B2': '🟡', 'B3': '🟤', 'B4': '⚪' };
+            let html = `<div class="groups-grid">`;
+            for (const [groupName, groupStudents] of Object.entries(groups)) {
+                const icon = icons[groupName] || '📚';
+                html += `
+                    <div class="group-card">
+                        <div class="group-header">
+                            <div class="group-title">
+                                <span class="group-icon">${icon}</span>
+                                <span class="group-name">الشعبة ${groupName}</span>
+                                <span class="group-count">(${groupStudents.length} طلاب)</span>
+                            </div>
+                            <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                                <button onclick="quickAbsentAll('${groupName}')" class="btn-danger btn-sm" style="min-width:60px; padding:3px 8px; font-size:10px;">❌ غياب الكل</button>
+                                <button onclick="quickPresentAll('${groupName}')" class="btn-success btn-sm" style="min-width:60px; padding:3px 8px; font-size:10px;">✅ حضور الكل</button>
+                            </div>
+                        </div>
+                        <div class="students-grid">
+                `;
+
+                if (state.quickMode) {
+                    groupStudents.forEach(st => {
+                        const atts = state.attendances.filter(a => a.studentId === st.id && a.subjectId === sub?.id);
+                        const totalAbsent = atts.reduce((s, a) => s + a.hours, 0);
+                        const unexcusedAbsent = atts.filter(a => a.excused === 0).reduce((s, a) => s + a.hours, 0);
+                        const pctUnexcused = (unexcusedAbsent / totalHours) * 100;
+                        const pctTotal = (totalAbsent / totalHours) * 100;
+                        const status = getStatus(pctUnexcused, pctTotal);
+                        let statusIcon = '';
+                        if (status === 'جيد') statusIcon = '🟢';
+                        else if (status === 'إنذار أولي') statusIcon = '🟡';
+                        else if (status === 'إنذار نهائي') statusIcon = '🟠';
+                        else if (status === 'راسب') statusIcon = '🔴';
+
+                        const hasAbsence = state.attendances.some(a => a.studentId === st.id && a.subjectId === sub?.id && a.date === today && a.hours > 0);
+
+                        html += `
+                            <div class="student-quick-item">
+                                <span class="student-name">${st.name} ${statusIcon}</span>
+                                <div class="btn-group">
+                                    <button onclick="quickRecord('${st.id}', 'present')" class="btn-present" style="${hasAbsence ? 'opacity:0.6;' : ''}">✅ حاضر</button>
+                                    <button onclick="quickRecord('${st.id}', 'absent')" class="btn-absent" style="${!hasAbsence ? 'opacity:0.6;' : ''}">❌ غائب</button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                } else {
+                    groupStudents.forEach(st => {
+                        const atts = state.attendances.filter(a => a.studentId === st.id && a.subjectId === sub?.id);
+                        const totalAbsent = atts.reduce((s, a) => s + a.hours, 0);
+                        const unexcusedAbsent = atts.filter(a => a.excused === 0).reduce((s, a) => s + a.hours, 0);
+                        const pctUnexcused = (unexcusedAbsent / totalHours) * 100;
+                        const pctTotal = (totalAbsent / totalHours) * 100;
+                        const status = getStatus(pctUnexcused, pctTotal);
+                        let statusIcon = '';
+                        if (status === 'جيد') statusIcon = '🟢';
+                        else if (status === 'إنذار أولي') statusIcon = '🟡';
+                        else if (status === 'إنذار نهائي') statusIcon = '🟠';
+                        else if (status === 'راسب') statusIcon = '🔴';
+
+                        const hasAbsence = state.attendances.some(a => a.studentId === st.id && a.subjectId === sub?.id && a.date === today && a.hours > 0);
+                        const statusBadge = hasAbsence ? '<span class="badge bg-red" style="font-size:8px;">غائب اليوم</span>' : '<span class="badge bg-green" style="font-size:8px;">حاضر اليوم</span>';
+
+                        html += `
+                            <div class="student-item">
+                                <span class="student-name">👨‍🎓 ${st.name} ${statusIcon} ${statusBadge}</span>
+                                <div class="student-actions">
+                                    <button onclick="markStudentAbsent('${st.id}')" class="btn-sm btn-warning" style="min-width:28px; padding:2px 6px; font-size:10px;" title="تسجيل غياب">📝</button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+                html += `</div></div>`;
+            }
+            html += `</div>`;
+            container.innerHTML = html;
+        }
+
+        // ========== دوال التسجيل السريع ==========
+        function quickRecord(studentId, action) {
+            const sub = getProfessorSubject();
+            if (!sub) { alert('لم يتم تعيين مادة لك'); return; }
+            const student = state.students.find(s => s.id === studentId);
+            if (!student) { alert('الطالب غير موجود'); return; }
+            const today = new Date().toISOString().split('T')[0];
+            const hours = parseFloat(document.getElementById('quickAbsentHours').value) || 1;
+            const excused = parseInt(document.getElementById('quickExcused').value);
+
+            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date === today);
+            
+            if (action === 'present') {
+                if (existing) {
+                    if (existing.hours === 0) {
+                        alert(`${student.name} مسجل كحاضر بالفعل`);
+                        return;
+                    }
+                    existing.hours = 0;
+                } else {
+                    state.attendances.push({ id: 'a_' + Date.now(), studentId, subjectId: sub.id, date: today, hours: 0, excused: 0 });
+                }
+                alert(`✅ تم تسجيل حضور ${student.name}`);
+            } else if (action === 'absent') {
+                if (existing) {
+                    if (existing.hours > 0) {
+                        alert(`${student.name} مسجل كغائب بالفعل (${existing.hours} ساعات)`);
+                        return;
+                    }
+                    existing.hours = hours;
+                    existing.excused = excused;
+                } else {
+                    state.attendances.push({ id: 'a_' + Date.now(), studentId, subjectId: sub.id, date: today, hours: hours, excused: excused });
+                }
+                alert(`❌ تم تسجيل غياب ${student.name} (${hours} ساعات)`);
+            }
+            saveAll();
+            renderProfessor();
+        }
+
+        function quickAbsentAll(groupName) {
+            const sub = getProfessorSubject();
+            if (!sub) { alert('لم يتم تعيين مادة لك'); return; }
+            const students = getStudentsForProfessor().filter(st => st.group === groupName || st.section === groupName);
+            if (students.length === 0) { alert('لا يوجد طلاب في هذه الشعبة'); return; }
+            if (!confirm(`⚠️ هل أنت متأكد من تسجيل غياب لجميع طلاب الشعبة ${groupName} (${students.length} طالب)؟`)) return;
+            
+            const today = new Date().toISOString().split('T')[0];
+            const hours = parseFloat(document.getElementById('quickAbsentHours').value) || 1;
+            const excused = parseInt(document.getElementById('quickExcused').value);
+            let count = 0;
+
+            students.forEach(st => {
+                const existing = state.attendances.find(a => a.studentId === st.id && a.subjectId === sub.id && a.date === today);
+                if (existing) {
+                    if (existing.hours === 0) {
+                        existing.hours = hours;
+                        existing.excused = excused;
+                        count++;
+                    }
+                } else {
+                    state.attendances.push({ id: 'a_' + Date.now(), studentId: st.id, subjectId: sub.id, date: today, hours: hours, excused: excused });
+                    count++;
+                }
+            });
+            saveAll();
+            renderProfessor();
+            alert(`✅ تم تسجيل غياب لـ ${count} طالب في الشعبة ${groupName}`);
+        }
+
+        function quickPresentAll(groupName) {
+            const sub = getProfessorSubject();
+            if (!sub) { alert('لم يتم تعيين مادة لك'); return; }
+            const students = getStudentsForProfessor().filter(st => st.group === groupName || st.section === groupName);
+            if (students.length === 0) { alert('لا يوجد طلاب في هذه الشعبة'); return; }
+            if (!confirm(`⚠️ هل أنت متأكد من تسجيل حضور لجميع طلاب الشعبة ${groupName} (${students.length} طالب)؟`)) return;
+            
+            const today = new Date().toISOString().split('T')[0];
+            let count = 0;
+
+            students.forEach(st => {
+                const existing = state.attendances.find(a => a.studentId === st.id && a.subjectId === sub.id && a.date === today);
+                if (existing) {
+                    if (existing.hours > 0) {
+                        existing.hours = 0;
+                        count++;
+                    }
+                } else {
+                    state.attendances.push({ id: 'a_' + Date.now(), studentId: st.id, subjectId: sub.id, date: today, hours: 0, excused: 0 });
+                    count++;
+                }
+            });
+            saveAll();
+            renderProfessor();
+            alert(`✅ تم تسجيل حضور لـ ${count} طالب في الشعبة ${groupName}`);
+        }
+
+        // ========== دالة عرض جدول الغيابات (نفسها) ==========
+        function renderProfessorAttendance(subjectId) {
+            const div = document.getElementById('profAttendanceTable');
+            const allAttendances = state.attendances.filter(a => a.subjectId === subjectId && a.hours > 0);
+            if (allAttendances.length === 0) {
+                div.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px;">📭 لا توجد غيابات مسجلة</p>';
+                return;
+            }
+
+            const subject = state.subjects.find(s => s.id === subjectId);
+            const totalHours = subject ? subject.totalHours : 1;
+
+            const studentIds = [...new Set(allAttendances.map(a => a.studentId))];
+            const studentTotals = {};
+            studentIds.forEach(id => {
+                const studentAtts = allAttendances.filter(a => a.studentId === id);
+                const totalAbsent = studentAtts.reduce((sum, a) => sum + a.hours, 0);
+                const unexcusedAbsent = studentAtts.filter(a => a.excused === 0).reduce((sum, a) => sum + a.hours, 0);
+                const pctUnexcused = (unexcusedAbsent / totalHours) * 100;
+                const pctTotal = (totalAbsent / totalHours) * 100;
+                const status = getStatus(pctUnexcused, pctTotal);
+                studentTotals[id] = { totalAbsent, unexcusedAbsent, pctUnexcused, pctTotal, status };
+            });
+
+            const sortedAttendances = [...allAttendances].sort((a, b) => b.date.localeCompare(a.date));
+            let html = `<div class="table-wrapper"><table>
+                <tr>
+                    <th>#</th>
+                    <th>الطالب</th>
+                    <th>التاريخ</th>
+                    <th>س</th>
+                    <th>النوع</th>
+                    <th>حالة السجل</th>
+                    <th>الحالة التراكمية</th>
+                    <th>التحكم</th>
+                </tr>`;
+            sortedAttendances.forEach((att, idx) => {
+                const student = state.students.find(s => s.id === att.studentId);
+                const studentName = student ? student.name : 'غير معروف';
+                const excusedText = att.excused === 1 ? 'بعذر' : 'بدون عذر';
+                const excusedBadge = att.excused === 1 ? 'bg-green' : 'bg-red';
+
+                const unexcused = att.excused === 0 ? att.hours : 0;
+                const pctUnexcusedSingle = (unexcused / totalHours) * 100;
+                const pctTotalSingle = (att.hours / totalHours) * 100;
+                const statusSingle = getStatus(pctUnexcusedSingle, pctTotalSingle);
+                const statusBadgeSingle = statusSingle === 'جيد' ? 'bg-green' : statusSingle === 'إنذار أولي' ? 'bg-yellow' : statusSingle === 'إنذار نهائي' ? 'bg-orange' : 'bg-red';
+
+                const total = studentTotals[att.studentId];
+                const statusCumulative = total ? total.status : 'جيد';
+                const statusBadgeCumulative = statusCumulative === 'جيد' ? 'bg-green' : statusCumulative === 'إنذار أولي' ? 'bg-yellow' : statusCumulative === 'إنذار نهائي' ? 'bg-orange' : 'bg-red';
+
+                html += `<tr>
+                    <td>${idx + 1}</td>
+                    <td>${studentName}</td>
+                    <td>${att.date}</td>
+                    <td>${att.hours}</td>
+                    <td><span class="badge ${excusedBadge}">${excusedText}</span></td>
+                    <td><span class="badge ${statusBadgeSingle}">${statusSingle}</span></td>
+                    <td><span class="badge ${statusBadgeCumulative}">${statusCumulative}</span></td>
+                    <td>
+                        <button class="btn-sm btn-warning" onclick="editAttendance('${att.id}')" style="min-width:25px; padding:1px 4px; font-size:9px;">✏️</button>
+                        <button class="btn-sm btn-danger" onclick="deleteAttendance('${att.id}')" style="min-width:25px; padding:1px 4px; font-size:9px;">🗑️</button>
+                    </td>
+                </tr>`;
+            });
+            html += `</table></div>`;
+            div.innerHTML = html;
+        }
+
+        // ========== دوال الأستاذ الأخرى ==========
+        function markStudentAbsent(studentId) {
+            const sub = getProfessorSubject();
+            if (!sub) { alert('لم يتم تعيين مادة لك'); return; }
+            const student = state.students.find(s => s.id === studentId);
+            if (!student) { alert('الطالب غير موجود'); return; }
+            const today = new Date().toISOString().split('T')[0];
+            const hours = prompt(`تسجيل غياب للطالب ${student.name}\nعدد ساعات الغياب:`, '1');
+            if (hours === null) return;
+            const excused = confirm('هل الغياب بعذر مشروع؟\nموافق = بعذر، إلغاء = بدون عذر');
+            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date === today);
+            if (existing) { existing.hours = parseFloat(hours) || 1; existing.excused = excused ? 1 : 0; }
+            else { state.attendances.push({ id: 'a_' + Date.now(), studentId, subjectId: sub.id, date: today, hours: parseFloat(hours) || 1, excused: excused ? 1 : 0 }); }
+            saveAll();
+            renderProfessor();
+            alert(`✅ تم تسجيل غياب الطالب ${student.name} بنجاح`);
+        }
+
+        function recordAttendance() {
+            const sub = getProfessorSubject();
+            if (!sub) { alert('لم يتم تعيين مادة لك'); return; }
+            const studentId = document.getElementById('profStudentSelect').value;
+            const hours = parseFloat(document.getElementById('profAbsentHours').value);
+            const date = document.getElementById('profAbsentDate').value;
+            const excused = parseInt(document.getElementById('profExcused').value);
+            if (!studentId) { alert('اختر طالباً'); return; }
+            if (!hours || hours <= 0) { alert('أدخل عدد ساعات صحيح'); return; }
+            if (!date) { alert('أدخل التاريخ'); return; }
+            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date === date);
+            if (existing) {
+                if (!confirm('⚠️ يوجد تسجيل سابق لهذا الطالب في هذا اليوم. هل تريد تحديثه؟')) return;
+                existing.hours = hours; existing.excused = excused;
+            } else {
+                state.attendances.push({ id: 'a_' + Date.now(), studentId, subjectId: sub.id, date, hours, excused });
+            }
+            saveAll();
+            renderProfessor();
+            alert('✅ تم تسجيل الغياب بنجاح');
+        }
+
+        function deleteAttendance(attendanceId) {
+            if (!confirm('⚠️ هل أنت متأكد من الحذف؟')) return;
+            state.attendances = state.attendances.filter(a => a.id !== attendanceId);
+            saveAll();
+            renderProfessor();
+            alert('✅ تم الحذف');
+        }
+
+        function editAttendance(attendanceId) {
+            const attendance = state.attendances.find(a => a.id === attendanceId);
+            if (!attendance) { alert('غير موجود'); return; }
+            const newHours = prompt('تعديل عدد ساعات الغياب:', attendance.hours);
+            if (newHours === null) return;
+            const newExcused = confirm('هل الغياب بعذر مشروع؟\nموافق = بعذر، إلغاء = بدون عذر');
+            attendance.hours = parseFloat(newHours) || attendance.hours;
+            attendance.excused = newExcused ? 1 : 0;
+            saveAll();
+            renderProfessor();
+            alert('✅ تم التعديل');
+        }
+
+        function sendToOfficer() {
+            const sub = getProfessorSubject();
+            if (!sub) { alert('لا توجد مادة'); return; }
+            state.notifications.push({ msg: `📨 الأستاذ ${state.currentUser.name} أرسل إشعاراً (مادة: ${sub.name})`, time: new Date().toLocaleString() });
+            saveAll();
+            alert('✅ تم الإرسال');
+        }
+
+        // ==============================================================
+        //  STUDENT SELECTION (Officer)
+        // ==============================================================
+        function renderStudentSelection() {
+            const container = document.getElementById('studentSelectionContainer');
+            const level = state.currentLevel;
+            if (!level) { container.innerHTML = '<p style="color:#a0aec0;">الرجاء اختيار مرحلة</p>'; return; }
+            const studentsInLevel = state.students.filter(st => st.level === level);
+            if (studentsInLevel.length === 0) { container.innerHTML = '<p style="color:#a0aec0;">لا يوجد طلاب</p>'; return; }
+            if (state.selectedStudents.length === 0) {
+                state.selectedStudents = studentsInLevel.filter(st => state.attendances.some(a => a.studentId === st.id && a.hours > 0)).map(st => st.id);
+                if (state.selectedStudents.length === 0) state.selectedStudents = studentsInLevel.map(st => st.id);
+            }
+            let html = '';
+            studentsInLevel.forEach(st => {
+                const hasAbsence = state.attendances.some(a => a.studentId === st.id && a.hours > 0);
+                const checked = state.selectedStudents.includes(st.id) ? 'checked' : '';
+                const badge = hasAbsence ? '<span class="badge bg-red" style="font-size:8px;">غائب</span>' : '<span class="badge bg-green" style="font-size:8px;">حاضر</span>';
+                html += `<label style="display:inline-block; margin:3px 6px; font-size:13px;">
+                    <input type="checkbox" class="student-checkbox" value="${st.id}" ${checked} onchange="toggleStudent('${st.id}')">
+                    ${st.name} (${st.group || st.section || '-'}) ${badge}
+                </label>`;
+            });
+            container.innerHTML = html;
+        }
+
+        function toggleStudent(id) {
+            const index = state.selectedStudents.indexOf(id);
+            if (index > -1) state.selectedStudents.splice(index, 1);
+            else state.selectedStudents.push(id);
+            const checkbox = document.querySelector(`.student-checkbox[value="${id}"]`);
+            if (checkbox) checkbox.checked = state.selectedStudents.includes(id);
+        }
+
+        function selectAllStudents() {
+            const level = state.currentLevel;
+            if (!level) return;
+            state.selectedStudents = state.students.filter(st => st.level === level).map(st => st.id);
+            document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = true);
+        }
+
+        function deselectAllStudents() {
+            state.selectedStudents = [];
+            document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = false);
+        }
+
+        function selectStudentsWithAbsence() {
+            const level = state.currentLevel;
+            if (!level) return;
+            state.selectedStudents = state.students.filter(st => st.level === level && state.attendances.some(a => a.studentId === st.id && a.hours > 0)).map(st => st.id);
+            document.querySelectorAll('.student-checkbox').forEach(cb => { cb.checked = state.selectedStudents.includes(cb.value); });
+            if (state.selectedStudents.length === 0) alert('لا يوجد طلاب لديهم غيابات');
+        }
+
+        // ==============================================================
+        //  WHATSAPP FUNCTIONS (كما هي)
+        // ==============================================================
+        function getStudentAttendanceSummary(studentId) {
+            const student = state.students.find(s => s.id === studentId);
+            if (!student) return null;
+            const relevantSubjects = state.subjects.filter(s => s.level === student.level && s.groupType === student.groupType);
+            let summary = [];
+            let totalAbsent = 0, totalHours = 0;
+            relevantSubjects.forEach(sub => {
+                const atts = state.attendances.filter(a => a.studentId === studentId && a.subjectId === sub.id);
+                const totalH = atts.reduce((s, a) => s + a.hours, 0);
+                const unexcused = atts.filter(a => a.excused === 0).reduce((s, a) => s + a.hours, 0);
+                const pctUnexcused = (unexcused / sub.totalHours) * 100;
+                const pctTotal = (totalH / sub.totalHours) * 100;
+                const status = getStatus(pctUnexcused, pctTotal);
+                if (totalH > 0) {
+                    summary.push({ subject: sub.name, hours: totalH.toFixed(1), percentage: pctTotal.toFixed(1), status: status });
+                    totalAbsent += totalH; totalHours += sub.totalHours;
+                }
+            });
+            return { student, summary, totalAbsent: totalAbsent.toFixed(1), totalPercentage: totalHours > 0 ? ((totalAbsent / totalHours) * 100).toFixed(1) : '0' };
+        }
+
+        function getSelectedStudentsWithData() {
+            const selected = state.selectedStudents;
+            if (selected.length === 0) { alert('اختر طالباً'); return []; }
+            const result = [];
+            selected.forEach(id => {
+                const data = getStudentAttendanceSummary(id);
+                if (data && data.summary.length > 0) result.push(data);
+            });
+            if (result.length === 0) alert('الطلاب المختارون ليس لديهم غيابات');
+            return result;
+        }
+
+        function generateMessageForStudent(data, type) {
+            const st = data.student;
+            let msg = '';
+            if (type === 'student') msg = `السلام عليكم ${st.name}،\nتقرير الغياب الخاص بك:\n`;
+            else msg = `السلام عليكم، ولي أمر الطالب ${st.name} (الشعبة ${st.group || st.section || '-'})\nتقرير الغياب:\n`;
+            msg += `━━━━━━━━━━━━━━━━\n`;
+            data.summary.forEach(item => {
+                msg += `📚 ${item.subject}: ${item.hours} س (${item.percentage}%)\n   الحالة: ${item.status}\n`;
+            });
+            msg += `━━━━━━━━━━━━━━━━\n`;
+            msg += `📊 إجمالي الغياب: ${data.totalAbsent} س\n📈 النسبة الكلية: ${data.totalPercentage}%\n`;
+            msg += `\nيرجى الانتباه والتواصل مع مسؤول الغيابات.\nقسم الفيزياء`;
+            return msg;
+        }
+
+        function sendWhatsAppToStudents() {
+            const senderNumber = document.getElementById('whatsappSenderNumber').value.trim().replace(/[^0-9+]/g, '');
+            if (!senderNumber) { alert('أدخل رقم واتساب المسؤول'); return; }
+            const studentsData = getSelectedStudentsWithData();
+            if (studentsData.length === 0) return;
+            let linksHtml = '', count = 0;
+            studentsData.forEach(data => {
+                const st = data.student;
+                if (!st.phone) return;
+                const msg = generateMessageForStudent(data, 'student');
+                linksHtml += `<div class="whatsapp-link-box">📱 <a href="https://wa.me/${st.phone}?text=${encodeURIComponent(msg)}" target="_blank">${st.name}</a></div>`;
+                count++;
+            });
+            if (count === 0) { alert('لا توجد أرقام هواتف'); return; }
+            const win = window.open('', '_blank');
+            if (!win) { alert('السماح للنوافذ المنبثقة'); return; }
+            win.document.write(`
+                <html dir="rtl"><head><title>روابط واتساب</title>
+                <style>body{font-family:Arial;padding:12px;background:#f0fdf4;direction:rtl;}
+                .container{max-width:600px;margin:auto;}h2{color:#1a3a5e;font-size:18px;}
+                .whatsapp-link-box{background:white;padding:8px;margin:4px 0;border-radius:8px;border:1px solid #86efac;}
+                a{color:#075e54;font-weight:bold;text-decoration:none;font-size:14px;display:block;padding:4px 0;}
+                .header-info{background:#e2e8f0;padding:8px;border-radius:8px;margin-bottom:10px;}
+                .note{color:#4a5568;margin-top:10px;font-size:12px;}
+                </style></head>
+                <body><div class="container">
+                <h2>📨 روابط واتساب للطلاب</h2>
+                <div class="header-info"><p><strong>المرسل:</strong> ${senderNumber}</p><p><strong>عدد الطلاب:</strong> ${count}</p></div>
+                <p>اضغط على الرابط لفتح واتساب:</p>${linksHtml}
+                <p class="note">💡 يمكنك النقر على الروابط واحداً تلو الآخر.</p>
+                </div></body></html>
+            `);
+            win.document.close();
+        }
+
+        function sendWhatsAppToGuardians() {
+            const senderNumber = document.getElementById('whatsappSenderNumber').value.trim().replace(/[^0-9+]/g, '');
+            if (!senderNumber) { alert('أدخل رقم واتساب المسؤول'); return; }
+            const studentsData = getSelectedStudentsWithData();
+            if (studentsData.length === 0) return;
+            let linksHtml = '', count = 0;
+            studentsData.forEach(data => {
+                const st = data.student;
+                if (!st.guardianPhone) return;
+                const msg = generateMessageForStudent(data, 'guardian');
+                linksHtml += `<div class="whatsapp-link-box">👨‍👦 <a href="https://wa.me/${st.guardianPhone}?text=${encodeURIComponent(msg)}" target="_blank">${st.name}</a></div>`;
+                count++;
+            });
+            if (count === 0) { alert('لا توجد أرقام أولياء أمور'); return; }
+            const win = window.open('', '_blank');
+            if (!win) { alert('السماح للنوافذ المنبثقة'); return; }
+            win.document.write(`
+                <html dir="rtl"><head><title>روابط واتساب لأولياء الأمور</title>
+                <style>body{font-family:Arial;padding:12px;background:#f0fdf4;direction:rtl;}
+                .container{max-width:600px;margin:auto;}h2{color:#1a3a5e;font-size:18px;}
+                .whatsapp-link-box{background:white;padding:8px;margin:4px 0;border-radius:8px;border:1px solid #86efac;}
+                a{color:#075e54;font-weight:bold;text-decoration:none;font-size:14px;display:block;padding:4px 0;}
+                .header-info{background:#e2e8f0;padding:8px;border-radius:8px;margin-bottom:10px;}
+                .note{color:#4a5568;margin-top:10px;font-size:12px;}
+                </style></head>
+                <body><div class="container">
+                <h2>📨 روابط واتساب لأولياء الأمور</h2>
+                <div class="header-info"><p><strong>المرسل:</strong> ${senderNumber}</p><p><strong>عدد أولياء الأمور:</strong> ${count}</p></div>
+                <p>اضغط على الرابط لفتح واتساب:</p>${linksHtml}
+                <p class="note">💡 يمكنك النقر على الروابط واحداً تلو الآخر.</p>
+                </div></body></html>
+            `);
+            win.document.close();
+        }
+
+        function copyAllMessages() {
+            const studentsData = getSelectedStudentsWithData();
+            if (studentsData.length === 0) return;
+            let allMessages = '';
+            studentsData.forEach(data => {
+                const st = data.student;
+                allMessages += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+                allMessages += generateMessageForStudent(data, 'student');
+                allMessages += `\n\n`;
+                if (st.guardianPhone) {
+                    allMessages += `👨‍👦 رسالة ولي الأمر (${st.guardianPhone}):\n`;
+                    allMessages += generateMessageForStudent(data, 'guardian');
+                    allMessages += `\n\n`;
+                }
+            });
+            navigator.clipboard.writeText(allMessages).then(() => alert(`✅ تم نسخ ${studentsData.length} رسالة`))
+                .catch(() => {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = allMessages;
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    alert(`✅ تم نسخ ${studentsData.length} رسالة`);
+                });
+        }
+
+        function openAllWhatsAppLinks() {
+            const studentsData = getSelectedStudentsWithData();
+            if (studentsData.length === 0) return;
+            let links = [];
+            studentsData.forEach(data => {
+                const st = data.student;
+                if (st.phone) links.push({ number: st.phone, msg: generateMessageForStudent(data, 'student') });
+                if (st.guardianPhone) links.push({ number: st.guardianPhone, msg: generateMessageForStudent(data, 'guardian') });
+            });
+            if (links.length === 0) { alert('لا توجد أرقام'); return; }
+            const total = links.length;
+            let opened = 0;
+            const progressDiv = document.createElement('div');
+            progressDiv.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#1a3a5e; color:white; padding:12px 24px; border-radius:12px; z-index:9999; font-size:14px; text-align:center; box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+            progressDiv.id = 'whatsappProgress';
+            progressDiv.innerHTML = `جاري فتح الروابط 0/${total}`;
+            document.body.appendChild(progressDiv);
+            links.forEach((link, index) => {
+                setTimeout(() => {
+                    window.open(`https://wa.me/${link.number}?text=${encodeURIComponent(link.msg)}`, '_blank');
+                    opened++;
+                    const progress = document.getElementById('whatsappProgress');
+                    if (progress) {
+                        progress.innerHTML = `جاري فتح الروابط ${opened}/${total}`;
+                        if (opened === total) { progress.innerHTML = `✅ تم فتح جميع ${total} الرسائل`; setTimeout(() => progress.remove(), 3000); }
+                    }
+                }, index * 1200);
+            });
+        }
+
+        // ==============================================================
+        //  DATE RANGE FUNCTIONS
+        // ==============================================================
+        function setAutoDateRange() {
+            if (state.attendances.length === 0) { document.getElementById('reportDateFrom').value = ''; document.getElementById('reportDateTo').value = ''; updateReportDateDisplay(); return; }
+            const dates = state.attendances.map(a => a.date).filter(d => d);
+            if (dates.length === 0) { document.getElementById('reportDateFrom').value = ''; document.getElementById('reportDateTo').value = ''; updateReportDateDisplay(); return; }
+            dates.sort();
+            document.getElementById('reportDateFrom').value = dates[0];
+            document.getElementById('reportDateTo').value = dates[dates.length - 1];
+            updateReportDateDisplay();
+        }
+
+        function updateReportDateDisplay() {
+            const from = document.getElementById('reportDateFrom').value;
+            const to = document.getElementById('reportDateTo').value;
+            const display = document.getElementById('reportDateRangeDisplay');
+            if (from && to) display.textContent = `📅 الفترة: من ${from} إلى ${to}`;
+            else if (from) display.textContent = `📅 الفترة: من ${from} فصاعداً`;
+            else if (to) display.textContent = `📅 الفترة: حتى ${to}`;
+            else display.textContent = '📅 جميع الفترات';
+        }
+
+        function generatePDF() {
+            document.getElementById('reportPrintDate').innerText = new Date().toLocaleDateString('ar-EG');
+            updateReportDateDisplay();
+            window.print();
+        }
+
+        // ==============================================================
+        //  INIT
+        // ==============================================================
+        console.log('🏛️ نظام الغيابات v46.0 - حفظ دائم + خصوصية كاملة للأساتذة');
+        console.log('👤 بيانات الدخول: admin/admin123 | officer/officer123 | د. أحمد/1234 | د. سارة/5678');
+
+        document.addEventListener('change', function(e) {
+            if (e.target.id === 'reportDateFrom' || e.target.id === 'reportDateTo') {
+                updateReportDateDisplay();
+                if (state.currentLevel) renderOfficerReport(state.currentLevel);
+            }
+        });
+
+        (async function init() {
+            await initializeDefaultData();
+            state.professors = DB.get('professors', []);
+            state.subjects = DB.get('subjects', []);
+            state.students = DB.get('students', []);
+            state.attendances = DB.get('attendances', []);
+            state.notifications = DB.get('notifications', []);
+            populateAllSelects();
+            renderFullProfessorsList();
+            renderFullSubjectsList();
+        })();
+    </script>
+
+</body>
+</html>
