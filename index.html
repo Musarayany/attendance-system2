@@ -305,7 +305,7 @@
         .filtered-status-table td,.filtered-status-table th { font-size:11px; }
 
 
-        /* ===== Master V18: واجهة رئيس القسم المنظمة ===== */
+        /* ===== Master V20: واجهة رئيس القسم المنظمة ===== */
         .admin-clean-toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
         .admin-health{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
         .admin-health-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:#fff;border:1px solid #d7e1ea;font-size:10px;font-weight:800;color:#334155}
@@ -326,7 +326,7 @@
         .prof-status-chip.warn{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
         @media(max-width:700px){.admin-clean-toolbar button{flex:1 1 44%}.admin-fold-body{padding:6px}}
 
-        /* ===== Master V18: واجهة موحدة لبيانات الأستاذ ===== */
+        /* ===== Master V20: واجهة موحدة لبيانات الأستاذ ===== */
         .prof-editor-row{display:grid;grid-template-columns:minmax(180px,1.25fr) minmax(170px,.9fr) minmax(155px,.85fr) minmax(150px,.8fr) minmax(180px,1fr);gap:8px;align-items:center;padding:8px 6px;border-bottom:1px solid #e2e8f0;background:#fff}
         .prof-editor-row:nth-child(even){background:#fbfdff}
         .prof-editor-name{font-weight:900;color:#1f2937;font-size:12px}.prof-editor-sub{font-size:9.5px;color:#64748b;margin-top:2px}
@@ -380,7 +380,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Master V18</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Master V20</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -419,8 +419,10 @@
                         <button onclick="reconcileProfessorIdentityData(true)" class="btn-info btn-sm" style="min-width:120px;">🧩 فحص ملفات الأساتذة</button>
                     </div>
                 </div>
-                <small>📌 جميع التغييرات تُحفظ تلقائياً في السحابة. V18 يفصل بيانات الاتصال وكلمة المرور عن سجل الجدول حتى لا تضيع عند مزامنة الأساتذة، ويسترجع تلقائياً أي بيانات قديمة ما زالت موجودة.</small>
-                <div id="syncStatus" style="font-size:12px; color:#2f855a; margin-top:4px;">✅ متصل بالسحابة - المزامنة تلقائية</div><div id="professorProfileHealth" class="admin-health"></div>
+                <small>📌 جميع التغييرات تُحفظ تلقائياً في السحابة. V20 يفصل بيانات الاتصال وكلمة المرور عن سجل الجدول، ويدعم أكثر من محاضرة للمادة في اليوم نفسه، ويراجع تعارضات الحفظ قبل اعتمادها.</small>
+                <div id="syncStatus" style="font-size:12px; color:#2f855a; margin-top:4px;">✅ متصل بالسحابة - المزامنة تلقائية</div>
+                <small style="display:block;margin-top:4px;color:#92400e;">🔐 حماية البيانات الخادمية تعتمد أيضاً على تفعيل Firebase Authentication وقواعد Realtime Database في مشروع Firebase؛ تسجيل الدخول داخل هذا الملف لا يغني عن القواعد الخادمية.</small>
+                <div id="professorProfileHealth" class="admin-health"></div>
             </div>
 
             <details class="admin-fold" id="adminIntegrationsFold">
@@ -459,6 +461,24 @@
                 </div>
                 <div id="weeklyScheduleLinkStatus" class="integration-status">☁️ في انتظار أول جدول منشور من برنامج الجدول الأسبوعي...</div>
                 <div id="academicCatalogSyncStatus" class="integration-status" style="margin-top:6px;background:#eefaf3;border-color:#b7dfc7;color:#176b3a;">📚 في انتظار مزامنة الأساتذة والمواد والساعات من برنامج الجدول...</div>
+            </div>
+
+            <div class="card" style="background:#fffaf0;border:2px solid #d69e2e;">
+                <h4 style="margin-top:0;">📐 سياسة احتساب الغياب والساعات</h4>
+                <div class="grid-3" style="align-items:end;">
+                    <div>
+                        <label>النسبة المعتمدة للحالة</label>
+                        <select id="absenceStatusBasis">
+                            <option value="unexcused">الغياب غير المعذر فقط</option>
+                            <option value="all">كل الغياب (بعذر وبدون عذر)</option>
+                        </select>
+                    </div>
+                    <div><label>أسابيع مقررات بولونيا</label><input type="number" id="bolognaTeachingWeeks" min="1" max="52" value="15"></div>
+                    <div><label>أسابيع المقررات السنوية</label><input type="number" id="annualTeachingWeeks" min="1" max="52" value="30"></div>
+                </div>
+                <button onclick="saveAbsencePolicySettings()" class="btn-success btn-sm" style="margin-top:7px;">💾 حفظ السياسة وإعادة حساب الساعات</button>
+                <div id="absencePolicyStatus" class="integration-status" style="margin-top:7px;background:#fff;border-color:#f6d365;color:#744210;"></div>
+                <small>يمكن تعديل أسابيع مادة منفردة من قائمة المواد. المادة المعدلة يدوياً لا تتغير عند مزامنة الجدول.</small>
             </div>
 
             <div class="card" style="background:#f0fdfa;border:2px solid #14b8a6;">
@@ -638,6 +658,8 @@
                                 <option value="0">بدون عذر</option>
                                 <option value="1">بعذر</option>
                             </select>
+                            <label style="font-size:12px; margin:0;">وقت المحاضرة:</label>
+                            <input type="time" id="quickSessionTime" style="width:110px;">
                             <button onclick="toggleQuickMode()" class="quick-mode-toggle" id="quickModeToggle">⚡ وضع سريع</button>
                         </div>
                         <small>في الوضع السريع، اضغط على ✅ حاضر أو ❌ غائب لتسجيل الحالة مباشرة.</small>
@@ -659,6 +681,8 @@
                         <input type="number" id="profAbsentHours" value="1" min="0.5" step="0.5">
                         <label>تاريخ الغياب</label>
                         <input type="date" id="profAbsentDate">
+                        <label>وقت المحاضرة</label>
+                        <input type="time" id="profSessionTime">
                         <label>نوع الغياب</label>
                         <select id="profExcused">
                             <option value="0">بدون عذر</option>
@@ -783,6 +807,11 @@
         // ==============================================================
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
+        const APP_VERSION = '20.0';
+        const SCHEMA_VERSION = 12;
+        const LOGIN_MAX_ATTEMPTS = 5;
+        const LOGIN_LOCK_MS = 15 * 60 * 1000;
+        const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
         // ==============================================================
         //  CURRICULUM DATA (ثابت)
@@ -1045,6 +1074,47 @@
             return updates;
         }
 
+        function buildFirebaseChanges() {
+            ensureAllRecordIds();
+            const changes = [];
+            SYNC_COLLECTIONS.forEach(name => {
+                const base = mapsById(lastSyncedCollections[name] || []);
+                const current = mapsById(state[name] || []);
+                const ids = new Set([...base.keys(), ...current.keys()]);
+                ids.forEach(id => {
+                    const before = base.get(id);
+                    const after = current.get(id);
+                    if (!sameRecord(before, after)) changes.push({ name, id, before, after });
+                });
+            });
+            return changes;
+        }
+
+        function replaceStateFromRemote(data) {
+            if (!data) return;
+            SYNC_COLLECTIONS.forEach(name => {
+                state[name] = normalizeCollection(data[name], name);
+            });
+            lastSyncedCollections = cloneCollections();
+        }
+
+        async function commitFirebaseChanges(changes) {
+            const conflicts = [];
+            for (const change of changes) {
+                const key = String(change.id).replace(/[.#$\[\]\/]/g, '_');
+                let conflict = false;
+                const result = await database.ref(`/${change.name}/${key}`).transaction(remoteValue => {
+                    const remote = remoteValue === null ? undefined : remoteValue;
+                    conflict = !sameRecord(remote, change.before) && !sameRecord(remote, change.after);
+                    if (conflict) return;
+                    return change.after === undefined ? null : change.after;
+                }, undefined, false);
+                if (!result.committed && conflict) conflicts.push(change);
+            }
+            await database.ref('/').update({ lastUpdate: firebase.database.ServerValue.TIMESTAMP, schemaVersion: SCHEMA_VERSION });
+            return conflicts;
+        }
+
         function applyRemoteCollection(name, value) {
             const remoteArr = normalizeCollection(value, name);
             const localArr = normalizeCollection(state[name], name);
@@ -1079,7 +1149,7 @@
                 }
             });
             if (Object.keys(updates).length > 0) {
-                updates.schemaVersion = 11;
+                updates.schemaVersion = SCHEMA_VERSION;
                 await database.ref('/').update(updates);
             }
         }
@@ -1130,11 +1200,14 @@
                 state.isSyncing = false;
                 if (statusEl) statusEl.textContent = '✅ متصل بالسحابة - المزامنة الآمنة نشطة';
                 if (!data) await pushToFirebase();
+                const repairedEnrollmentAttendances = repairEnrollmentAttendanceRecords();
+                const recalculatedSubjectHours = refreshAutomaticSubjectHours();
+                const linkRepair = ensureActiveSubjectLinks();
                 const professorProfilesMigrated=ensureProfessorProfilesFromLegacy();
                 const professorRefsCanonicalized=canonicalizeProfessorReferences();
-                const professorRepairChanged=professorProfilesMigrated || professorRefsCanonicalized;
-                if(professorRepairChanged){
-                    recordAudit('ترحيل تلقائي لملفات الأساتذة',{profiles:(state.professorProfiles||[]).length});
+                const automaticRepairChanged=professorProfilesMigrated || professorRefsCanonicalized || repairedEnrollmentAttendances || recalculatedSubjectHours || linkRepair.added || linkRepair.removed;
+                if(automaticRepairChanged){
+                    recordAudit('ترحيل وإصلاح تلقائي للبيانات',{profiles:(state.professorProfiles||[]).length,repairedEnrollmentAttendances,recalculatedSubjectHours,linksAdded:linkRepair.added,linksRemoved:linkRepair.removed});
                     await pushToFirebase();
                 }
                 renderAll();
@@ -1151,21 +1224,24 @@
             if (!state.initialLoadDone) return Promise.resolve(false);
 
             saveQueue = saveQueue.then(async () => {
-                const updates = buildFirebaseDiff();
-                if (Object.keys(updates).length === 0) return true;
+                const changes = buildFirebaseChanges();
+                if (changes.length === 0) return true;
 
                 state.isSyncing = true;
                 const statusEl = document.getElementById('syncStatus');
                 if (statusEl) statusEl.textContent = '⏳ جاري حفظ التغييرات فقط...';
-                updates.lastUpdate = firebase.database.ServerValue.TIMESTAMP;
-                updates.schemaVersion = 11;
 
                 try {
-                    // تحديث متعدد المسارات: لا يستبدل قاعدة البيانات كاملة ولا يمس سجلات لم تتغير.
-                    await database.ref('/').update(updates);
+                    const conflicts = await commitFirebaseChanges(changes);
                     const fresh = await database.ref('/').once('value');
-                    applyRemoteData(fresh.val());
-                    if (statusEl) statusEl.textContent = '✅ تم الحفظ - دمج التعديلات المتزامنة نشط';
+                    replaceStateFromRemote(fresh.val());
+                    if (conflicts.length) {
+                        if (statusEl) statusEl.textContent = `⚠️ حُفظت التغييرات غير المتعارضة، وأُبقيت النسخة السحابية لـ ${conflicts.length} سجل متعارض`;
+                        alert(`⚠️ يوجد ${conflicts.length} سجل عُدّل من جهاز آخر في الوقت نفسه. لم يستبدل البرنامج تلك السجلات، وتم تحميل النسخة السحابية الأحدث. راجع التعديل وأعد تطبيقه عند الحاجة.`);
+                        renderAll();
+                        return false;
+                    }
+                    if (statusEl) statusEl.textContent = '✅ تم الحفظ - فحص تعارضات السجلات نشط';
                     return true;
                 } catch (err) {
                     console.error('خطأ في الحفظ:', err);
@@ -1210,6 +1286,48 @@
             return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
         }
 
+        function bytesToBase64(bytes) {
+            let binary = '';
+            bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+            return btoa(binary);
+        }
+
+        function base64ToBytes(value) {
+            return Uint8Array.from(atob(value), char => char.charCodeAt(0));
+        }
+
+        function isPasswordHash(value) {
+            const text = String(value || '');
+            return /^[a-f0-9]{64}$/i.test(text) || /^pbkdf2\$\d+\$[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+$/.test(text);
+        }
+
+        async function hashPasswordSecure(password) {
+            const iterations = 150000;
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+            const bits = await crypto.subtle.deriveBits({ name:'PBKDF2', hash:'SHA-256', salt, iterations }, key, 256);
+            return `pbkdf2$${iterations}$${bytesToBase64(salt)}$${bytesToBase64(new Uint8Array(bits))}`;
+        }
+
+        async function verifyPassword(password, storedHash) {
+            const stored = String(storedHash || '');
+            if (/^[a-f0-9]{64}$/i.test(stored)) return (await hashPassword(password)) === stored.toLowerCase();
+            const parts = stored.split('$');
+            if (parts.length !== 4 || parts[0] !== 'pbkdf2') return false;
+            const iterations = Number(parts[1]);
+            if (!Number.isInteger(iterations) || iterations < 100000 || iterations > 1000000) return false;
+            try {
+                const salt = base64ToBytes(parts[2]);
+                const expected = base64ToBytes(parts[3]);
+                const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+                const bits = new Uint8Array(await crypto.subtle.deriveBits({ name:'PBKDF2', hash:'SHA-256', salt, iterations }, key, expected.length * 8));
+                if (bits.length !== expected.length) return false;
+                let difference = 0;
+                for (let i = 0; i < bits.length; i++) difference |= bits[i] ^ expected[i];
+                return difference === 0;
+            } catch (e) { return false; }
+        }
+
         // ==============================================================
         //  INIT (بيانات افتراضية إذا كانت فارغة)
         // ==============================================================
@@ -1222,7 +1340,7 @@
             state.students = [];
             state.attendances = [];
             state.notifications = [];
-            state.auditLogs = [];
+            state.auditLogs = Array.isArray(state.auditLogs) ? state.auditLogs : [];
             state.submissions = [];
             state.scheduleLinks = [];
             state.appSettings = Array.isArray(state.appSettings) ? state.appSettings : [];
@@ -1243,9 +1361,9 @@
                 submissions: state.submissions,
                 scheduleLinks: state.scheduleLinks,
                 appSettings: state.appSettings,
-                schemaVersion: 10,
+                schemaVersion: SCHEMA_VERSION,
                 backupDate: new Date().toISOString(),
-                version: '17.0-professor-profile-registry-clean-ui'
+                version: `${APP_VERSION}-reviewed-attendance-integrity`
             };
             const json = JSON.stringify(data, null, 2);
             const blob = new Blob([json], { type: 'application/json' });
@@ -1296,9 +1414,12 @@
                     state.submissions = normalizeCollection(data.submissions || [], 'submissions');
                     state.scheduleLinks = normalizeCollection(data.scheduleLinks || [], 'scheduleLinks');
                     state.appSettings = normalizeCollection(data.appSettings || [], 'appSettings');
+                    const repairedEnrollmentAttendances = repairEnrollmentAttendanceRecords();
+                    const recalculatedSubjectHours = refreshAutomaticSubjectHours();
+                    const linkRepair = ensureActiveSubjectLinks();
                     ensureProfessorProfilesFromLegacy();
                     canonicalizeProfessorReferences();
-                    recordAudit('استعادة نسخة احتياطية', { fileName: file.name, backupVersion: data.version || data.schemaVersion || 'غير محدد' });
+                    recordAudit('استعادة نسخة احتياطية', { fileName: file.name, backupVersion: data.version || data.schemaVersion || 'غير محدد', repairedEnrollmentAttendances, recalculatedSubjectHours, linksAdded: linkRepair.added, linksRemoved: linkRepair.removed });
 
                     const ok = await saveAll();
                     if (!ok) throw new Error('تعذر رفع النسخة المستعادة إلى Firebase');
@@ -1316,24 +1437,77 @@
         // ==============================================================
         //  AUTH
         // ==============================================================
+        let sessionTimer = null;
+        let lastSessionActivity = Date.now();
+
+        function getLoginGuard() {
+            try { return JSON.parse(localStorage.getItem('attendance_login_guard_v20') || '{}') || {}; }
+            catch (e) { return {}; }
+        }
+
+        function loginLockRemaining(username) {
+            const rec = getLoginGuard()[String(username || '').toLowerCase()];
+            return rec?.lockedUntil > Date.now() ? rec.lockedUntil - Date.now() : 0;
+        }
+
+        function recordFailedLogin(username) {
+            const key = String(username || '').toLowerCase() || '_blank';
+            const guard = getLoginGuard();
+            const previous = guard[key] || { attempts:0, lockedUntil:0 };
+            const baseAttempts = previous.lockedUntil && previous.lockedUntil <= Date.now() ? 0 : (Number(previous.attempts) || 0);
+            const attempts = baseAttempts + 1;
+            guard[key] = { attempts, lockedUntil: attempts >= LOGIN_MAX_ATTEMPTS ? Date.now() + LOGIN_LOCK_MS : 0 };
+            localStorage.setItem('attendance_login_guard_v20', JSON.stringify(guard));
+            return guard[key];
+        }
+
+        function clearLoginGuard(username) {
+            const key = String(username || '').toLowerCase();
+            const guard = getLoginGuard();
+            delete guard[key];
+            localStorage.setItem('attendance_login_guard_v20', JSON.stringify(guard));
+        }
+
         async function handleLogin() {
             const username = document.getElementById('loginUsername').value.trim();
             const password = document.getElementById('loginPassword').value.trim();
             document.getElementById('loginError').innerText = '';
+            const remaining = loginLockRemaining(username);
+            if (remaining > 0) {
+                document.getElementById('loginError').innerText = `🔒 محاولات كثيرة. أعد المحاولة بعد ${Math.ceil(remaining / 60000)} دقيقة.`;
+                return;
+            }
 
             const adminHash = '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9';
             const officerHash = '118b8d35a17bcf2c7d2d790509e12308dc6332c5d234f0098d2d6be6700bebb1';
+            const securitySettings = getGlobalAppSettings();
 
             if (username === 'admin') {
-                if (await hashPassword(password) === adminHash) {
+                const stored = securitySettings.adminPasswordHash || '';
+                if (stored ? await verifyPassword(password, stored) : await hashPassword(password) === adminHash) {
                     state.currentUser = { role: 'admin', id: 'admin', name: 'رئيس القسم' };
+                    if (!stored || /^[a-f0-9]{64}$/i.test(stored)) {
+                        securitySettings.adminPasswordHash = await hashPasswordSecure(password);
+                        securitySettings.securityUpdatedAt = Date.now();
+                        recordAudit('ترقية حماية حساب رئيس القسم');
+                        await saveAll();
+                    }
+                    clearLoginGuard(username);
                     enterApp();
                     return;
                 }
             }
             if (username === 'officer') {
-                if (await hashPassword(password) === officerHash) {
+                const stored = securitySettings.officerPasswordHash || '';
+                if (stored ? await verifyPassword(password, stored) : await hashPassword(password) === officerHash) {
                     state.currentUser = { role: 'officer', id: 'officer', name: 'مسؤول الغيابات' };
+                    if (!stored || /^[a-f0-9]{64}$/i.test(stored)) {
+                        securitySettings.officerPasswordHash = await hashPasswordSecure(password);
+                        securitySettings.securityUpdatedAt = Date.now();
+                        recordAudit('ترقية حماية حساب مسؤول الغيابات');
+                        await saveAll();
+                    }
+                    clearLoginGuard(username);
                     enterApp();
                     return;
                 }
@@ -1342,21 +1516,26 @@
             for (let prof of getCanonicalProfessorRecords()) {
                 if (prof.name === username) {
                     let pwd=getProfessorUnifiedPassword(prof);
-                    if (pwd.hasPassword && pwd.hash && pwd.hash.length !== 64) {
-                        const newHash = await hashPassword(pwd.hash);
-                        propagateProfessorPassword(prof,newHash);
-                        await saveAll();
-                        pwd=getProfessorUnifiedPassword(prof);
-                    }
-                    if (pwd.hasPassword && await hashPassword(password) === pwd.hash) {
+                    const legacyPlaintext = pwd.hasPassword && pwd.hash && !isPasswordHash(pwd.hash);
+                    const valid = legacyPlaintext ? password === pwd.hash : (pwd.hasPassword && await verifyPassword(password, pwd.hash));
+                    if (valid) {
+                        if (legacyPlaintext || /^[a-f0-9]{64}$/i.test(pwd.hash)) {
+                            const upgradedHash = await hashPasswordSecure(password);
+                            propagateProfessorPassword(prof,upgradedHash);
+                            recordAudit('ترقية حماية كلمة مرور أستاذ', { professor: prof.name });
+                            await saveAll();
+                        }
                         const canonical=chooseCanonicalProfessor(getProfessorIdentityCluster(prof))||prof;
                         state.currentUser = { role: 'professor', id: canonical.id, name: canonical.name };
+                        clearLoginGuard(username);
                         enterApp();
                         return;
                     }
                 }
             }
-            document.getElementById('loginError').innerText = '❌ اسم المستخدم أو كلمة المرور غير صحيحة.';
+            const failure = recordFailedLogin(username);
+            const left = Math.max(0, LOGIN_MAX_ATTEMPTS - failure.attempts);
+            document.getElementById('loginError').innerText = failure.lockedUntil ? '🔒 تم إيقاف المحاولات 15 دقيقة لحماية الحساب.' : `❌ اسم المستخدم أو كلمة المرور غير صحيحة. المحاولات المتبقية: ${left}`;
         }
 
         document.addEventListener('keydown', function(e) {
@@ -1369,9 +1548,18 @@
             document.getElementById('currentUserDisplay').innerText = '👤 ' + state.currentUser.name;
             renderAll();
             setAutoDateRange();
+            lastSessionActivity = Date.now();
+            clearInterval(sessionTimer);
+            sessionTimer = setInterval(() => {
+                if (state.currentUser && Date.now() - lastSessionActivity >= SESSION_TIMEOUT_MS) {
+                    logout(true);
+                }
+            }, 30000);
         }
 
-        function logout() {
+        function logout(timedOut = false) {
+            clearInterval(sessionTimer);
+            sessionTimer = null;
             state.currentUser = null;
             state.currentProfessorSubjectId = null;
             document.getElementById('appContainer').classList.add('hidden');
@@ -1384,7 +1572,12 @@
                     html5QrCode.clear(); } catch (e) {}
                 html5QrCode = null;
             }
+            if (timedOut) alert('انتهت الجلسة بعد 30 دقيقة من عدم النشاط. سجل الدخول مرة أخرى.');
         }
+
+        ['click','keydown','touchstart'].forEach(eventName => document.addEventListener(eventName, () => {
+            if (state.currentUser) lastSessionActivity = Date.now();
+        }, { passive:true }));
 
         // ==============================================================
         //  UNIFIED EXCEL: الطلاب + الشعب + الباركود (تنزيل/تعديل/إعادة رفع)
@@ -1671,13 +1864,42 @@
 
         const ABSENCE_THRESHOLDS = Object.freeze({ notice:3, firstWarning:5, finalWarning:7, fail:10, unexcusedFail:10 });
 
+        function getAbsencePolicy() {
+            const settings = getGlobalAppSettings();
+            return {
+                statusBasis: settings.absenceStatusBasis === 'all' ? 'all' : 'unexcused',
+                bolognaWeeks: Math.min(52, Math.max(1, Number(settings.bolognaTeachingWeeks) || 15)),
+                annualWeeks: Math.min(52, Math.max(1, Number(settings.annualTeachingWeeks) || 30))
+            };
+        }
+
+        function getDefaultTeachingWeeks(level) {
+            const policy = getAbsencePolicy();
+            return Number(level) === 1 ? policy.bolognaWeeks : policy.annualWeeks;
+        }
+
+        function getSubjectTeachingWeeks(subject) {
+            if (!subject) return getDefaultTeachingWeeks(0);
+            const manual = Number(subject.totalWeeks);
+            return subject.weeksManual === true && manual > 0 ? manual : getDefaultTeachingWeeks(subject.level);
+        }
+
+        function getSubjectCourseHours(subject) {
+            return Math.max(0.5, Number(subject?.hoursPerWeek) || 1) * getSubjectTeachingWeeks(subject);
+        }
+
+        function absencePolicyLabel() {
+            return getAbsencePolicy().statusBasis === 'all' ? 'كل الغياب (بعذر وبدون عذر)' : 'الغياب غير المعذر فقط';
+        }
+
         function getStatus(unexcusedPct, totalPct) {
             const unexcused = Number(unexcusedPct) || 0;
             const total = Number(totalPct) || 0;
-            if (unexcused >= ABSENCE_THRESHOLDS.unexcusedFail || total >= ABSENCE_THRESHOLDS.fail) return 'راسب';
-            if (total >= ABSENCE_THRESHOLDS.finalWarning) return 'إنذار نهائي';
-            if (total >= ABSENCE_THRESHOLDS.firstWarning) return 'إنذار أولي';
-            if (total >= ABSENCE_THRESHOLDS.notice) return 'تنبيه';
+            const pct = getAbsencePolicy().statusBasis === 'all' ? total : unexcused;
+            if (pct >= ABSENCE_THRESHOLDS.fail) return 'راسب';
+            if (pct >= ABSENCE_THRESHOLDS.finalWarning) return 'إنذار نهائي';
+            if (pct >= ABSENCE_THRESHOLDS.firstWarning) return 'إنذار أولي';
+            if (pct >= ABSENCE_THRESHOLDS.notice) return 'تنبيه';
             return 'جيد';
         }
 
@@ -1688,7 +1910,7 @@
         function getStudentWorstStatusForLevel(studentId, level) {
             let worst='جيد';
             const student=state.students.find(st=>String(st.id)===String(studentId));
-            const subjects=state.subjects.filter(s=>Number(s.level)===Number(level) && s.timetableActive!==false && (!student || studentMatchesSubject(student,s)));
+            const subjects=state.subjects.filter(s=>Number(s.level)===Number(level) && s.timetableActive!==false && (!student || studentRelevantToSubject(student,s)));
             subjects.forEach(sub=>{
                 const st=calculateAnnualAbsence(studentId,sub).status;
                 if(statusSeverity(st)>statusSeverity(worst)) worst=st;
@@ -1796,6 +2018,106 @@
             return !isSpecificTarget || theory === target || practical === target;
         }
 
+        function isEnrollmentRecord(attendance) {
+            return !!attendance && (attendance.linkType === 'enrollment' || String(attendance.id || '').startsWith('alink'));
+        }
+
+        function normalizeSessionTime(value) {
+            const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})/);
+            if (!match) return '';
+            const hour = Number(match[1]);
+            const minute = Number(match[2]);
+            if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return '';
+            return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        }
+
+        function attendanceSessionKey(time) {
+            const normalized = normalizeSessionTime(time);
+            return normalized ? `time:${normalized}` : 'legacy';
+        }
+
+        function attendanceRecordSessionKey(attendance) {
+            const explicit = String(attendance?.sessionKey || '').trim();
+            return explicit || attendanceSessionKey(attendance?.sessionTime);
+        }
+
+        function formatMinutes24(totalMinutes) {
+            const value = Math.max(0, Math.min(1439, Number(totalMinutes) || 0));
+            return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+        }
+
+        function getSuggestedSessionTime(subject) {
+            const professor = state.professors.find(p => String(p.id) === String(subject?.professorId));
+            if (professor) {
+                const today = currentArabicDayName();
+                const lectures = getProfessorScheduledLectures(professor, subject?.level).filter(lecture =>
+                    normalizeMatchText(lecture.dayName || '') === normalizeMatchText(today) &&
+                    (!subject || normalizeMatchText(lecture.subjectName || '') === normalizeMatchText(subject.name || ''))
+                );
+                const current = lectures.find(isLectureCurrentNow);
+                const next = lectures.find(lecture => Number(lecture.startMinutes) >= currentMinutesOfDay());
+                const chosen = current || next || lectures[0];
+                if (chosen) return formatMinutes24(chosen.startMinutes);
+            }
+            const now = new Date();
+            return `${String(now.getHours()).padStart(2, '0')}:${String(Math.floor(now.getMinutes() / 5) * 5).padStart(2, '0')}`;
+        }
+
+        function getSessionTimeFromInput(inputId, subject) {
+            const input = document.getElementById(inputId);
+            const value = normalizeSessionTime(input?.value) || getSuggestedSessionTime(subject);
+            if (input && !input.value) input.value = value;
+            return value;
+        }
+
+        function findAttendanceForSession(studentId, subjectId, date, sessionTime) {
+            const key = attendanceSessionKey(sessionTime);
+            return state.attendances.find(att =>
+                !isEnrollmentRecord(att) && String(att.studentId) === String(studentId) &&
+                String(att.subjectId) === String(subjectId) && String(att.date) === String(date) &&
+                attendanceRecordSessionKey(att) === key
+            );
+        }
+
+        function makeAttendanceRecord(studentId, subjectId, date, sessionTime, hours, excused) {
+            const normalizedTime = normalizeSessionTime(sessionTime);
+            return {
+                id: makeId('a'), studentId, subjectId, date,
+                sessionTime: normalizedTime,
+                sessionKey: attendanceSessionKey(normalizedTime),
+                hours: Number(hours) || 0,
+                excused: Number(excused) === 1 ? 1 : 0,
+                createdAt: Date.now()
+            };
+        }
+
+        function repairEnrollmentAttendanceRecords() {
+            if (!Array.isArray(state.attendances)) return 0;
+            let repaired = 0;
+            const recovered = [];
+            state.attendances.forEach(att => {
+                if (!isEnrollmentRecord(att) || Number(att.hours) <= 0) return;
+                const sessionTime = normalizeSessionTime(att.sessionTime);
+                recovered.push({
+                    ...att,
+                    id: makeId('a'),
+                    linkType: 'attendance',
+                    sessionTime,
+                    sessionKey: attendanceSessionKey(sessionTime),
+                    migratedFromEnrollmentId: String(att.id || ''),
+                    createdAt: Number(att.createdAt) || Date.now()
+                });
+                att.hours = 0;
+                att.excused = 0;
+                att.linkType = 'enrollment';
+                delete att.sessionTime;
+                delete att.sessionKey;
+                repaired++;
+            });
+            if (recovered.length) state.attendances.push(...recovered);
+            return repaired;
+        }
+
         function ensureActiveSubjectLinks(studentId = null) {
             ensureStudentGroupingModel();
             const targetIds = studentId ? new Set([String(studentId)]) : new Set(state.students.map(st => String(st.id)));
@@ -1806,7 +2128,7 @@
             const kept = [];
             state.attendances.forEach(att => {
                 const isTarget = targetIds.has(String(att.studentId));
-                const isSystemLink = String(att.id || '').startsWith('alink') && Number(att.hours) === 0;
+                const isSystemLink = isEnrollmentRecord(att) && Number(att.hours) === 0;
                 if (!isTarget || !isSystemLink) {
                     kept.push(att);
                     return;
@@ -1838,7 +2160,8 @@
                             date: getLocalDateISO(),
                             hours: 0,
                             excused: 0,
-                            linkType: 'enrollment'
+                            linkType: 'enrollment',
+                            createdAt: Date.now()
                         };
                         state.attendances.push(link);
                         existingActiveLinks.set(pairKey, link);
@@ -1864,7 +2187,7 @@
         }
 
         function countHistoricalAttendanceRecords(studentId) {
-            return state.attendances.filter(att => att.studentId === studentId && !String(att.id || '').startsWith('alink')).length;
+            return state.attendances.filter(att => att.studentId === studentId && !isEnrollmentRecord(att)).length;
         }
 
         // ==============================================================
@@ -1874,10 +2197,81 @@
             if (!Array.isArray(state.appSettings)) state.appSettings = [];
             let rec = state.appSettings.find(x => x && x.id === 'global');
             if (!rec) {
-                rec = { id: 'global', officerWhatsApp: '', lectureRemindersEnabled: false, lectureReminderActiveFrom: '', lectureReminderActiveTo: '', updatedAt: 0 };
+                rec = { id: 'global', officerWhatsApp: '', lectureRemindersEnabled: false, lectureReminderActiveFrom: '', lectureReminderActiveTo: '', absenceStatusBasis: 'unexcused', bolognaTeachingWeeks: 15, annualTeachingWeeks: 30, updatedAt: 0 };
                 state.appSettings.push(rec);
             }
             return rec;
+        }
+
+        function renderAbsencePolicySettings() {
+            const basis = document.getElementById('absenceStatusBasis');
+            const bologna = document.getElementById('bolognaTeachingWeeks');
+            const annual = document.getElementById('annualTeachingWeeks');
+            const status = document.getElementById('absencePolicyStatus');
+            if (!basis || !bologna || !annual || !status) return;
+            const policy = getAbsencePolicy();
+            basis.value = policy.statusBasis;
+            bologna.value = policy.bolognaWeeks;
+            annual.value = policy.annualWeeks;
+            status.textContent = `الحالة تعتمد على: ${absencePolicyLabel()} — بولونيا ${policy.bolognaWeeks} أسبوعاً — السنوي ${policy.annualWeeks} أسبوعاً.`;
+        }
+
+        function refreshAutomaticSubjectHours() {
+            let changed = 0;
+            (state.subjects || []).forEach(subject => {
+                if (subject.weeksManual === true) return;
+                const weeks = getDefaultTeachingWeeks(subject.level);
+                const hours = Math.max(0.5, Number(subject.hoursPerWeek) || 1);
+                if (Number(subject.totalWeeks) !== weeks || Number(subject.totalHours) !== hours * weeks) changed++;
+                subject.totalWeeks = weeks;
+                subject.totalHours = hours * weeks;
+            });
+            return changed;
+        }
+
+        async function saveAbsencePolicySettings() {
+            const basis = document.getElementById('absenceStatusBasis')?.value === 'all' ? 'all' : 'unexcused';
+            const bolognaWeeks = Number(document.getElementById('bolognaTeachingWeeks')?.value);
+            const annualWeeks = Number(document.getElementById('annualTeachingWeeks')?.value);
+            if (!Number.isInteger(bolognaWeeks) || bolognaWeeks < 1 || bolognaWeeks > 52 || !Number.isInteger(annualWeeks) || annualWeeks < 1 || annualWeeks > 52) {
+                alert('أدخل عدداً صحيحاً من 1 إلى 52 لأسابيع التدريس.');
+                return;
+            }
+            const settings = getGlobalAppSettings();
+            settings.absenceStatusBasis = basis;
+            settings.bolognaTeachingWeeks = bolognaWeeks;
+            settings.annualTeachingWeeks = annualWeeks;
+            settings.updatedAt = Date.now();
+            settings.updatedBy = state.currentUser?.id || 'admin';
+            const updatedSubjects = refreshAutomaticSubjectHours();
+            recordAudit('تحديث سياسة احتساب الغياب', { basis, bolognaWeeks, annualWeeks, updatedSubjects });
+            const ok = await saveAll();
+            renderAbsencePolicySettings();
+            renderAll();
+            alert(ok ? '✅ تم حفظ السياسة وإعادة حساب ساعات المواد غير المعدلة يدوياً.' : '⚠️ تم التعديل محلياً وتعذر الحفظ السحابي حالياً.');
+        }
+
+        async function editSubjectWeeks(subjectId) {
+            const subject = state.subjects.find(s => String(s.id) === String(subjectId));
+            if (!subject) return;
+            const current = getSubjectTeachingWeeks(subject);
+            const answer = prompt(`عدد أسابيع تدريس مادة «${subject.name}»:\nاكتب 0 للعودة إلى الإعداد التلقائي.`, String(current));
+            if (answer === null) return;
+            const weeks = Number(answer);
+            if (!Number.isInteger(weeks) || weeks < 0 || weeks > 52) { alert('أدخل عدداً صحيحاً من 0 إلى 52.'); return; }
+            if (weeks === 0) {
+                subject.weeksManual = false;
+                subject.totalWeeks = getDefaultTeachingWeeks(subject.level);
+            } else {
+                subject.weeksManual = true;
+                subject.totalWeeks = weeks;
+            }
+            subject.totalHours = Math.max(0.5, Number(subject.hoursPerWeek) || 1) * subject.totalWeeks;
+            recordAudit('تعديل أسابيع مادة', { subject: subject.name, weeks: subject.totalWeeks, manual: subject.weeksManual });
+            await saveAll();
+            renderFullSubjectsList();
+            if (currentManagementLevel) renderLevelSubjects(currentManagementLevel);
+            renderAll();
         }
 
         function normalizeWhatsAppNumber(value) {
@@ -2221,7 +2615,7 @@
             if(p?.timetableSourceId) score+=10;
             if((state.subjects||[]).some(s=>String(s.professorId)===String(p?.id))) score+=15;
             if(normalizeWhatsAppNumber(p?.phone||p?.phoneNormalized||'')) score+=5;
-            if(typeof p?.password==='string' && p.password.length===64) score+=5;
+            if(isPasswordHash(p?.password)) score+=5;
             return score;
         }
 
@@ -2285,7 +2679,7 @@
                 profile.phone=raw; profile.phoneNormalized=normalizeWhatsAppNumber(raw); changed=true;
             }
             if(cluster.some(x=>x.whatsappOptIn===true) && profile.whatsappOptIn!==true){profile.whatsappOptIn=true;changed=true;}
-            const passCandidates=cluster.filter(x=>typeof x.password==='string' && x.password.length===64)
+            const passCandidates=cluster.filter(x=>isPasswordHash(x.password))
                 .sort((a,b)=>Number(b.passwordUpdatedAt||0)-Number(a.passwordUpdatedAt||0));
             if(!profile.passwordHash && passCandidates.length){profile.passwordHash=passCandidates[0].password;changed=true;}
             const canonical=chooseCanonicalProfessor(cluster)||prof;
@@ -2393,7 +2787,7 @@
             if(!prof) return {hasPassword:false,hash:'',source:null,duplicateCount:0,profile:null};
             const profile=getProfessorProfile(prof,false); const cluster=getProfessorIdentityCluster(prof);
             if(profile?.passwordHash) return {hasPassword:true,hash:profile.passwordHash,source:profile,duplicateCount:Math.max(0,cluster.length-1),profile};
-            const source=cluster.find(x=>typeof x.password==='string' && x.password.length===64) || cluster.find(x=>String(x.password||'').trim()) || null;
+            const source=cluster.find(x=>isPasswordHash(x.password)) || cluster.find(x=>String(x.password||'').trim()) || null;
             return {hasPassword:!!source,hash:String(source?.password||''),source,duplicateCount:Math.max(0,cluster.length-1),profile};
         }
 
@@ -2430,12 +2824,12 @@
             mergeLegacyProfessorDataIntoProfile(prof,profile);
             canonicalizeProfessorReferences();
             const cluster=getProfessorIdentityCluster(prof);
-            const updates={};
-            updates[`professorProfiles/${firebaseRecordKey(profile.id)}`]={...profile,id:profile.id};
-            (cluster.length?cluster:[prof]).forEach(p=>{updates[`professors/${firebaseRecordKey(p.id)}`]={...p,id:p.id};});
-            updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;
-            updates.schemaVersion=11;
-            await database.ref('/').update(updates);
+            const profileBase=mapsById(lastSyncedCollections.professorProfiles||[]).get(String(profile.id));
+            const professorBase=mapsById(lastSyncedCollections.professors||[]);
+            const changes=[{name:'professorProfiles',id:String(profile.id),before:profileBase,after:{...profile,id:profile.id}}];
+            (cluster.length?cluster:[prof]).forEach(p=>changes.push({name:'professors',id:String(p.id),before:professorBase.get(String(p.id)),after:{...p,id:p.id}}));
+            const conflicts=await commitFirebaseChanges(changes);
+            if(conflicts.length) throw new Error('عُدّل ملف الأستاذ من جهاز آخر. تم إيقاف الحفظ لتجنب استبدال التعديل الأحدث. حدّث الصفحة ثم أعد المحاولة.');
             const [profileSnap, profsSnap, profilesSnap]=await Promise.all([
                 database.ref(`/professorProfiles/${firebaseRecordKey(profile.id)}`).once('value'),
                 database.ref('/professors').once('value'),
@@ -2540,6 +2934,7 @@
             renderFullSubjectsList();
             renderWeeklyScheduleLinkStatus();
             renderOfficerWhatsAppSettings();
+            renderAbsencePolicySettings();
             renderLectureReminderSettings();
             renderProfessorProfileHealth();
             document.getElementById('excelImportStatus').textContent = '';
@@ -2950,8 +3345,9 @@
             }
             const labels=[], dataValues=[], colors=[];
             const summaryCounts=countStudentStatuses(students,level);
+            const levelSubjectIds=new Set(state.subjects.filter(s=>Number(s.level)===Number(level)).map(s=>String(s.id)));
             students.forEach(st=>{
-                const totalHours=state.attendances.filter(a=>a.studentId===st.id && Number(a.hours)>0).reduce((s,a)=>s+(Number(a.hours)||0),0);
+                const totalHours=state.attendances.filter(a=>a.studentId===st.id && levelSubjectIds.has(String(a.subjectId)) && !isEnrollmentRecord(a) && Number(a.hours)>0).reduce((s,a)=>s+(Number(a.hours)||0),0);
                 labels.push(st.name); dataValues.push(totalHours); colors.push(statusColor(getStudentWorstStatusForLevel(st.id,level)));
             });
             container.innerHTML=`
@@ -3047,10 +3443,11 @@
                     <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 6px; border-bottom:1px solid #e2e8f0; flex-wrap:wrap; gap:3px;">
                         <div style="font-size:12px;">
                             <strong>${s.name}</strong>
-                            <span style="font-size:10px; color:#718096; margin-right:4px;">${s.hoursPerWeek} س/أ</span>
+                            <span style="font-size:10px; color:#718096; margin-right:4px;">${s.hoursPerWeek} س/أ × ${getSubjectTeachingWeeks(s)} أسبوع = ${getSubjectCourseHours(s)} س</span>
                             <div style="font-size:10px; color:#4a5568;">👨‍🏫 ${prof ? prof.name : 'غير معين'}</div>
                         </div>
                         <div style="display:flex; gap:3px;">
+                            <button onclick="editSubjectWeeks('${s.id}')" class="btn-sm btn-warning" style="min-width:25px; padding:1px 4px; font-size:10px;">📐</button>
                             <button onclick="editSubjectProfessor('${s.id}')" class="btn-sm btn-warning" style="min-width:25px; padding:1px 4px; font-size:10px;">👤</button>
                             <button onclick="deleteSubjectFromLevel('${s.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button>
                         </div>
@@ -3067,7 +3464,7 @@
             if (pass === null) return false;
             const clean = String(pass).trim();
             if (clean.length < 4) { alert('كلمة المرور يجب أن تكون 4 محارف على الأقل.'); return false; }
-            const hash=await hashPassword(clean);
+            const hash=await hashPasswordSecure(clean);
             propagateProfessorPassword(prof,hash);
             recordAudit('تعيين/تغيير كلمة مرور أستاذ', { professorId: prof.id, professorName: prof.name });
             try{
@@ -3094,7 +3491,7 @@
             if (state.professors.find(p => p.name === name)) { alert('هذا الأستاذ موجود مسبقاً'); return; }
             const id = makeId('p');
             if (phone && !/^\d{8,15}$/.test(phoneNormalized)) { alert('رقم واتساب الأستاذ غير صالح'); return; }
-            const hashedPass = await hashPassword(pass);
+            const hashedPass = await hashPasswordSecure(pass);
             const newProf={ id, name, password: hashedPass, level, phone, phoneNormalized, whatsappOptIn };
             state.professors.push(newProf);
             propagateProfessorContact(newProf,phone,phoneNormalized,whatsappOptIn);
@@ -3123,8 +3520,9 @@
             if (!professorId) { alert('يرجى اختيار أستاذ مسؤول للمادة'); return; }
             const systemType = level === 1 ? 'بولونيا' : 'سنوي';
             const id = makeId('s');
+            const totalWeeks = getDefaultTeachingWeeks(level);
             state.subjects.push({ id, name, english: name, professorId, level, systemType, groupType: type, hoursPerWeek: hours,
-                totalWeeks: 30, totalHours: hours * 30, code: '', ects: 0 });
+                totalWeeks, totalHours: hours * totalWeeks, weeksManual: false, code: '', ects: 0 });
             recordAudit('إضافة مادة', { name, level, type, hours });
             const studentsInLevel = state.students.filter(s => studentMatchesSubject(s, { level, groupType: type }));
             studentsInLevel.forEach(student => {
@@ -3132,7 +3530,7 @@
                 if (!existing) {
                     state.attendances.push({ id: makeId('alink'),
                         studentId: student.id, subjectId: id, date: getLocalDateISO(), hours: 0,
-                        excused: 0 });
+                        excused: 0, linkType: 'enrollment', createdAt: Date.now() });
                 }
             });
             const saved = await saveAll();
@@ -3200,11 +3598,11 @@
                     <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 6px; border-bottom:1px solid #e2e8f0; flex-wrap:wrap; gap:3px;">
                         <div style="font-size:12px;">
                             <strong>${s.name}</strong>
-                            <span style="font-size:10px; color:#718096; margin-right:4px;">${s.hoursPerWeek} س/أ</span>
+                            <span style="font-size:10px; color:#718096; margin-right:4px;">${s.hoursPerWeek} س/أ × ${getSubjectTeachingWeeks(s)} أسبوع = ${getSubjectCourseHours(s)} س</span>
                             <span style="font-size:10px; color:#4a5568;">المرحلة ${s.level}</span>
                             <div style="font-size:10px; color:#4a5568;">👨‍🏫 ${prof ? prof.name : 'غير معين'}</div>
                         </div>
-                        <button onclick="deleteSubjectFull('${s.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button>
+                        <div style="display:flex;gap:4px;"><button onclick="editSubjectWeeks('${s.id}')" class="btn-sm btn-warning" style="padding:1px 5px;font-size:10px;">📐 الأسابيع</button><button onclick="deleteSubjectFull('${s.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button></div>
                     </div>
                 `;
             });
@@ -3213,12 +3611,14 @@
 
         function deleteProfessorFull(professorId) {
             if (!confirm('⚠️ هل أنت متأكد من حذف هذا الأستاذ؟')) return;
+            const professor = state.professors.find(p => p.id === professorId);
             const hasSubjects = state.subjects.some(s => s.professorId === professorId);
             if (hasSubjects) {
                 if (!confirm('⚠️ هذا الأستاذ مسؤول عن مواد. هل تريد حذفه مع إلغاء تعيينه من المواد؟')) return;
                 state.subjects.forEach(s => { if (s.professorId === professorId) s.professorId = null; });
             }
             state.professors = state.professors.filter(p => p.id !== professorId);
+            recordAudit('حذف أستاذ', { professorId, name: professor?.name || '', unassignedSubjects: hasSubjects });
             saveAll();
             renderFullProfessorsList();
             populateAllSelects();
@@ -3228,8 +3628,11 @@
 
         function deleteSubjectFull(subjectId) {
             if (!confirm('⚠️ هل أنت متأكد من حذف هذه المادة؟ سيتم حذف جميع غياباتها أيضاً.')) return;
+            const subject = state.subjects.find(s => s.id === subjectId);
+            const removedAttendances = state.attendances.filter(a => a.subjectId === subjectId).length;
             state.attendances = state.attendances.filter(a => a.subjectId !== subjectId);
             state.subjects = state.subjects.filter(s => s.id !== subjectId);
+            recordAudit('حذف مادة وجميع سجلاتها', { subjectId, name: subject?.name || '', removedAttendances });
             saveAll();
             renderFullSubjectsList();
             populateAllSelects();
@@ -3249,12 +3652,13 @@
             if (state.professors.find(p => p.name === name)) { alert('هذا الأستاذ موجود مسبقاً'); return; }
             const id = makeId('p');
             if (phone && !/^\d{8,15}$/.test(phoneNormalized)) { alert('رقم واتساب الأستاذ غير صالح'); return; }
-            const hashedPass = await hashPassword(pass);
+            const hashedPass = await hashPasswordSecure(pass);
             const newProf={ id, name, password: hashedPass, level: currentManagementLevel, phone, phoneNormalized, whatsappOptIn };
             state.professors.push(newProf);
             propagateProfessorContact(newProf,phone,phoneNormalized,whatsappOptIn);
             propagateProfessorPassword(newProf,hashedPass);
             canonicalizeProfessorReferences();
+            recordAudit('إضافة أستاذ إلى مرحلة', { name, level: currentManagementLevel, whatsappOptIn });
             await saveAll();
             document.getElementById('newProfNameLevel').value = '';
             document.getElementById('newProfPassLevel').value = '';
@@ -3270,12 +3674,14 @@
 
         function deleteProfessorFromLevel(professorId) {
             if (!confirm('⚠️ هل أنت متأكد من حذف هذا الأستاذ؟')) return;
+            const professor = state.professors.find(p => p.id === professorId);
             const hasSubjects = state.subjects.some(s => s.professorId === professorId);
             if (hasSubjects) {
                 if (!confirm('⚠️ هذا الأستاذ مسؤول عن مواد. هل تريد حذفه مع إلغاء تعيينه من المواد؟')) return;
                 state.subjects.forEach(s => { if (s.professorId === professorId) s.professorId = null; });
             }
             state.professors = state.professors.filter(p => p.id !== professorId);
+            recordAudit('حذف أستاذ من إدارة المرحلة', { professorId, name: professor?.name || '', level: currentManagementLevel, unassignedSubjects: hasSubjects });
             saveAll();
             renderLevelProfessors(currentManagementLevel);
             populateLevelProfessorSelect(currentManagementLevel);
@@ -3285,7 +3691,7 @@
             alert('✅ تم حذف الأستاذ بنجاح');
         }
 
-        function addSubjectToLevel() {
+        async function addSubjectToLevel() {
             if (!currentManagementLevel) { alert('الرجاء اختيار مرحلة أولاً'); return; }
             const subjectSelect = document.getElementById('levelSubjectSelect');
             const professorSelect = document.getElementById('levelSubjectProfessor');
@@ -3307,20 +3713,22 @@
             if (!subjectData) { alert('لم يتم العثور على المادة في المنهج'); return; }
             const systemType = currentManagementLevel === 1 ? 'بولونيا' : 'سنوي';
             const id = makeId('s');
+            const totalWeeks = getDefaultTeachingWeeks(currentManagementLevel);
             state.subjects.push({ id, name: subjectData.name, english: subjectData.english || '', professorId,
                 level: currentManagementLevel, systemType, groupType: subjectData.type || 'نظري',
-                hoursPerWeek: subjectData.hours || 2, totalWeeks: 30, totalHours: (subjectData.hours || 2) * 30,
+                hoursPerWeek: subjectData.hours || 2, totalWeeks, totalHours: (subjectData.hours || 2) * totalWeeks, weeksManual: false,
                 code: subjectData.code || '', ects: subjectData.ects || 0 });
-            saveAll();
             const studentsInLevel = state.students.filter(s => studentMatchesSubject(s, { level: currentManagementLevel, groupType: subjectData.type }));
             studentsInLevel.forEach(student => {
                 const existing = state.attendances.some(a => a.studentId === student.id && a.subjectId === id);
                 if (!existing) {
                     state.attendances.push({ id: makeId('alink'),
                         studentId: student.id, subjectId: id, date: getLocalDateISO(), hours: 0,
-                        excused: 0 });
+                        excused: 0, linkType: 'enrollment', createdAt: Date.now() });
                 }
             });
+            recordAudit('إضافة مادة إلى مرحلة', { name: subjectData.name, level: currentManagementLevel, professorId, totalWeeks });
+            await saveAll();
             renderLevelSubjects(currentManagementLevel);
             populateLevelSubjectSelect(currentManagementLevel);
             renderFullSubjectsList();
@@ -3332,8 +3740,11 @@
 
         function deleteSubjectFromLevel(subjectId) {
             if (!confirm('⚠️ هل أنت متأكد من حذف هذه المادة؟ سيتم حذف جميع غياباتها أيضاً.')) return;
+            const subject = state.subjects.find(s => s.id === subjectId);
+            const removedAttendances = state.attendances.filter(a => a.subjectId === subjectId).length;
             state.attendances = state.attendances.filter(a => a.subjectId !== subjectId);
             state.subjects = state.subjects.filter(s => s.id !== subjectId);
+            recordAudit('حذف مادة من إدارة المرحلة', { subjectId, name: subject?.name || '', level: currentManagementLevel, removedAttendances });
             saveAll();
             renderLevelSubjects(currentManagementLevel);
             populateLevelSubjectSelect(currentManagementLevel);
@@ -3354,7 +3765,9 @@
             if (newIndex === null) return;
             const index = parseInt(newIndex) - 1;
             if (isNaN(index) || index < 0 || index >= professors.length) { alert('اختيار غير صحيح'); return; }
+            const previousProfessorId = subject.professorId || null;
             subject.professorId = professors[index].id;
+            recordAudit('تغيير أستاذ مادة', { subject: subject.name, previousProfessorId, newProfessorId: subject.professorId, newProfessor: professors[index].name });
             saveAll();
             renderLevelSubjects(currentManagementLevel);
             renderFullSubjectsList();
@@ -3429,13 +3842,14 @@
             if (!confirm('⚠️ تحذير: سيتم استبدال البيانات الحالية بالبيانات الافتراضية. هل أنت متأكد؟')) return;
             if (!confirm('تأكيد نهائي: سيتم تنزيل نسخة احتياطية أولاً ثم إعادة التهيئة. متابعة؟')) return;
             exportBackup();
+            const preservedAuditLogs = Array.isArray(state.auditLogs) ? [...state.auditLogs] : [];
             state.professors = [];
             state.professorProfiles = [];
             state.subjects = [];
             state.students = [];
             state.attendances = [];
             state.notifications = [];
-            state.auditLogs = [];
+            state.auditLogs = preservedAuditLogs;
             state.submissions = [];
             state.scheduleLinks = [];
             await initializeDefaultData();
@@ -3624,12 +4038,10 @@
                 let html = `
                     <div class="card no-print">
                         <h4>📱 المراسلة الجماعية</h4>
-                        <label>رقم واتساب المسؤول</label>
-                        <input type="text" id="whatsappSenderNumber" class="phone-input" value="07811290951" placeholder="07811290951">
-                        <small>سيتم استخدام هذا الرقم لفتح محادثة واتساب</small>
+                        <small>تُفتح الروابط في حساب واتساب المسجل على هذا الجهاز؛ لا يمكن لموقع الويب اختيار رقم المُرسل. تُحوّل الأرقام العراقية 07... تلقائياً إلى الصيغة الدولية.</small>
                         <div class="btn-group" style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;">
                             <button onclick="sendWhatsAppToStudents()" class="btn-send-whatsapp" style="flex:1;">📱 للطلاب</button>
-                            <button onclick="sendWhatsAppToGuardians()" class="btn-send-whatsapp-guardian" style="flex:1;">👨‍👦 للأمه</button>
+                            <button onclick="sendWhatsAppToGuardians()" class="btn-send-whatsapp-guardian" style="flex:1;">👨‍👦 لأولياء الأمور</button>
                             <button onclick="copyAllMessages()" class="btn-copy-all" style="flex:1;">📋 نسخ الكل</button>
                             <button onclick="openAllWhatsAppLinks()" class="btn-open-all" style="flex:1;">🚀 فتح الكل</button>
                         </div>
@@ -3661,7 +4073,7 @@
 
         function getStatusRowsForLevel(level) {
             const students = state.students.filter(st=>Number(st.level)===Number(level));
-            const subjects = state.subjects.filter(sub=>Number(sub.level)===Number(level));
+            const subjects = state.subjects.filter(sub=>Number(sub.level)===Number(level) && sub.timetableActive!==false);
             const rows=[];
             students.forEach(st=>subjects.forEach(sub=>{
                 if (!studentRelevantToSubject(st,sub)) return;
@@ -3679,17 +4091,22 @@
 
         function statusRowMatches(row, filter) {
             if (!filter || filter==='الكل') return true;
-            if (filter==='أي إنذار') return row.status!=='جيد';
+            if (filter==='أي حالة' || filter==='أي إنذار') return row.status!=='جيد';
             return row.status===filter;
         }
 
         function getFilteredStatusRows(level, filter=state.officerStatusFilter) {
-            return getStatusRowsForLevel(level).filter(r=>statusRowMatches(r,filter));
+            const matchingStudents=getStudentsMatchingStatus(level,filter);
+            return getStatusRowsForLevel(level).filter(r=>matchingStudents.has(r.studentId) && statusRowMatches(r,filter));
         }
 
         function getStudentsMatchingStatus(level, filter=state.officerStatusFilter) {
-            if (!filter || filter==='الكل') return new Set(state.students.filter(st=>Number(st.level)===Number(level)).map(st=>st.id));
-            return new Set(getFilteredStatusRows(level,filter).map(r=>r.studentId));
+            const students=state.students.filter(st=>Number(st.level)===Number(level));
+            if (!filter || filter==='الكل') return new Set(students.map(st=>st.id));
+            return new Set(students.filter(st=>{
+                const worst=getStudentWorstStatusForLevel(st.id,level);
+                return (filter==='أي حالة' || filter==='أي إنذار') ? worst!=='جيد' : worst===filter;
+            }).map(st=>st.id));
         }
 
         function setOfficerStatusFilter(filter) {
@@ -3701,16 +4118,18 @@
         function renderOfficerStatusFilter(level) {
             const el=document.getElementById('officerStatusFilterPanel');
             if (!el || !level) return;
-            const all=getStatusRowsForLevel(level);
-            const filters=['الكل','جيد','تنبيه','إنذار أولي','إنذار نهائي','راسب','أي إنذار'];
+            if(state.officerStatusFilter==='أي إنذار') state.officerStatusFilter='أي حالة';
+            const students=state.students.filter(st=>Number(st.level)===Number(level));
+            const counts=countStudentStatuses(students,level);
+            const filters=['الكل','جيد','تنبيه','إنذار أولي','إنذار نهائي','راسب','أي حالة'];
             const styles={
                 'الكل':['#e2e8f0','#334155'], 'جيد':['#c6f6d5','#22543d'], 'تنبيه':['#bee3f8','#2a4365'], 'إنذار أولي':['#fefcbf','#744210'],
-                'إنذار نهائي':['#feebc8','#7b341e'], 'راسب':['#fed7d7','#9b2c2c'], 'أي إنذار':['#e9d5ff','#6b21a8']
+                'إنذار نهائي':['#feebc8','#7b341e'], 'راسب':['#fed7d7','#9b2c2c'], 'أي حالة':['#e9d5ff','#6b21a8']
             };
-            const uniqueCount=f=>new Set((f==='الكل'?all:all.filter(r=>statusRowMatches(r,f))).map(r=>r.studentId)).size;
-            el.innerHTML=`<div class="flex-between"><div><h4 style="margin:0;">🎯 فرز الطلبة حسب حالة الغياب</h4><small>الفرز يعتمد الحالة التراكمية لكل طالب في كل مادة. إذا كان للطالب إنذار في مادة واحدة فسيظهر عند اختيار تلك الحالة.</small></div>
+            const uniqueCount=f=>f==='الكل'?students.length:(f==='أي حالة'?students.length-(counts['جيد']||0):(counts[f]||0));
+            el.innerHTML=`<div class="flex-between"><div><h4 style="margin:0;">🎯 فرز الطلبة حسب حالة الغياب</h4><small>كل طالب يُحسب مرة واحدة وفق أسوأ حالة تراكمية لديه في مواد المرحلة. أساس الحالة: ${escapeHtml(absencePolicyLabel())}.</small></div>
                 <div style="display:flex;gap:5px;flex-wrap:wrap;"><button onclick="exportFilteredStatusExcel()" class="btn-excel btn-sm">📊 Excel للحالة المختارة</button><button onclick="exportFilteredStatusPDF()" class="btn-pdf btn-sm">📄 PDF للحالة المختارة</button></div></div>
-                <div class="status-count-grid">${['جيد','تنبيه','إنذار أولي','إنذار نهائي','راسب','أي إنذار'].map(f=>`<div class="status-count-card" style="background:${styles[f][0]};color:${styles[f][1]};"><strong>${uniqueCount(f)}</strong><span>${escapeHtml(f)}</span></div>`).join('')}</div>
+                <div class="status-count-grid">${['جيد','تنبيه','إنذار أولي','إنذار نهائي','راسب','أي حالة'].map(f=>`<div class="status-count-card" style="background:${styles[f][0]};color:${styles[f][1]};"><strong>${uniqueCount(f)}</strong><span>${escapeHtml(f)}</span></div>`).join('')}</div>
                 <div class="status-filter-buttons">${filters.map(f=>`<button class="status-filter-btn btn-sm ${state.officerStatusFilter===f?'active':''}" style="background:${styles[f][0]};color:${styles[f][1]};" onclick="setOfficerStatusFilter('${f}')">${escapeHtml(f)} (${uniqueCount(f)})</button>`).join('')}</div>`;
         }
 
@@ -4104,8 +4523,9 @@
                     }
                     const resolvedProfessorId=profMap.get(String(item.professorId||'')) || state.professors.find(p=>String(p.id||'')===String(item.professorId||'') || String(p.timetableSourceId||'')===String(item.professorId||''))?.id || null;
                     const hours=Math.max(0.5,Number(item.hoursPerWeek)||1);
+                    const automaticWeeks=getDefaultTeachingWeeks(level);
                     if(!sub){
-                        sub={id:sourceId,name:sanitizeText(item.name,160),english:sanitizeText(item.name,160),professorId:resolvedProfessorId,level,systemType:level===1?'بولونيا':'سنوي',groupType:sanitizeText(item.groupType||'نظري',40),hoursPerWeek:hours,totalWeeks:30,totalHours:hours*30,code:'',ects:0};
+                        sub={id:sourceId,name:sanitizeText(item.name,160),english:sanitizeText(item.name,160),professorId:resolvedProfessorId,level,systemType:level===1?'بولونيا':'سنوي',groupType:sanitizeText(item.groupType||'نظري',40),hoursPerWeek:hours,totalWeeks:automaticWeeks,totalHours:hours*automaticWeeks,weeksManual:false,code:'',ects:0};
                         state.subjects.push(sub);
                     }
                     sub.name=sanitizeText(item.name,160);
@@ -4114,7 +4534,7 @@
                     sub.systemType=level===1?'بولونيا':'سنوي';
                     sub.groupType=sanitizeText(item.groupType||'نظري',40);
                     sub.hoursPerWeek=hours;
-                    sub.totalWeeks=Number(sub.totalWeeks)||30;
+                    sub.totalWeeks=sub.weeksManual===true && Number(sub.totalWeeks)>0 ? Number(sub.totalWeeks) : automaticWeeks;
                     sub.totalHours=hours*sub.totalWeeks;
                     sub.timetableSourceId=sourceId;
                     sub.timetableProfessorSourceId=String(item.professorId||'');
@@ -4246,51 +4666,9 @@
         //  دوال التقارير (Officer Reports)
         // ==============================================================
         function getReportSubjects(level) {
-            let curriculumSubjects = [];
-            if (level === 1) {
-                curriculumSubjects = [
-                    ...(CURRICULUM.semester1?.subjects || []),
-                    ...(CURRICULUM.semester2?.subjects || [])
-                ];
-            } else {
-                const found = Object.values(CURRICULUM).find(c => c.level === level && !c.semester);
-                if (found) curriculumSubjects = found.subjects || [];
-            }
-            const actualSubjects = state.subjects.filter(s => s.level === level);
-            const result = [];
-            const used = new Set();
-
-            curriculumSubjects.forEach(c => {
-                const actual = actualSubjects.find(s =>
-                    !used.has(s.id) &&
-                    (s.name === c.name || s.name.includes(c.name) || c.name.includes(s.name))
-                );
-                if (actual) {
-                    result.push(actual);
-                    used.add(actual.id);
-                } else {
-                    result.push({
-                        id: `curriculum_${level}_${c.code || c.name}`,
-                        name: c.name,
-                        english: c.english || '',
-                        level,
-                        systemType: level === 1 ? 'بولونيا' : 'سنوي',
-                        groupType: c.type || 'نظري',
-                        hoursPerWeek: c.hours || 1,
-                        totalWeeks: 30,
-                        totalHours: (c.hours || 1) * 30,
-                        code: c.code || '',
-                        ects: c.ects || 0,
-                        _curriculumOnly: true
-                    });
-                }
-            });
-
-            actualSubjects.forEach(s => {
-                if (!used.has(s.id) && !result.some(r => r.name === s.name)) result.push(s);
-            });
-
-            return result;
+            return state.subjects
+                .filter(s => Number(s.level) === Number(level) && s.timetableActive !== false)
+                .sort((a,b) => String(a.name || '').localeCompare(String(b.name || ''), 'ar'));
         }
 
         function calculateAnnualAbsence(studentId, subject) {
@@ -4306,9 +4684,7 @@
                 .filter(a => Number(a.excused) === 1)
                 .reduce((sum, a) => sum + (Number(a.hours) || 0), 0);
 
-            const annualCourseHours = Number(subject.totalHours) > 0 ?
-                Number(subject.totalHours) :
-                (Number(subject.hoursPerWeek) || 1) * (Number(subject.totalWeeks) || 30);
+            const annualCourseHours = getSubjectCourseHours(subject);
 
             const absencePercentage = annualCourseHours > 0 ?
                 (totalAbsentHours / annualCourseHours) * 100 : 0;
@@ -4348,8 +4724,12 @@
             if (to) filteredAttendances = filteredAttendances.filter(a => a.date <= to);
 
             const finalSubjects = getReportSubjects(level);
+            if (!finalSubjects.length) {
+                container.innerHTML = '<div class="card"><p style="text-align:center;color:#718096;">لا توجد مواد فعلية نشطة لهذه المرحلة. لن يعرض البرنامج مواد منهجية افتراضية على أنها بلا غياب.</p></div>';
+                return;
+            }
             const levelStudentIds = new Set(studentsInLevel.map(st => st.id));
-            const levelSubjectIds = new Set(finalSubjects.filter(s => !s._curriculumOnly).map(s => s.id));
+            const levelSubjectIds = new Set(finalSubjects.map(s => s.id));
             const periodRecords = filteredAttendances.filter(a => levelStudentIds.has(a.studentId) && levelSubjectIds.has(a.subjectId) && Number(a.hours) > 0);
             let periodDetailsHtml = '';
             if (from || to) {
@@ -4358,11 +4738,11 @@
                 if (!sortedPeriod.length) {
                     periodDetailsHtml += '<p style="color:#718096;text-align:center;">لا توجد غيابات ضمن هذه الفترة.</p>';
                 } else {
-                    periodDetailsHtml += '<div class="report-table-wrapper"><table class="report-table" style="min-width:700px"><thead><tr><th>الطالب</th><th>المادة</th><th>التاريخ</th><th>الساعات</th><th>النوع</th></tr></thead><tbody>';
+                    periodDetailsHtml += '<div class="report-table-wrapper"><table class="report-table" style="min-width:700px"><thead><tr><th>الطالب</th><th>المادة</th><th>التاريخ</th><th>وقت المحاضرة</th><th>الساعات</th><th>النوع</th></tr></thead><tbody>';
                     sortedPeriod.forEach(att => {
                         const st = state.students.find(x => x.id === att.studentId);
                         const sub = state.subjects.find(x => x.id === att.subjectId);
-                        periodDetailsHtml += `<tr><td>${escapeHtml(st?.name || 'غير معروف')}</td><td>${escapeHtml(sub?.name || 'غير معروف')}</td><td>${escapeHtml(att.date || '')}</td><td>${Number(att.hours) || 0}</td><td>${Number(att.excused) === 1 ? 'بعذر' : 'بدون عذر'}</td></tr>`;
+                        periodDetailsHtml += `<tr><td>${escapeHtml(st?.name || 'غير معروف')}</td><td>${escapeHtml(sub?.name || 'غير معروف')}</td><td>${escapeHtml(att.date || '')}</td><td>${escapeHtml(normalizeSessionTime(att.sessionTime) || 'سجل قديم')}</td><td>${Number(att.hours) || 0}</td><td>${Number(att.excused) === 1 ? 'بعذر' : 'بدون عذر'}</td></tr>`;
                     });
                     periodDetailsHtml += '</tbody></table></div>';
                 }
@@ -4379,9 +4759,9 @@
                             <span style="background:#bee3f8; padding:2px 6px; border-radius:4px;">🔵 تنبيه: 3%–أقل من 5%</span>
                             <span style="background:#fefcbf; padding:2px 6px; border-radius:4px;">🟡 إنذار أولي: 5%–أقل من 7%</span>
                             <span style="background:#feebc8; padding:2px 6px; border-radius:4px;">🟠 إنذار نهائي: 7%–أقل من 10%</span>
-                            <span style="background:#fed7d7; padding:2px 6px; border-radius:4px;">🔴 راسب: 10% فأكثر (أو غير معذر 10% فأكثر)</span>
+                            <span style="background:#fed7d7; padding:2px 6px; border-radius:4px;">🔴 راسب: 10% فأكثر</span>
                         </div>
-                        <p class="report-explanation" style="font-size:9px; color:#718096; margin:2px 0;">التقرير يحسب <strong>مجموع ساعات غياب الطالب لجميع محاضرات السنة</strong> لكل مادة.</p>
+                        <p class="report-explanation" style="font-size:9px; color:#718096; margin:2px 0;">أساس تحديد الحالة: <strong>${escapeHtml(absencePolicyLabel())}</strong>. وتبقى الساعات المعذرة وغير المعذرة محفوظة في التفاصيل.</p>
                     </div>
                     <div class="report-table-wrapper">
                         <table class="report-table" id="officerReportTable">
@@ -4394,22 +4774,17 @@
                 html += `<tr class="status-filter-summary-row"><td colspan="${finalSubjects.length+1}" style="background:#eef2ff;color:#3730a3;font-weight:bold;text-align:center;">الفلتر الحالي: ${escapeHtml(state.officerStatusFilter)} — ${sortedStudents.length} طالب</td></tr>`;
             }
             sortedStudents.forEach(st => {
-                html += `<tr><td class="student-name">${st.name}</td>`;
+                html += `<tr><td class="student-name">${escapeHtml(st.name)}</td>`;
                 finalSubjects.forEach(sub => {
-                    const d = sub._curriculumOnly ? {
-                        totalAbsentHours: 0,
-                        unexcusedHours: 0,
-                        excusedHours: 0,
-                        annualCourseHours: Number(sub.totalHours) || ((Number(sub.hoursPerWeek) || 1) * (
-                            Number(sub.totalWeeks) || 30)),
-                        absencePercentage: 0,
-                        unexcusedPercentage: 0,
-                        status: 'جيد'
-                    } : calculateAnnualAbsence(st.id, sub);
+                    if (!studentRelevantToSubject(st, sub)) {
+                        html += '<td class="subject-cell" style="background:#f1f5f9;color:#64748b;border:1px solid #cbd5e0;"><span class="status-text">غير مشمول</span></td>';
+                        return;
+                    }
+                    const d = calculateAnnualAbsence(st.id, sub);
                     const style = getStatusStyle(d.status);
-                    const pct = d.absencePercentage.toFixed(1);
+                    const pct = (getAbsencePolicy().statusBasis === 'all' ? d.absencePercentage : d.unexcusedPercentage).toFixed(1);
                     const hours = d.totalAbsentHours.toFixed(1);
-                    html += `<td class="subject-cell ${style.cls}" style="background:${style.bg}; color:${style.fg}; border:1px solid #cbd5e0;">
+                    html += `<td class="subject-cell ${style.cls}" title="إجمالي الغياب: ${d.absencePercentage.toFixed(1)}% — غير المعذر: ${d.unexcusedPercentage.toFixed(1)}% — ساعات المقرر: ${d.annualCourseHours}" style="background:${style.bg}; color:${style.fg}; border:1px solid #cbd5e0;">
                         <span class="status-text" style="color:${style.fg}; font-weight:800;">${d.status}</span>
                         <span class="percentage" style="color:${style.fg};">${pct}%</span>
                         <span class="hours-detail" style="color:${style.fg};"><strong>${hours} س</strong><span class="annual-label"> غياب سنوي</span></span>
@@ -4502,9 +4877,11 @@
             studentsInLevel.forEach(st => {
                 const row = { 'الطالب': st.name };
                 finalSubjects.forEach(sub => {
+                    if (!studentRelevantToSubject(st, sub)) { row[sub.name] = 'غير مشمول'; return; }
                     const d = calculateAnnualAbsence(st.id, sub);
+                    const selectedPct = getAbsencePolicy().statusBasis === 'all' ? d.absencePercentage : d.unexcusedPercentage;
                     row[sub.name] =
-                        `${d.status} (${d.absencePercentage.toFixed(1)}% - ${d.totalAbsentHours.toFixed(1)} س)`;
+                        `${d.status} (${selectedPct.toFixed(1)}% معتمدة - إجمالي ${d.absencePercentage.toFixed(1)}% - غير معذر ${d.unexcusedPercentage.toFixed(1)}% - ${d.totalAbsentHours.toFixed(1)} س)`;
                 });
                 data.push(row);
             });
@@ -4547,9 +4924,9 @@
 
         function getSubjectOperationalAttendanceRecords(subjectId) {
             return state.attendances
-                .filter(a => a.subjectId === subjectId && a.linkType !== 'enrollment' && !String(a.id||'').startsWith('alink'))
-                .map(a => ({id:String(a.id||''),studentId:String(a.studentId||''),date:String(a.date||''),hours:Number(a.hours)||0,excused:Number(a.excused)||0}))
-                .sort((a,b) => (a.date+a.studentId+a.id).localeCompare(b.date+b.studentId+b.id));
+                .filter(a => a.subjectId === subjectId && !isEnrollmentRecord(a))
+                .map(a => ({id:String(a.id||''),studentId:String(a.studentId||''),date:String(a.date||''),sessionTime:normalizeSessionTime(a.sessionTime),sessionKey:attendanceRecordSessionKey(a),hours:Number(a.hours)||0,excused:Number(a.excused)||0}))
+                .sort((a,b) => (a.date+a.sessionKey+a.studentId+a.id).localeCompare(b.date+b.sessionKey+b.studentId+b.id));
         }
 
         function simpleHash(text) {
@@ -4683,15 +5060,15 @@
             const today = getLocalDateISO();
             const hours = parseFloat(document.getElementById('quickAbsentHours').value) || 1;
             const excused = parseInt(document.getElementById('quickExcused').value);
-            const existing = state.attendances.find(a => a.studentId === student.id && a.subjectId === sub.id && a.date === today);
+            const sessionTime = getSessionTimeFromInput('quickSessionTime', sub);
+            const existing = findAttendanceForSession(student.id, sub.id, today, sessionTime);
             if (existing) {
                 existing.hours = hours;
                 existing.excused = excused;
             } else {
-                state.attendances.push({ id: makeId('a'), studentId: student.id, subjectId: sub.id, date: today,
-                    hours: hours, excused: excused });
+                state.attendances.push(makeAttendanceRecord(student.id, sub.id, today, sessionTime, hours, excused));
             }
-            recordAudit('تسجيل غياب عبر QR', { student: student.name, subject: sub.name, hours });
+            recordAudit('تسجيل غياب عبر QR', { student: student.name, subject: sub.name, date: today, sessionTime, hours });
             saveAll();
             renderProfessor();
             stopScanner();
@@ -4738,7 +5115,7 @@
                 <p style="font-size:12px;"><strong>المادة:</strong> ${sub.name}</p>
                 <p style="font-size:12px;"><strong>النوع:</strong> <span class="badge ${typeClass}">${typeIcon} ${sub.groupType}</span></p>
                 <p style="font-size:12px;"><strong>النظام:</strong> ${systemTag} (المرحلة ${sub.level})</p>
-                <p style="font-size:12px;"><strong>إجمالي الساعات:</strong> ${sub.totalHours} س</p>
+                <p style="font-size:12px;"><strong>إجمالي الساعات:</strong> ${getSubjectCourseHours(sub)} س (${getSubjectTeachingWeeks(sub)} أسبوع)</p>
                 <p style="font-size:12px;"><strong>الأستاذ:</strong> ${prof ? prof.name : '--'}</p>
                 <p style="font-size:11px; color:#4a5568; margin-top:4px;">👨‍🎓 عدد الطلاب المرتبطين: ${students.length}</p>
                 <p style="font-size:10px;color:#64748b;">${sub.groupType === 'عملي' ? '🔬 العرض حسب المجاميع العملية' : '📖 العرض حسب الشعب النظرية'}</p>
@@ -4755,6 +5132,8 @@
             if (!document.getElementById('profAbsentDate').value) {
                 document.getElementById('profAbsentDate').value = getLocalDateISO();
             }
+            getSessionTimeFromInput('quickSessionTime', sub);
+            getSessionTimeFromInput('profSessionTime', sub);
             renderProfessorAttendance(sub.id);
             renderProfessorSubmissionStatus(sub);
         }
@@ -4763,8 +5142,9 @@
             const container = document.getElementById('profGroupsContainer');
             if (!students.length) { container.innerHTML = '<p style="color:#a0aec0;text-align:center;padding:10px;">📭 لا يوجد طلاب مرتبطون بهذه المادة</p>'; return; }
             const sub = getProfessorSubject();
-            const totalHours = sub ? sub.totalHours : 1;
+            const totalHours = sub ? getSubjectCourseHours(sub) : 1;
             const today = getLocalDateISO();
+            const activeSessionTime = getSessionTimeFromInput('quickSessionTime', sub);
             const groups = {};
             students.forEach(st => { const g = professorGroupNameForStudent(st,sub); if(!groups[g]) groups[g]=[]; groups[g].push(st); });
             const groupLabel = sub?.groupType === 'عملي' ? 'المجموعة العملية' : 'الشعبة النظرية';
@@ -4774,12 +5154,13 @@
                 html += `<div class="group-card"><div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length})</span></div>
                     <div style="display:flex;gap:4px;flex-wrap:wrap;"><button onclick="quickAbsentAll('${groupName}')" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button onclick="quickPresentAll('${groupName}')" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button></div></div><div class="students-grid">`;
                 groupStudents.forEach(st => {
-                    const atts = state.attendances.filter(a => a.studentId===st.id && a.subjectId===sub?.id);
+                    const atts = state.attendances.filter(a => a.studentId===st.id && a.subjectId===sub?.id && !isEnrollmentRecord(a));
                     const totalAbsent = atts.reduce((s,a)=>s+Number(a.hours||0),0);
                     const unexcusedAbsent = atts.filter(a=>a.excused===0).reduce((s,a)=>s+Number(a.hours||0),0);
                     const status = getStatus((unexcusedAbsent/totalHours)*100,(totalAbsent/totalHours)*100);
                     const statusIcon = status==='جيد'?'🟢':status==='تنبيه'?'🔵':status==='إنذار أولي'?'🟡':status==='إنذار نهائي'?'🟠':'🔴';
-                    const hasAbsence = state.attendances.some(a=>a.studentId===st.id && a.subjectId===sub?.id && a.date===today && Number(a.hours)>0);
+                    const sessionRecord = findAttendanceForSession(st.id, sub?.id, today, activeSessionTime);
+                    const hasAbsence = Number(sessionRecord?.hours) > 0;
                     const context = sub?.groupType==='عملي' ? `📖 ${studentTheoreticalGroup(st)}` : (studentPracticalGroup(st)?`🔬 ${studentPracticalGroup(st)}`:'🔬 غير موزع');
                     if (state.quickMode) {
                         html += `<div class="student-quick-item"><span class="student-name">${escapeHtml(st.name)} ${statusIcon}<span class="prof-group-context">${escapeHtml(context)}</span></span><div class="btn-group"><button onclick="quickRecord('${st.id}','present')" class="btn-present" style="${hasAbsence?'opacity:.6;':''}">✅ حاضر</button><button onclick="quickRecord('${st.id}','absent')" class="btn-absent" style="${!hasAbsence?'opacity:.6;':''}">❌ غائب</button></div></div>`;
@@ -4801,35 +5182,33 @@
             const today = getLocalDateISO();
             const hours = parseFloat(document.getElementById('quickAbsentHours').value) || 1;
             const excused = parseInt(document.getElementById('quickExcused').value);
-            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date ===
-                today);
+            const sessionTime = getSessionTimeFromInput('quickSessionTime', sub);
+            const existing = findAttendanceForSession(studentId, sub.id, today, sessionTime);
             if (action === 'present') {
                 if (existing) {
-                    if (existing.hours === 0) {
+                    if (Number(existing.hours) === 0) {
                         alert(`${student.name} مسجل كحاضر بالفعل`);
                         return;
                     }
                     existing.hours = 0;
                 } else {
-                    state.attendances.push({ id: makeId('a'), studentId, subjectId: sub.id, date: today, hours: 0,
-                        excused: 0 });
+                    state.attendances.push(makeAttendanceRecord(studentId, sub.id, today, sessionTime, 0, 0));
                 }
                 alert(`✅ تم تسجيل حضور ${student.name}`);
             } else if (action === 'absent') {
                 if (existing) {
-                    if (existing.hours > 0) {
+                    if (Number(existing.hours) > 0) {
                         alert(`${student.name} مسجل كغائب بالفعل (${existing.hours} ساعات)`);
                         return;
                     }
                     existing.hours = hours;
                     existing.excused = excused;
                 } else {
-                    state.attendances.push({ id: makeId('a'), studentId, subjectId: sub.id, date: today, hours: hours,
-                        excused: excused });
+                    state.attendances.push(makeAttendanceRecord(studentId, sub.id, today, sessionTime, hours, excused));
                 }
                 alert(`❌ تم تسجيل غياب ${student.name} (${hours} ساعات)`);
             }
-            recordAudit(action === 'present' ? 'تسجيل حضور سريع' : 'تسجيل غياب سريع', { student: student.name, subject: sub.name, hours: action === 'present' ? 0 : hours });
+            recordAudit(action === 'present' ? 'تسجيل حضور سريع' : 'تسجيل غياب سريع', { student: student.name, subject: sub.name, date: today, sessionTime, hours: action === 'present' ? 0 : hours });
             saveAll();
             renderProfessor();
         }
@@ -4841,9 +5220,9 @@
             if (!students.length) { alert('لا يوجد طلاب في هذه المجموعة'); return; }
             const label = sub.groupType==='عملي'?'المجموعة العملية':'الشعبة النظرية';
             if (!confirm(`⚠️ تسجيل غياب لجميع طلاب ${label} ${groupName} (${students.length} طالب)؟`)) return;
-            const today=getLocalDateISO(), hours=parseFloat(document.getElementById('quickAbsentHours').value)||1, excused=parseInt(document.getElementById('quickExcused').value); let count=0;
-            students.forEach(st=>{ const existing=state.attendances.find(a=>a.studentId===st.id&&a.subjectId===sub.id&&a.date===today); if(existing){if(Number(existing.hours)===0){existing.hours=hours;existing.excused=excused;count++;}} else {state.attendances.push({id:makeId('a'),studentId:st.id,subjectId:sub.id,date:today,hours,excused});count++;}});
-            recordAudit('غياب جماعي', {subject:sub.name, groupName, grouping:label, count}); saveAll(); renderProfessor(); alert(`✅ تم تسجيل غياب ${count} طالب.`);
+            const today=getLocalDateISO(), sessionTime=getSessionTimeFromInput('quickSessionTime',sub), hours=parseFloat(document.getElementById('quickAbsentHours').value)||1, excused=parseInt(document.getElementById('quickExcused').value); let count=0;
+            students.forEach(st=>{ const existing=findAttendanceForSession(st.id,sub.id,today,sessionTime); if(existing){if(Number(existing.hours)===0){existing.hours=hours;existing.excused=excused;count++;}} else {state.attendances.push(makeAttendanceRecord(st.id,sub.id,today,sessionTime,hours,excused));count++;}});
+            recordAudit('غياب جماعي', {subject:sub.name, groupName, grouping:label, date:today, sessionTime, count}); saveAll(); renderProfessor(); alert(`✅ تم تسجيل غياب ${count} طالب.`);
         }
 
         function quickPresentAll(groupName) {
@@ -4853,26 +5232,26 @@
             if (!students.length) { alert('لا يوجد طلاب في هذه المجموعة'); return; }
             const label = sub.groupType==='عملي'?'المجموعة العملية':'الشعبة النظرية';
             if (!confirm(`⚠️ تسجيل حضور لجميع طلاب ${label} ${groupName} (${students.length} طالب)؟`)) return;
-            const today=getLocalDateISO(); let count=0;
-            students.forEach(st=>{ const existing=state.attendances.find(a=>a.studentId===st.id&&a.subjectId===sub.id&&a.date===today); if(existing){if(Number(existing.hours)>0){existing.hours=0;existing.excused=0;count++;}} else {state.attendances.push({id:makeId('a'),studentId:st.id,subjectId:sub.id,date:today,hours:0,excused:0});count++;}});
-            recordAudit('حضور جماعي', {subject:sub.name, groupName, grouping:label, count}); saveAll(); renderProfessor(); alert(`✅ تم تسجيل حضور ${count} طالب.`);
+            const today=getLocalDateISO(), sessionTime=getSessionTimeFromInput('quickSessionTime',sub); let count=0;
+            students.forEach(st=>{ const existing=findAttendanceForSession(st.id,sub.id,today,sessionTime); if(existing){if(Number(existing.hours)>0){existing.hours=0;existing.excused=0;count++;}} else {state.attendances.push(makeAttendanceRecord(st.id,sub.id,today,sessionTime,0,0));count++;}});
+            recordAudit('حضور جماعي', {subject:sub.name, groupName, grouping:label, date:today, sessionTime, count}); saveAll(); renderProfessor(); alert(`✅ تم تسجيل حضور ${count} طالب.`);
         }
 
         function renderProfessorAttendance(subjectId) {
             const div = document.getElementById('profAttendanceTable');
-            const allAttendances = state.attendances.filter(a => a.subjectId === subjectId && a.hours > 0);
+            const allAttendances = state.attendances.filter(a => a.subjectId === subjectId && !isEnrollmentRecord(a) && Number(a.hours) > 0);
             if (allAttendances.length === 0) {
                 div.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px;">📭 لا توجد غيابات مسجلة</p>';
                 return;
             }
             const subject = state.subjects.find(s => s.id === subjectId);
-            const totalHours = subject ? subject.totalHours : 1;
+            const totalHours = subject ? getSubjectCourseHours(subject) : 1;
             const studentIds = [...new Set(allAttendances.map(a => a.studentId))];
             const studentTotals = {};
             studentIds.forEach(id => {
                 const studentAtts = allAttendances.filter(a => a.studentId === id);
-                const totalAbsent = studentAtts.reduce((sum, a) => sum + a.hours, 0);
-                const unexcusedAbsent = studentAtts.filter(a => a.excused === 0).reduce((sum, a) => sum + a.hours, 0);
+                const totalAbsent = studentAtts.reduce((sum, a) => sum + Number(a.hours || 0), 0);
+                const unexcusedAbsent = studentAtts.filter(a => Number(a.excused) === 0).reduce((sum, a) => sum + Number(a.hours || 0), 0);
                 const pctUnexcused = (unexcusedAbsent / totalHours) * 100;
                 const pctTotal = (totalAbsent / totalHours) * 100;
                 const status = getStatus(pctUnexcused, pctTotal);
@@ -4884,6 +5263,7 @@
                     <th>#</th>
                     <th>الطالب</th>
                     <th>التاريخ</th>
+                    <th>الوقت</th>
                     <th>س</th>
                     <th>النوع</th>
                     <th>حالة السجل</th>
@@ -4893,9 +5273,9 @@
             sortedAttendances.forEach((att, idx) => {
                 const student = state.students.find(s => s.id === att.studentId);
                 const studentName = student ? student.name : 'غير معروف';
-                const excusedText = att.excused === 1 ? 'بعذر' : 'بدون عذر';
-                const excusedBadge = att.excused === 1 ? 'bg-green' : 'bg-red';
-                const unexcused = att.excused === 0 ? att.hours : 0;
+                const excusedText = Number(att.excused) === 1 ? 'بعذر' : 'بدون عذر';
+                const excusedBadge = Number(att.excused) === 1 ? 'bg-green' : 'bg-red';
+                const unexcused = Number(att.excused) === 0 ? Number(att.hours || 0) : 0;
                 const pctUnexcusedSingle = (unexcused / totalHours) * 100;
                 const pctTotalSingle = (att.hours / totalHours) * 100;
                 const statusSingle = getStatus(pctUnexcusedSingle, pctTotalSingle);
@@ -4907,8 +5287,9 @@
                     'تنبيه' ? 'bg-blue' : statusCumulative === 'إنذار أولي' ? 'bg-yellow' : statusCumulative === 'إنذار نهائي' ? 'bg-orange' : 'bg-red';
                 html += `<tr>
                     <td>${idx + 1}</td>
-                    <td>${studentName}</td>
-                    <td>${att.date}</td>
+                    <td>${escapeHtml(studentName)}</td>
+                    <td>${escapeHtml(att.date)}</td>
+                    <td>${escapeHtml(normalizeSessionTime(att.sessionTime) || 'قديم')}</td>
                     <td>${att.hours}</td>
                     <td><span class="badge ${excusedBadge}">${excusedText}</span></td>
                     <td><span class="badge ${statusBadgeSingle}">${statusSingle}</span></td>
@@ -4932,12 +5313,11 @@
             const hours = prompt(`تسجيل غياب للطالب ${student.name}\nعدد ساعات الغياب:`, '1');
             if (hours === null) return;
             const excused = confirm('هل الغياب بعذر مشروع؟\nموافق = بعذر، إلغاء = بدون عذر');
-            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date ===
-                today);
+            const sessionTime = getSessionTimeFromInput('quickSessionTime', sub);
+            const existing = findAttendanceForSession(studentId, sub.id, today, sessionTime);
             if (existing) { existing.hours = parseFloat(hours) || 1;
-                existing.excused = excused ? 1 : 0; } else { state.attendances.push({ id: makeId('a'), studentId,
-                    subjectId: sub.id, date: today, hours: parseFloat(hours) || 1, excused: excused ? 1 : 0 }); }
-            recordAudit('تسجيل غياب من بطاقة الطالب', { student: student.name, subject: sub.name, hours: parseFloat(hours) || 1, excused: excused ? 1 : 0 });
+                existing.excused = excused ? 1 : 0; } else { state.attendances.push(makeAttendanceRecord(studentId, sub.id, today, sessionTime, parseFloat(hours) || 1, excused ? 1 : 0)); }
+            recordAudit('تسجيل غياب من بطاقة الطالب', { student: student.name, subject: sub.name, date: today, sessionTime, hours: parseFloat(hours) || 1, excused: excused ? 1 : 0 });
             saveAll();
             renderProfessor();
             alert(`✅ تم تسجيل غياب الطالب ${student.name} بنجاح`);
@@ -4949,21 +5329,22 @@
             const studentId = document.getElementById('profStudentSelect').value;
             const hours = parseFloat(document.getElementById('profAbsentHours').value);
             const date = document.getElementById('profAbsentDate').value;
+            const sessionTime = getSessionTimeFromInput('profSessionTime', sub);
             const excused = parseInt(document.getElementById('profExcused').value);
             if (!studentId) { alert('اختر طالباً'); return; }
             if (!hours || hours <= 0) { alert('أدخل عدد ساعات صحيح'); return; }
             if (!date) { alert('أدخل التاريخ'); return; }
-            const existing = state.attendances.find(a => a.studentId === studentId && a.subjectId === sub.id && a.date ===
-                date);
+            if (!sessionTime) { alert('أدخل وقت المحاضرة'); return; }
+            const existing = findAttendanceForSession(studentId, sub.id, date, sessionTime);
             if (existing) {
-                if (!confirm('⚠️ يوجد تسجيل سابق لهذا الطالب في هذا اليوم. هل تريد تحديثه؟')) return;
+                if (!confirm('⚠️ يوجد تسجيل سابق لهذا الطالب في المحاضرة نفسها. هل تريد تحديثه؟')) return;
                 existing.hours = hours;
                 existing.excused = excused;
             } else {
-                state.attendances.push({ id: makeId('a'), studentId, subjectId: sub.id, date, hours, excused });
+                state.attendances.push(makeAttendanceRecord(studentId, sub.id, date, sessionTime, hours, excused));
             }
             const auditStudent = state.students.find(st => st.id === studentId);
-            recordAudit(existing ? 'تحديث غياب يدوي' : 'تسجيل غياب يدوي', { student: auditStudent?.name || studentId, subject: sub.name, date, hours, excused });
+            recordAudit(existing ? 'تحديث غياب يدوي' : 'تسجيل غياب يدوي', { student: auditStudent?.name || studentId, subject: sub.name, date, sessionTime, hours, excused });
             saveAll();
             renderProfessor();
             alert('✅ تم تسجيل الغياب بنجاح');
@@ -4984,11 +5365,19 @@
             if (!attendance) { alert('غير موجود'); return; }
             const newHours = prompt('تعديل عدد ساعات الغياب:', attendance.hours);
             if (newHours === null) return;
+            const newSessionTime = prompt('وقت المحاضرة (HH:MM):', normalizeSessionTime(attendance.sessionTime) || '');
+            if (newSessionTime === null) return;
+            const normalizedSessionTime = normalizeSessionTime(newSessionTime);
+            if (newSessionTime.trim() && !normalizedSessionTime) { alert('وقت المحاضرة غير صالح. استخدم الصيغة HH:MM.'); return; }
+            const duplicate = state.attendances.some(a => a.id !== attendance.id && !isEnrollmentRecord(a) && String(a.studentId) === String(attendance.studentId) && String(a.subjectId) === String(attendance.subjectId) && String(a.date) === String(attendance.date) && attendanceRecordSessionKey(a) === attendanceSessionKey(normalizedSessionTime));
+            if (duplicate) { alert('يوجد سجل آخر للطالب في المادة والتاريخ ووقت المحاضرة نفسه.'); return; }
             const newExcused = confirm('هل الغياب بعذر مشروع؟\nموافق = بعذر، إلغاء = بدون عذر');
-            const before = { hours: attendance.hours, excused: attendance.excused };
+            const before = { hours: attendance.hours, excused: attendance.excused, sessionTime: attendance.sessionTime || '' };
             attendance.hours = parseFloat(newHours) || attendance.hours;
             attendance.excused = newExcused ? 1 : 0;
-            recordAudit('تعديل سجل غياب', { attendanceId, before, after: { hours: attendance.hours, excused: attendance.excused } });
+            attendance.sessionTime = normalizedSessionTime;
+            attendance.sessionKey = attendanceSessionKey(normalizedSessionTime);
+            recordAudit('تعديل سجل غياب', { attendanceId, before, after: { hours: attendance.hours, excused: attendance.excused, sessionTime: attendance.sessionTime } });
             saveAll();
             renderProfessor();
             alert('✅ تم التعديل');
@@ -5076,12 +5465,12 @@
             if (studentsInLevel.length === 0) { container.innerHTML = '<p style="color:#a0aec0;">لا يوجد طلاب</p>'; return; }
             if (state.selectedStudents.length === 0) {
                 state.selectedStudents = studentsInLevel.filter(st => state.attendances.some(a => a.studentId === st.id &&
-                    a.hours > 0)).map(st => st.id);
+                    Number(a.hours) > 0)).map(st => st.id);
                 if (state.selectedStudents.length === 0) state.selectedStudents = studentsInLevel.map(st => st.id);
             }
             let html = '';
             studentsInLevel.forEach(st => {
-                const hasAbsence = state.attendances.some(a => a.studentId === st.id && a.hours > 0);
+                const hasAbsence = state.attendances.some(a => a.studentId === st.id && Number(a.hours) > 0);
                 const checked = state.selectedStudents.includes(st.id) ? 'checked' : '';
                 const badge = hasAbsence ? '<span class="badge bg-red" style="font-size:8px;">غائب</span>' :
                     '<span class="badge bg-green" style="font-size:8px;">حاضر</span>';
@@ -5117,7 +5506,7 @@
             const level = state.currentLevel;
             if (!level) return;
             state.selectedStudents = state.students.filter(st => st.level === level && state.attendances.some(a => a
-                .studentId === st.id && a.hours > 0)).map(st => st.id);
+                .studentId === st.id && Number(a.hours) > 0)).map(st => st.id);
             document.querySelectorAll('.student-checkbox').forEach(cb => { cb.checked = state.selectedStudents.includes(cb
                     .value); });
             if (state.selectedStudents.length === 0) alert('لا يوجد طلاب لديهم غيابات');
@@ -5134,17 +5523,18 @@
             let totalAbsent = 0,
                 totalHours = 0;
             relevantSubjects.forEach(sub => {
-                const atts = state.attendances.filter(a => a.studentId === studentId && a.subjectId === sub.id);
-                const totalH = atts.reduce((s, a) => s + a.hours, 0);
-                const unexcused = atts.filter(a => a.excused === 0).reduce((s, a) => s + a.hours, 0);
-                const pctUnexcused = (unexcused / sub.totalHours) * 100;
-                const pctTotal = (totalH / sub.totalHours) * 100;
+                const atts = state.attendances.filter(a => a.studentId === studentId && a.subjectId === sub.id && !isEnrollmentRecord(a) && Number(a.hours) > 0);
+                const totalH = atts.reduce((s, a) => s + Number(a.hours || 0), 0);
+                const unexcused = atts.filter(a => Number(a.excused) === 0).reduce((s, a) => s + Number(a.hours || 0), 0);
+                const courseHours = getSubjectCourseHours(sub);
+                const pctUnexcused = (unexcused / courseHours) * 100;
+                const pctTotal = (totalH / courseHours) * 100;
                 const status = getStatus(pctUnexcused, pctTotal);
                 if (totalH > 0) {
                     summary.push({ subject: sub.name, hours: totalH.toFixed(1), percentage: pctTotal.toFixed(1),
                         status: status });
                     totalAbsent += totalH;
-                    totalHours += sub.totalHours;
+                    totalHours += courseHours;
                 }
             });
             return { student, summary, totalAbsent: totalAbsent.toFixed(1), totalPercentage: totalHours > 0 ? ((totalAbsent /
@@ -5180,18 +5570,17 @@
         }
 
         function sendWhatsAppToStudents() {
-            const senderNumber = document.getElementById('whatsappSenderNumber').value.trim().replace(/[^0-9+]/g, '');
-            if (!senderNumber) { alert('أدخل رقم واتساب المسؤول'); return; }
             const studentsData = getSelectedStudentsWithData();
             if (studentsData.length === 0) return;
             let linksHtml = '',
                 count = 0;
             studentsData.forEach(data => {
                 const st = data.student;
-                if (!st.phone) return;
+                const number = normalizeWhatsAppNumber(st.phone);
+                if (!/^\d{8,15}$/.test(number)) return;
                 const msg = generateMessageForStudent(data, 'student');
                 linksHtml +=
-                    `<div class="whatsapp-link-box">📱 <a href="https://wa.me/${st.phone}?text=${encodeURIComponent(msg)}" target="_blank">${st.name}</a></div>`;
+                    `<div class="whatsapp-link-box">📱 <a href="https://wa.me/${number}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${escapeHtml(st.name)}</a></div>`;
                 count++;
             });
             if (count === 0) { alert('لا توجد أرقام هواتف'); return; }
@@ -5208,7 +5597,7 @@
                 </style></head>
                 <body><div class="container">
                 <h2>📨 روابط واتساب للطلاب</h2>
-                <div class="header-info"><p><strong>المرسل:</strong> ${senderNumber}</p><p><strong>عدد الطلاب:</strong> ${count}</p></div>
+                <div class="header-info"><p><strong>عدد الطلاب:</strong> ${count}</p><p>سيتم الإرسال من حساب واتساب المفتوح على الجهاز.</p></div>
                 <p>اضغط على الرابط لفتح واتساب:</p>${linksHtml}
                 <p class="note">💡 يمكنك النقر على الروابط واحداً تلو الآخر.</p>
                 </div></body></html>
@@ -5217,18 +5606,17 @@
         }
 
         function sendWhatsAppToGuardians() {
-            const senderNumber = document.getElementById('whatsappSenderNumber').value.trim().replace(/[^0-9+]/g, '');
-            if (!senderNumber) { alert('أدخل رقم واتساب المسؤول'); return; }
             const studentsData = getSelectedStudentsWithData();
             if (studentsData.length === 0) return;
             let linksHtml = '',
                 count = 0;
             studentsData.forEach(data => {
                 const st = data.student;
-                if (!st.guardianPhone) return;
+                const number = normalizeWhatsAppNumber(st.guardianPhone);
+                if (!/^\d{8,15}$/.test(number)) return;
                 const msg = generateMessageForStudent(data, 'guardian');
                 linksHtml +=
-                    `<div class="whatsapp-link-box">👨‍👦 <a href="https://wa.me/${st.guardianPhone}?text=${encodeURIComponent(msg)}" target="_blank">${st.name}</a></div>`;
+                    `<div class="whatsapp-link-box">👨‍👦 <a href="https://wa.me/${number}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${escapeHtml(st.name)}</a></div>`;
                 count++;
             });
             if (count === 0) { alert('لا توجد أرقام أولياء أمور'); return; }
@@ -5245,7 +5633,7 @@
                 </style></head>
                 <body><div class="container">
                 <h2>📨 روابط واتساب لأولياء الأمور</h2>
-                <div class="header-info"><p><strong>المرسل:</strong> ${senderNumber}</p><p><strong>عدد أولياء الأمور:</strong> ${count}</p></div>
+                <div class="header-info"><p><strong>عدد أولياء الأمور:</strong> ${count}</p><p>سيتم الإرسال من حساب واتساب المفتوح على الجهاز.</p></div>
                 <p>اضغط على الرابط لفتح واتساب:</p>${linksHtml}
                 <p class="note">💡 يمكنك النقر على الروابط واحداً تلو الآخر.</p>
                 </div></body></html>
@@ -5286,9 +5674,10 @@
             let links = [];
             studentsData.forEach(data => {
                 const st = data.student;
-                if (st.phone) links.push({ number: st.phone, msg: generateMessageForStudent(data, 'student') });
-                if (st.guardianPhone) links.push({ number: st.guardianPhone, msg: generateMessageForStudent(data,
-                        'guardian') });
+                const studentNumber=normalizeWhatsAppNumber(st.phone);
+                const guardianNumber=normalizeWhatsAppNumber(st.guardianPhone);
+                if (/^\d{8,15}$/.test(studentNumber)) links.push({ number: studentNumber, msg: generateMessageForStudent(data, 'student') });
+                if (/^\d{8,15}$/.test(guardianNumber)) links.push({ number: guardianNumber, msg: generateMessageForStudent(data, 'guardian') });
             });
             if (links.length === 0) { alert('لا توجد أرقام'); return; }
             const total = links.length;
@@ -5361,7 +5750,7 @@
         // ==============================================================
         //  INITIALIZATION
         // ==============================================================
-        console.log('🏛️ نظام الغيابات Master V18 - ملفات أساتذة مستقلة + واجهة منظمة + مزامنة آمنة');
+        console.log('🏛️ نظام الغيابات Master V20 - جلسات متعددة + سياسات واضحة + مزامنة محمية من التعارض');
 
         document.addEventListener('change', function(e) {
             if (e.target.id === 'reportDateFrom' || e.target.id === 'reportDateTo') {
