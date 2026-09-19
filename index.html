@@ -4,22 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
     <title>نظام إدارة الغيابات - قسم الفيزياء</title>
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js">
-    </script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js">
-    </script>
-    <!-- المكتبات الأخرى -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js">
-    </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js">
-    </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js">
-    </script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js">
-    </script>
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js">
-    </script>
+    <!-- المكتبات المساعدة غير الحرجة: defer يمنعها من تعطيل شاشة الدخول عند بطء CDN -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script defer src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
     <style>
         /* ========== جميع الأنماط السابقة كما هي (لم تتغير) ========== */
@@ -115,6 +105,12 @@
         @media (min-width: 768px) { .tab-buttons button { flex: none; min-width: 90px; font-size: 13px; padding: 8px 12px; } }
         .tab-buttons button.active { background: #1a3a5e; color: white; }
         .login-box { max-width: 380px; margin: 30px auto; padding: 20px; background: white; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+        .login-remember { display:flex; align-items:center; gap:7px; margin-top:9px; padding:7px 9px; border-radius:9px; background:#f8fafc; border:1px solid #e2e8f0; font-size:11px; color:#334155; cursor:pointer; }
+        .login-remember input { width:auto; margin:0; accent-color:#1a3a5e; }
+        .startup-status { margin-top:8px; padding:7px 9px; border-radius:9px; text-align:center; font-size:10.5px; line-height:1.45; background:#eff6ff; color:#1e4f7a; border:1px solid #bfdbfe; }
+        .startup-status.local { background:#fff7ed; color:#9a3412; border-color:#fed7aa; }
+        .startup-status.online { background:#ecfdf5; color:#166534; border-color:#bbf7d0; }
+        .startup-status.error { background:#fef2f2; color:#991b1b; border-color:#fecaca; }
         .tab-content { display: none; } .tab-content.active { display: block; }
         .level-card { background: white; border-radius: 16px; padding: 14px; border: 2px solid #e2e8f0; cursor: pointer; transition: all 0.3s; text-align: center; }
         .level-card:hover { transform: translateY(-4px); box-shadow: 0 8px 25px rgba(0,0,0,0.12); border-color: #3182ce; }
@@ -305,7 +301,7 @@
         .filtered-status-table td,.filtered-status-table th { font-size:11px; }
 
 
-        /* ===== Master V20: واجهة رئيس القسم المنظمة ===== */
+        /* ===== Master V21: واجهة رئيس القسم المنظمة ===== */
         .admin-clean-toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
         .admin-health{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
         .admin-health-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:#fff;border:1px solid #d7e1ea;font-size:10px;font-weight:800;color:#334155}
@@ -326,7 +322,7 @@
         .prof-status-chip.warn{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
         @media(max-width:700px){.admin-clean-toolbar button{flex:1 1 44%}.admin-fold-body{padding:6px}}
 
-        /* ===== Master V20: واجهة موحدة لبيانات الأستاذ ===== */
+        /* ===== Master V21: واجهة موحدة لبيانات الأستاذ ===== */
         .prof-editor-row{display:grid;grid-template-columns:minmax(180px,1.25fr) minmax(170px,.9fr) minmax(155px,.85fr) minmax(150px,.8fr) minmax(180px,1fr);gap:8px;align-items:center;padding:8px 6px;border-bottom:1px solid #e2e8f0;background:#fff}
         .prof-editor-row:nth-child(even){background:#fbfdff}
         .prof-editor-name{font-weight:900;color:#1f2937;font-size:12px}.prof-editor-sub{font-size:9.5px;color:#64748b;margin-top:2px}
@@ -380,13 +376,15 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Master V20</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Master V21</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
         <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
-        <button onclick="handleLogin()" style="margin-top:10px; width:100%;">دخول</button>
+        <label class="login-remember"><input type="checkbox" id="keepSignedIn" checked> إبقاء دخول الأستاذ محفوظا على هذا الجهاز حتى يضغط «خروج»</label>
+        <button id="loginButton" onclick="handleLogin()" style="margin-top:10px; width:100%;">دخول</button>
         <p id="loginError" style="color:red; margin-top:6px; text-align:center; font-size:12px;"></p>
+        <div id="startupStatus" class="startup-status">⏳ جارٍ تجهيز النسخة المحفوظة في هذا المتصفح...</div>
         <div style="text-align:center; margin-top:12px; font-size:12px; color:#4a5568; border-top:1px solid #e2e8f0; padding-top:8px;">
             اعداد وتصميم وتنفيذ م. دموسى محمد مهدي<br>رئيس قسم الفيزياء
         </div>
@@ -398,6 +396,7 @@
         <div class="flex-between" style="margin-bottom:10px;">
             <h1 style="font-size:1rem; margin:0;">🏛️ قسم الفيزياء</h1>
             <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
+                <span id="connectionBadge" style="font-weight:bold;background:#eff6ff;color:#1e4f7a;padding:4px 8px;border-radius:30px;font-size:10px;">⏳ تهيئة</span>
                 <span id="currentUserDisplay" style="font-weight:bold; background:#edf2f7; padding:4px 8px; border-radius:30px; font-size:11px;"></span>
                 <button onclick="logout()" class="btn-danger btn-sm" style="min-width:40px; padding:4px 8px; font-size:11px;">خروج</button>
             </div>
@@ -419,8 +418,8 @@
                         <button onclick="reconcileProfessorIdentityData(true)" class="btn-info btn-sm" style="min-width:120px;">🧩 فحص ملفات الأساتذة</button>
                     </div>
                 </div>
-                <small>📌 جميع التغييرات تُحفظ تلقائياً في السحابة. V20 يفصل بيانات الاتصال وكلمة المرور عن سجل الجدول، ويدعم أكثر من محاضرة للمادة في اليوم نفسه، ويراجع تعارضات الحفظ قبل اعتمادها.</small>
-                <div id="syncStatus" style="font-size:12px; color:#2f855a; margin-top:4px;">✅ متصل بالسحابة - المزامنة تلقائية</div>
+                <small>📌 جميع التغييرات تُحفظ أولا في هذا المتصفح ثم تُزامن تلقائيا مع السحابة. يمكن متابعة العمل عند ضعف الإنترنت دون فقد البيانات.</small>
+                <div id="syncStatus" style="font-size:12px; color:#2f855a; margin-top:4px;">⏳ جارٍ التحقق من حالة المزامنة...</div>
                 <small style="display:block;margin-top:4px;color:#92400e;">🔐 حماية البيانات الخادمية تعتمد أيضاً على تفعيل Firebase Authentication وقواعد Realtime Database في مشروع Firebase؛ تسجيل الدخول داخل هذا الملف لا يغني عن القواعد الخادمية.</small>
                 <div id="professorProfileHealth" class="admin-health"></div>
             </div>
@@ -803,15 +802,28 @@
         };
 
         // ==============================================================
-        //  تهيئة Firebase
+        //  التهيئة المرنة: يبدأ البرنامج محلياً ثم يتصل بالسحابة في الخلفية
         // ==============================================================
-        firebase.initializeApp(firebaseConfig);
-        const database = firebase.database();
-        const APP_VERSION = '20.0';
-        const SCHEMA_VERSION = 12;
+        let database = null;
+        let firebaseRuntimePromise = null;
+        let cloudSyncPromise = null;
+        let applicationBootstrapPromise = null;
+        let cloudListenersStarted = false;
+        let cloudRetryTimer = null;
+        let cloudConnected = false;
+        const APP_VERSION = '21.0';
+        const SCHEMA_VERSION = 13;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
         const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+        const CLOUD_OPERATION_TIMEOUT_MS = 12000;
+        const LOCAL_CACHE_KEY = 'attendance_system_cache_v21';
+        const LOCAL_CACHE_FALLBACK_KEY = 'attendance_system_cache_fallback_v21';
+        const PERSISTENT_SESSION_KEY = 'attendance_system_session_v21';
+        const TEMP_SESSION_KEY = 'attendance_system_temp_session_v21';
+        const UI_STATE_KEY = 'attendance_system_ui_v21';
+        const LOCAL_DB_NAME = 'attendance_system_resilient_v21';
+        const LOCAL_DB_STORE = 'snapshots';
 
         // ==============================================================
         //  CURRICULUM DATA (ثابت)
@@ -959,6 +971,351 @@
         const SYNC_COLLECTIONS = ['professors', 'professorProfiles', 'subjects', 'students', 'attendances', 'notifications', 'auditLogs', 'submissions', 'scheduleLinks', 'appSettings'];
         let lastSyncedCollections = {};
         let saveQueue = Promise.resolve();
+        let localCacheWasLoaded = false;
+        let localDatabasePromise = null;
+        let localDatabaseDisabled = false;
+        let localSaveTimer = null;
+        let lastLocalSnapshotSignature = '';
+        let lastCloudSyncAt = 0;
+        let renderRefreshTimer = null;
+        let credentialValidationTimer = null;
+
+        function setStartupStatus(message, mode = '') {
+            const el = document.getElementById('startupStatus');
+            if (el) {
+                el.textContent = message;
+                el.className = `startup-status${mode ? ' ' + mode : ''}`;
+            }
+            const badge = document.getElementById('connectionBadge');
+            if (badge) {
+                if (mode === 'online') { badge.textContent='☁️ محدث'; badge.style.background='#ecfdf5'; badge.style.color='#166534'; }
+                else if (mode === 'local') { badge.textContent='💾 محفوظ محليا'; badge.style.background='#fff7ed'; badge.style.color='#9a3412'; }
+                else if (mode === 'error') { badge.textContent='⚠️ استعادة'; badge.style.background='#fef2f2'; badge.style.color='#991b1b'; }
+                else { badge.textContent='⏳ مزامنة'; badge.style.background='#eff6ff'; badge.style.color='#1e4f7a'; }
+            }
+        }
+
+        function setSyncStatus(message, color = '') {
+            const el = document.getElementById('syncStatus');
+            if (!el) return;
+            el.textContent = message;
+            if (color) el.style.color = color;
+        }
+
+        function withTimeout(promise, timeoutMs = CLOUD_OPERATION_TIMEOUT_MS, label = 'انتهت مهلة العملية') {
+            let timer;
+            return Promise.race([
+                Promise.resolve(promise).finally(() => clearTimeout(timer)),
+                new Promise((_, reject) => {
+                    timer = setTimeout(() => reject(new Error(label)), timeoutMs);
+                })
+            ]);
+        }
+
+        function loadExternalScript(url, id, timeoutMs = 9000) {
+            return new Promise((resolve, reject) => {
+                const old = document.getElementById(id);
+                if (old) old.remove();
+                const script = document.createElement('script');
+                let settled = false;
+                const finish = (ok, error) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    script.onload = script.onerror = null;
+                    if (ok) resolve(true);
+                    else { script.remove(); reject(error || new Error('تعذر تحميل مكوّن الاتصال')); }
+                };
+                const timer = setTimeout(() => finish(false, new Error('انتهت مهلة تحميل مكوّن الاتصال')), timeoutMs);
+                script.id = id;
+                script.src = url;
+                script.async = true;
+                script.crossOrigin = 'anonymous';
+                script.onload = () => finish(true);
+                script.onerror = () => finish(false, new Error('تعذر تحميل مكوّن الاتصال'));
+                document.head.appendChild(script);
+            });
+        }
+
+        async function loadFirstAvailableScript(urls, id, readyCheck) {
+            if (readyCheck()) return true;
+            let lastError = null;
+            for (let i = 0; i < urls.length; i++) {
+                try {
+                    await loadExternalScript(urls[i], `${id}_${i}`);
+                    if (readyCheck()) return true;
+                } catch (err) { lastError = err; }
+            }
+            throw lastError || new Error('تعذر تهيئة الاتصال السحابي');
+        }
+
+        async function initializeFirebaseRuntime() {
+            if (database) return true;
+            if (firebaseRuntimePromise) return firebaseRuntimePromise;
+            firebaseRuntimePromise = (async () => {
+                await loadFirstAvailableScript([
+                    'https://www.gstatic.com/firebasejs/12.19.0/firebase-app-compat.js',
+                    'https://cdn.jsdelivr.net/npm/firebase@12.19.0/firebase-app-compat.js'
+                ], 'firebase_app_runtime', () => typeof window.firebase !== 'undefined');
+                await loadFirstAvailableScript([
+                    'https://www.gstatic.com/firebasejs/12.19.0/firebase-database-compat.js',
+                    'https://cdn.jsdelivr.net/npm/firebase@12.19.0/firebase-database-compat.js'
+                ], 'firebase_db_runtime', () => typeof window.firebase !== 'undefined' && typeof window.firebase.database === 'function');
+                if (!firebase.apps || firebase.apps.length === 0) firebase.initializeApp(firebaseConfig);
+                database = firebase.database();
+                database.ref('.info/connected').on('value', snap => {
+                    cloudConnected = snap.val() === true;
+                    if (cloudConnected) {
+                        setStartupStatus('✅ متصل بالسحابة — آخر البيانات محفوظة محليا أيضا', 'online');
+                        if (state.initialLoadDone) pushToFirebase({ silent:true });
+                    } else if (state.initialLoadDone) {
+                        setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
+                    }
+                }, () => { cloudConnected = false; });
+                return true;
+            })().catch(err => {
+                database = null;
+                firebaseRuntimePromise = null;
+                throw err;
+            });
+            return firebaseRuntimePromise;
+        }
+
+        function openLocalDatabase() {
+            if (localDatabaseDisabled) return Promise.reject(new Error('IndexedDB غير متاح'));
+            if (localDatabasePromise) return localDatabasePromise;
+            localDatabasePromise = new Promise((resolve, reject) => {
+                if (!window.indexedDB) { reject(new Error('IndexedDB غير متاح')); return; }
+                const request = indexedDB.open(LOCAL_DB_NAME, 1);
+                request.onupgradeneeded = () => {
+                    const db = request.result;
+                    if (!db.objectStoreNames.contains(LOCAL_DB_STORE)) db.createObjectStore(LOCAL_DB_STORE);
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error || new Error('تعذر فتح التخزين المحلي'));
+                request.onblocked = () => reject(new Error('التخزين المحلي محجوب من نافذة أخرى'));
+            }).catch(err => {
+                localDatabasePromise = null;
+                localDatabaseDisabled = true;
+                throw err;
+            });
+            return localDatabasePromise;
+        }
+
+        async function readIndexedSnapshot() {
+            if (localDatabaseDisabled) return null;
+            try {
+                const db = await withTimeout(openLocalDatabase(), 3500, 'انتهت مهلة فتح التخزين المحلي');
+                return await withTimeout(new Promise((resolve, reject) => {
+                    const tx = db.transaction(LOCAL_DB_STORE, 'readonly');
+                    const request = tx.objectStore(LOCAL_DB_STORE).get(LOCAL_CACHE_KEY);
+                    request.onsuccess = () => resolve(request.result || null);
+                    request.onerror = () => reject(request.error || new Error('تعذر قراءة النسخة المحلية'));
+                }), 3500, 'انتهت مهلة قراءة النسخة المحلية');
+            } catch (err) { console.warn('تعذر قراءة IndexedDB:', err); return null; }
+        }
+
+        async function writeIndexedSnapshot(payload) {
+            if (localDatabaseDisabled) return false;
+            try {
+                const db = await withTimeout(openLocalDatabase(), 3500, 'انتهت مهلة فتح التخزين المحلي');
+                await withTimeout(new Promise((resolve, reject) => {
+                    const tx = db.transaction(LOCAL_DB_STORE, 'readwrite');
+                    tx.objectStore(LOCAL_DB_STORE).put(payload, LOCAL_CACHE_KEY);
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => reject(tx.error || new Error('تعذر حفظ النسخة المحلية'));
+                    tx.onabort = () => reject(tx.error || new Error('أُلغي حفظ النسخة المحلية'));
+                }), 5000, 'انتهت مهلة حفظ النسخة المحلية');
+                return true;
+            } catch (err) { console.warn('تعذر حفظ IndexedDB:', err); return false; }
+        }
+
+        function buildLocalSnapshot() {
+            const collections = {};
+            const syncBase = {};
+            SYNC_COLLECTIONS.forEach(name => {
+                collections[name] = normalizeCollection(state[name], name);
+                syncBase[name] = normalizeCollection(lastSyncedCollections[name] || [], name);
+            });
+            return {
+                appVersion: APP_VERSION,
+                schemaVersion: SCHEMA_VERSION,
+                savedAt: Date.now(),
+                collections,
+                syncBase
+            };
+        }
+
+        function localSnapshotSignature(payload) {
+            const json = JSON.stringify({ collections:payload.collections, syncBase:payload.syncBase });
+            let hash = 2166136261;
+            for (let i = 0; i < json.length; i++) {
+                hash ^= json.charCodeAt(i);
+                hash = Math.imul(hash, 16777619);
+            }
+            return `${json.length}:${hash >>> 0}`;
+        }
+
+        function writeLocalStorageFallback(payload) {
+            try {
+                const json = JSON.stringify(payload);
+                if (json.length <= 4200000) localStorage.setItem(LOCAL_CACHE_FALLBACK_KEY, json);
+                else {
+                    localStorage.setItem(LOCAL_CACHE_FALLBACK_KEY, JSON.stringify({ oversize:true, savedAt:payload.savedAt }));
+                    return false;
+                }
+                return true;
+            } catch (err) { console.warn('تعذر حفظ النسخة الاحتياطية في localStorage:', err); return false; }
+        }
+
+        async function persistLocalState(reason = 'auto', force = false) {
+            if (!state.initialLoadDone && reason !== 'bootstrap') return false;
+            try {
+                const payload = buildLocalSnapshot();
+                const signature = localSnapshotSignature(payload);
+                if (!force && signature === lastLocalSnapshotSignature) return true;
+                const fallbackSaved = writeLocalStorageFallback(payload);
+                const indexedSaved = await writeIndexedSnapshot(payload);
+                lastLocalSnapshotSignature = signature;
+                return indexedSaved || fallbackSaved;
+            } catch (err) {
+                console.error('خطأ حفظ النسخة المحلية:', err);
+                setSyncStatus('⚠️ تعذر تحديث النسخة المحلية؛ صدّر نسخة احتياطية الآن', '#b45309');
+                return false;
+            }
+        }
+
+        function scheduleLocalPersistence(delay = 120) {
+            clearTimeout(localSaveTimer);
+            localSaveTimer = setTimeout(() => persistLocalState('scheduled'), delay);
+        }
+
+        async function loadLocalState() {
+            let fallback = null;
+            try {
+                const raw = localStorage.getItem(LOCAL_CACHE_FALLBACK_KEY);
+                fallback = raw ? JSON.parse(raw) : null;
+                if (fallback?.oversize) fallback = null;
+            } catch (err) { console.warn('تعذر قراءة localStorage:', err); }
+            const indexed = await readIndexedSnapshot();
+            const candidates = [fallback, indexed].filter(x => x && x.collections && typeof x.collections === 'object');
+            if (!candidates.length) return false;
+            const payload = candidates.sort((a,b) => Number(b.savedAt || 0) - Number(a.savedAt || 0))[0];
+            SYNC_COLLECTIONS.forEach(name => {
+                state[name] = normalizeCollection(payload.collections[name], name);
+                lastSyncedCollections[name] = normalizeCollection(payload.syncBase?.[name] ?? payload.collections[name], name);
+            });
+            localCacheWasLoaded = true;
+            lastLocalSnapshotSignature = localSnapshotSignature(payload);
+            return true;
+        }
+
+        function saveUiState() {
+            try {
+                localStorage.setItem(UI_STATE_KEY, JSON.stringify({
+                    currentProfessorSubjectId: state.currentProfessorSubjectId || null,
+                    currentOfficerTab: state.currentOfficerTab || 'reports',
+                    currentLevel: state.currentLevel || null,
+                    currentLevelKey: state.currentLevelKey || null,
+                    scrollY: Math.max(0, Number(window.scrollY) || 0),
+                    savedAt: Date.now()
+                }));
+            } catch (err) { console.warn('تعذر حفظ موضع الواجهة:', err); }
+        }
+
+        function restoreUiState() {
+            try {
+                const saved = JSON.parse(localStorage.getItem(UI_STATE_KEY) || 'null');
+                if (!saved) return;
+                state.currentProfessorSubjectId = saved.currentProfessorSubjectId || state.currentProfessorSubjectId;
+                state.currentOfficerTab = saved.currentOfficerTab || state.currentOfficerTab;
+                requestAnimationFrame(() => window.scrollTo({ top:Math.max(0, Number(saved.scrollY) || 0), behavior:'auto' }));
+            } catch (err) { console.warn('تعذر استعادة موضع الواجهة:', err); }
+        }
+
+        function saveAuthenticatedSession(user, persistent) {
+            const record = { role:user.role, id:user.id, name:user.name, persistent:!!persistent, savedAt:Date.now() };
+            if (user.role === 'professor') {
+                const prof = (state.professors || []).find(p => String(p.id) === String(user.id));
+                record.credentialSignature = prof ? String(getProfessorUnifiedPassword(prof).hash || '') : '';
+            }
+            try {
+                if (persistent) {
+                    localStorage.setItem(PERSISTENT_SESSION_KEY, JSON.stringify(record));
+                    sessionStorage.removeItem(TEMP_SESSION_KEY);
+                } else {
+                    sessionStorage.setItem(TEMP_SESSION_KEY, JSON.stringify(record));
+                    localStorage.removeItem(PERSISTENT_SESSION_KEY);
+                }
+            } catch (err) { console.warn('تعذر حفظ جلسة الدخول:', err); }
+        }
+
+        function clearAuthenticatedSession() {
+            try { localStorage.removeItem(PERSISTENT_SESSION_KEY); } catch (e) {}
+            try { sessionStorage.removeItem(TEMP_SESSION_KEY); } catch (e) {}
+        }
+
+        function readSavedSession() {
+            try {
+                const temporary = sessionStorage.getItem(TEMP_SESSION_KEY);
+                const persistent = localStorage.getItem(PERSISTENT_SESSION_KEY);
+                if (temporary) return JSON.parse(temporary);
+                if (!persistent) return null;
+                const saved = JSON.parse(persistent);
+                if (saved?.role !== 'professor') { localStorage.removeItem(PERSISTENT_SESSION_KEY); return null; }
+                return saved;
+            } catch (err) { clearAuthenticatedSession(); return null; }
+        }
+
+        function restoreSavedSession() {
+            const saved = readSavedSession();
+            if (!saved || !['admin','officer','professor'].includes(saved.role)) return false;
+            let restored = { role:saved.role, id:String(saved.id || ''), name:sanitizeText(saved.name || '', 120), persistent:!!saved.persistent };
+            if (saved.role === 'professor') {
+                const direct = (state.professors || []).find(p => String(p.id) === String(saved.id));
+                const alias = (state.professors || []).find(p => (p.aliasProfessorIds || []).map(String).includes(String(saved.id)));
+                const prof = chooseCanonicalProfessor(getProfessorIdentityCluster(direct || alias)) || direct || alias;
+                const active = prof && getCanonicalProfessorRecords().some(p => String(p.id) === String(prof.id));
+                if (!active) { clearAuthenticatedSession(); return false; }
+                const currentCredential = String(getProfessorUnifiedPassword(prof).hash || '');
+                if (saved.credentialSignature && currentCredential && saved.credentialSignature !== currentCredential) {
+                    clearAuthenticatedSession();
+                    return false;
+                }
+                restored.id = prof.id;
+                restored.name = prof.name;
+                restored.credentialSignature = currentCredential;
+            } else if (saved.role === 'admin') restored = { ...restored, id:'admin', name:'رئيس القسم' };
+            else restored = { ...restored, id:'officer', name:'مسؤول الغيابات' };
+            state.currentUser = restored;
+            enterApp(true);
+            return true;
+        }
+
+        function scheduleRenderRefresh() {
+            clearTimeout(renderRefreshTimer);
+            renderRefreshTimer = setTimeout(() => {
+                try { renderAll(); }
+                catch (err) { console.error('خطأ غير حرج أثناء تحديث الواجهة:', err); }
+            }, 90);
+        }
+
+        function scheduleCredentialValidation() {
+            clearTimeout(credentialValidationTimer);
+            credentialValidationTimer = setTimeout(() => {
+                if (state.currentUser?.role !== 'professor') return;
+                const saved = readSavedSession();
+                const prof = (state.professors || []).find(p => String(p.id) === String(state.currentUser.id));
+                const active = prof && getCanonicalProfessorRecords().some(p => String(p.id) === String(prof.id));
+                const currentCredential = prof ? String(getProfessorUnifiedPassword(prof).hash || '') : '';
+                const expectedCredential = String(saved?.credentialSignature || state.currentUser.credentialSignature || '');
+                if (!active || (expectedCredential && currentCredential && expectedCredential !== currentCredential)) {
+                    logout(false);
+                    const error = document.getElementById('loginError');
+                    if (error) error.textContent = 'تم تغيير بيانات هذا الحساب. سجل الدخول بكلمة المرور الجديدة.';
+                }
+            }, 500);
+        }
 
         function getLocalDateISO(date = new Date()) {
             const y = date.getFullYear();
@@ -990,9 +1347,38 @@
                 .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
         }
 
+        function requireOptionalLibrary(check, label) {
+            let ready = false;
+            try { ready = typeof check === 'function' ? !!check() : false; } catch (e) { ready = false; }
+            if (ready) return true;
+            alert(`⚠️ مكوّن ${label} لم يكتمل تحميله. تحقق من الإنترنت ثم أعد المحاولة؛ بقية البرنامج وبياناتك تعمل بصورة طبيعية.`);
+            return false;
+        }
+
+        function sanitizeNestedValue(value, key = '', depth = 0) {
+            if (value === null || value === undefined || typeof value === 'number' || typeof value === 'boolean') return value;
+            if (typeof value === 'string') {
+                const secretKeys = new Set(['password','passwordHash','adminPasswordHash','officerPasswordHash','hash']);
+                if (secretKeys.has(key)) return value.slice(0, 4096);
+                const longKeys = new Set(['details','snapshot','msg','description','source']);
+                return sanitizeText(value, longKeys.has(key) ? 5000 : 500);
+            }
+            if (depth >= 12) return null;
+            if (Array.isArray(value)) return value.map(item => sanitizeNestedValue(item, key, depth + 1));
+            if (typeof value === 'object') {
+                const out = {};
+                Object.entries(value).forEach(([childKey, childValue]) => {
+                    if (childKey === '__proto__' || childKey === 'prototype' || childKey === 'constructor') return;
+                    out[childKey] = sanitizeNestedValue(childValue, childKey, depth + 1);
+                });
+                return out;
+            }
+            return null;
+        }
+
         function sanitizeRecord(record) {
             if (!record || typeof record !== 'object') return record;
-            const copy = { ...record };
+            const copy = sanitizeNestedValue(record, '', 0);
             ['name', 'canonicalName', 'group', 'section', 'groupType', 'theoreticalGroup', 'practicalGroup', 'phone', 'phoneNormalized', 'guardianPhone', 'english', 'code'].forEach(key => {
                 if (copy[key] !== undefined && copy[key] !== null) copy[key] = sanitizeText(copy[key]);
             });
@@ -1099,19 +1485,20 @@
         }
 
         async function commitFirebaseChanges(changes) {
+            if (!database) throw new Error('الاتصال السحابي غير جاهز');
             const conflicts = [];
             for (const change of changes) {
                 const key = String(change.id).replace(/[.#$\[\]\/]/g, '_');
                 let conflict = false;
-                const result = await database.ref(`/${change.name}/${key}`).transaction(remoteValue => {
+                const result = await withTimeout(database.ref(`/${change.name}/${key}`).transaction(remoteValue => {
                     const remote = remoteValue === null ? undefined : remoteValue;
                     conflict = !sameRecord(remote, change.before) && !sameRecord(remote, change.after);
                     if (conflict) return;
                     return change.after === undefined ? null : change.after;
-                }, undefined, false);
+                }, undefined, false), CLOUD_OPERATION_TIMEOUT_MS, `انتهت مهلة حفظ ${change.name}`);
                 if (!result.committed && conflict) conflicts.push(change);
             }
-            await database.ref('/').update({ lastUpdate: firebase.database.ServerValue.TIMESTAMP, schemaVersion: SCHEMA_VERSION });
+            await withTimeout(database.ref('/').update({ lastUpdate: firebase.database.ServerValue.TIMESTAMP, schemaVersion: SCHEMA_VERSION }), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة تثبيت وقت الحفظ');
             return conflicts;
         }
 
@@ -1135,13 +1522,13 @@
             lastSyncedCollections[name] = remoteArr;
         }
 
-        function applyRemoteData(data) {
+        function applyRemoteData(data, names = SYNC_COLLECTIONS) {
             if (!data) return;
-            SYNC_COLLECTIONS.forEach(name => applyRemoteCollection(name, data[name]));
+            names.forEach(name => applyRemoteCollection(name, data[name]));
         }
 
         async function migrateLegacyCollectionsIfNeeded(data) {
-            if (!data) return;
+            if (!data || !database) return;
             const updates = {};
             SYNC_COLLECTIONS.forEach(name => {
                 if (Array.isArray(data[name])) {
@@ -1150,7 +1537,7 @@
             });
             if (Object.keys(updates).length > 0) {
                 updates.schemaVersion = SCHEMA_VERSION;
-                await database.ref('/').update(updates);
+                await withTimeout(database.ref('/').update(updates), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة ترحيل البيانات القديمة');
             }
         }
 
@@ -1174,32 +1561,60 @@
         // ==============================================================
         //  دوال المزامنة مع Firebase
         // ==============================================================
+        async function readCloudCollections() {
+            if (!database) throw new Error('الاتصال السحابي غير جاهز');
+            const settled = await Promise.allSettled(SYNC_COLLECTIONS.map(name =>
+                withTimeout(database.ref('/' + name).once('value'), CLOUD_OPERATION_TIMEOUT_MS, `انتهت مهلة تحميل ${name}`)
+                    .then(snapshot => ({ name, value:snapshot.val() }))
+            ));
+            const data = {};
+            const loadedNames = [];
+            const failures = [];
+            settled.forEach((result, index) => {
+                if (result.status === 'fulfilled') {
+                    data[result.value.name] = result.value.value;
+                    loadedNames.push(result.value.name);
+                } else failures.push({ name:SYNC_COLLECTIONS[index], error:result.reason });
+            });
+            if (!loadedNames.length) throw failures[0]?.error || new Error('تعذر تحميل البيانات السحابية');
+            return { data, loadedNames, failures };
+        }
+
+        function hasAnyCollectionData(data, names = SYNC_COLLECTIONS) {
+            return names.some(name => {
+                const value = data?.[name];
+                return Array.isArray(value) ? value.length > 0 : !!(value && typeof value === 'object' && Object.keys(value).length);
+            });
+        }
+
         async function loadFromFirebase() {
-            if (state.isSyncing) return;
+            if (!database) return false;
+            if (state.isSyncing) return false;
             state.isSyncing = true;
-            const statusEl = document.getElementById('syncStatus');
-            if (statusEl) statusEl.textContent = '⏳ جاري التحميل من السحابة...';
+            setSyncStatus('⏳ جاري جلب أحدث البيانات من السحابة...', '#1e4f7a');
 
             try {
-                const snapshot = await database.ref('/').once('value');
-                const data = snapshot.val();
-                if (data) {
-                    SYNC_COLLECTIONS.forEach(name => {
-                        state[name] = normalizeCollection(data[name], name);
-                    });
-                    lastSyncedCollections = cloneCollections();
-                    await migrateLegacyCollectionsIfNeeded(data);
-                } else {
+                const { data, loadedNames, failures } = await readCloudCollections();
+                const remoteHasData = hasAnyCollectionData(data, loadedNames);
+                if (remoteHasData) {
+                    if (localCacheWasLoaded) applyRemoteData(data, loadedNames);
+                    else {
+                        loadedNames.forEach(name => { state[name] = normalizeCollection(data[name], name); });
+                        loadedNames.forEach(name => { lastSyncedCollections[name] = JSON.parse(JSON.stringify(state[name])); });
+                    }
+                    try { await migrateLegacyCollectionsIfNeeded(data); }
+                    catch (migrationError) { console.warn('تعذر ترحيل تنسيق قديم الآن وسيعاد لاحقا:', migrationError); }
+                } else if (!localCacheWasLoaded) {
                     await initializeDefaultData();
                     state.auditLogs = [];
                     recordAudit('تهيئة النظام', 'إنشاء البيانات الافتراضية لأول تشغيل');
                     lastSyncedCollections = {};
+                } else {
+                    // السحابة فارغة والنسخة المحلية موجودة: اجعل كل السجلات المحلية تغييرات معلقة للرفع.
+                    loadedNames.forEach(name => { lastSyncedCollections[name] = []; });
                 }
 
                 state.initialLoadDone = true;
-                state.isSyncing = false;
-                if (statusEl) statusEl.textContent = '✅ متصل بالسحابة - المزامنة الآمنة نشطة';
-                if (!data) await pushToFirebase();
                 const repairedEnrollmentAttendances = repairEnrollmentAttendanceRecords();
                 const recalculatedSubjectHours = refreshAutomaticSubjectHours();
                 const linkRepair = ensureActiveSubjectLinks();
@@ -1208,45 +1623,87 @@
                 const automaticRepairChanged=professorProfilesMigrated || professorRefsCanonicalized || repairedEnrollmentAttendances || recalculatedSubjectHours || linkRepair.added || linkRepair.removed;
                 if(automaticRepairChanged){
                     recordAudit('ترحيل وإصلاح تلقائي للبيانات',{profiles:(state.professorProfiles||[]).length,repairedEnrollmentAttendances,recalculatedSubjectHours,linksAdded:linkRepair.added,linksRemoved:linkRepair.removed});
-                    await pushToFirebase();
                 }
-                renderAll();
+                cloudConnected = true;
+                lastCloudSyncAt = Date.now();
+                await persistLocalState('cloud-load', true);
+                const partialNote = failures.length ? ` — تعذر تحديث ${failures.length} قسم وسيعاد تلقائيا` : '';
+                setSyncStatus(`✅ تم تحميل أحدث البيانات${partialNote}`, failures.length ? '#b45309' : '#2f855a');
+                setStartupStatus('✅ متصل بالسحابة — آخر البيانات محفوظة محليا أيضا', 'online');
+                scheduleRenderRefresh();
                 if(liveAcademicCatalog) setTimeout(()=>applyAcademicCatalogFromTimetable(liveAcademicCatalog),0);
-            } catch (err) {
                 state.isSyncing = false;
+                const pending = buildFirebaseChanges();
+                if (pending.length) pushToFirebase({ silent:true });
+                return true;
+            } catch (err) {
                 console.error('خطأ في تحميل البيانات:', err);
-                if (statusEl) statusEl.textContent = '❌ خطأ في الاتصال بالسحابة. لم يتم حذف أي بيانات محلية.';
-                alert('❌ تعذر الاتصال بالسحابة. تأكد من اتصالك بالإنترنت.');
+                cloudConnected = false;
+                setSyncStatus('🟠 تعذر الاتصال حاليا — النسخة المحلية محفوظة وتعمل', '#b45309');
+                setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
+                scheduleCloudRetry();
+                return false;
+            } finally {
+                state.isSyncing = false;
             }
         }
 
-        function pushToFirebase() {
+        function pushToFirebase(options = {}) {
             if (!state.initialLoadDone) return Promise.resolve(false);
+            scheduleLocalPersistence(0);
+            if (!database) {
+                if (!options.silent) setSyncStatus('🟠 حُفظ التعديل في هذا المتصفح وسيُرفع تلقائيا عند عودة الاتصال', '#b45309');
+                scheduleCloudRetry();
+                return Promise.resolve(false);
+            }
 
-            saveQueue = saveQueue.then(async () => {
+            saveQueue = saveQueue.catch(err => {
+                console.warn('تم تجاوز خطأ سابق في طابور الحفظ:', err);
+                return false;
+            }).then(async () => {
                 const changes = buildFirebaseChanges();
-                if (changes.length === 0) return true;
+                if (changes.length === 0) {
+                    await persistLocalState('cloud-noop');
+                    return true;
+                }
 
                 state.isSyncing = true;
-                const statusEl = document.getElementById('syncStatus');
-                if (statusEl) statusEl.textContent = '⏳ جاري حفظ التغييرات فقط...';
+                setSyncStatus(`⏳ جاري رفع ${changes.length} تغيير...`, '#1e4f7a');
 
                 try {
                     const conflicts = await commitFirebaseChanges(changes);
-                    const fresh = await database.ref('/').once('value');
-                    replaceStateFromRemote(fresh.val());
+                    const { data:freshData, loadedNames } = await readCloudCollections();
+                    loadedNames.forEach(name => {
+                        state[name] = normalizeCollection(freshData[name], name);
+                        lastSyncedCollections[name] = JSON.parse(JSON.stringify(state[name]));
+                    });
                     if (conflicts.length) {
-                        if (statusEl) statusEl.textContent = `⚠️ حُفظت التغييرات غير المتعارضة، وأُبقيت النسخة السحابية لـ ${conflicts.length} سجل متعارض`;
-                        alert(`⚠️ يوجد ${conflicts.length} سجل عُدّل من جهاز آخر في الوقت نفسه. لم يستبدل البرنامج تلك السجلات، وتم تحميل النسخة السحابية الأحدث. راجع التعديل وأعد تطبيقه عند الحاجة.`);
-                        renderAll();
+                        // لا نفقد نسخة هذا الجهاز: نعيد التعديلات المتعارضة كمسودة محلية معلقة.
+                        conflicts.forEach(change => {
+                            const map = mapsById(state[change.name] || []);
+                            if (change.after) map.set(String(change.id), change.after);
+                            else map.delete(String(change.id));
+                            state[change.name] = Array.from(map.values());
+                        });
+                        setSyncStatus(`⚠️ يوجد ${conflicts.length} تعارض محفوظ محليا؛ ستبقى النسختان دون فقد`, '#b45309');
+                        if (!options.silent) alert(`⚠️ عُدّل ${conflicts.length} سجل من جهاز آخر في الوقت نفسه. حُفظ تعديل هذا الجهاز محليا ولم يُفقد، بينما بقيت النسخة السحابية الأحدث للحماية.`);
+                        await persistLocalState('conflict', true);
+                        scheduleRenderRefresh();
                         return false;
                     }
-                    if (statusEl) statusEl.textContent = '✅ تم الحفظ - فحص تعارضات السجلات نشط';
+                    cloudConnected = true;
+                    lastCloudSyncAt = Date.now();
+                    await persistLocalState('cloud-save', true);
+                    setSyncStatus('✅ تم الحفظ محليا وسحابيا', '#2f855a');
+                    setStartupStatus('✅ متصل بالسحابة — آخر البيانات محفوظة محليا أيضا', 'online');
                     return true;
                 } catch (err) {
                     console.error('خطأ في الحفظ:', err);
-                    if (statusEl) statusEl.textContent = '❌ لم يتم حفظ آخر تعديل. البيانات ما زالت موجودة في هذه الجلسة.';
-                    alert('❌ تعذر حفظ آخر تعديل في السحابة. لا تغلق الصفحة قبل عودة الاتصال ثم أعد المحاولة.');
+                    cloudConnected = false;
+                    await persistLocalState('cloud-failed', true);
+                    setSyncStatus('🟠 حُفظ التعديل في هذا المتصفح؛ الرفع السحابي سيعاد تلقائيا', '#b45309');
+                    setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
+                    scheduleCloudRetry();
                     return false;
                 } finally {
                     state.isSyncing = false;
@@ -1257,6 +1714,8 @@
 
         // استماع للتغييرات في الوقت الفعلي مع دمجها مع التغييرات المحلية غير المحفوظة.
         function listenToFirebase() {
+            if (!database || cloudListenersStarted) return;
+            cloudListenersStarted = true;
             SYNC_COLLECTIONS.forEach(name => {
                 database.ref('/'+name).on('value', async snapshot => {
                     if (!state.initialLoadDone) return;
@@ -1266,16 +1725,116 @@
                         catch(err){ console.error('تعذر ترحيل '+name+':',err); }
                     }
                     applyRemoteCollection(name,value);
-                    if (name==='professors' || name==='professorProfiles' || name==='subjects' || name==='students' || name==='attendances' || name==='submissions' || name==='appSettings') renderAll();
-                    const statusEl = document.getElementById('syncStatus');
-                    if (statusEl && !state.isSyncing) statusEl.textContent = '✅ تمت مزامنة أحدث البيانات من السحابة';
+                    lastCloudSyncAt = Date.now();
+                    scheduleLocalPersistence();
+                    if(name==='professors' || name==='professorProfiles') scheduleCredentialValidation();
+                    if (name==='professors' || name==='professorProfiles' || name==='subjects' || name==='students' || name==='attendances' || name==='submissions' || name==='scheduleLinks' || name==='appSettings') scheduleRenderRefresh();
+                    if (!state.isSyncing) setSyncStatus('✅ تمت مزامنة أحدث البيانات من السحابة', '#2f855a');
+                }, err => {
+                    console.error(`خطأ مستمع ${name}:`, err);
+                    cloudConnected = false;
+                    setSyncStatus('🟠 انقطع التحديث اللحظي؛ النسخة المحلية مستمرة', '#b45309');
+                    scheduleCloudRetry();
                 });
             });
         }
 
-        function saveAll() {
-            return pushToFirebase();
+        async function saveAll(options = {}) {
+            const localSaved = await persistLocalState('explicit', true);
+            const cloudSaved = await pushToFirebase(options);
+            return !!(localSaved && cloudSaved);
         }
+
+        function scheduleCloudRetry(delay = 15000) {
+            if (cloudRetryTimer) return;
+            cloudRetryTimer = setTimeout(() => {
+                cloudRetryTimer = null;
+                connectAndSyncCloud();
+            }, Math.max(1000, delay));
+        }
+
+        async function connectAndSyncCloud() {
+            if (cloudSyncPromise) return cloudSyncPromise;
+            cloudSyncPromise = (async () => {
+                if (navigator.onLine === false) {
+                    setStartupStatus('🟠 لا يوجد إنترنت — النسخة المحلية جاهزة ومحفوظة', 'local');
+                    setSyncStatus('🟠 وضع محلي؛ ستبدأ المزامنة عند عودة الإنترنت', '#b45309');
+                    scheduleCloudRetry(30000);
+                    return false;
+                }
+                try {
+                    setStartupStatus('⏳ النسخة المحلية جاهزة — جارٍ فحص التحديثات السحابية...');
+                    await initializeFirebaseRuntime();
+                    const loaded = await loadFromFirebase();
+                    listenToFirebase();
+                    listenAcademicCatalogFromTimetable();
+                    listenWeeklyTimetableCloud();
+                    if (!state.currentUser) restoreSavedSession();
+                    return loaded;
+                } catch (err) {
+                    console.error('تعذر تشغيل المزامنة السحابية:', err);
+                    cloudConnected = false;
+                    setStartupStatus('🟠 تعذر الوصول للسحابة — النسخة المحلية تعمل وستحاول مجددا', 'local');
+                    setSyncStatus('🟠 وضع محلي آمن؛ إعادة الاتصال تلقائية', '#b45309');
+                    scheduleCloudRetry(20000);
+                    return false;
+                }
+            })().finally(() => { cloudSyncPromise = null; });
+            return cloudSyncPromise;
+        }
+
+        async function bootstrapApplication() {
+            setStartupStatus('⏳ جارٍ تجهيز النسخة المحفوظة في هذا المتصفح...');
+            try {
+                const loaded = await loadLocalState();
+                if (!loaded) await initializeDefaultData();
+                state.initialLoadDone = true;
+                ensureAllRecordIds();
+                ensureProfessorProfilesFromLegacy();
+                canonicalizeProfessorReferences();
+                await persistLocalState('bootstrap', true);
+                const restored = restoreSavedSession();
+                if (!restored) {
+                    setStartupStatus(loaded ? '✅ النسخة المحلية جاهزة — جارٍ جلب آخر تحديث...' : '✅ النظام جاهز — جارٍ الاتصال بالسحابة...');
+                }
+            } catch (err) {
+                console.error('خطأ التهيئة المحلية:', err);
+                await initializeDefaultData();
+                state.initialLoadDone = true;
+                setStartupStatus('⚠️ تعذر قراءة النسخة السابقة؛ جارٍ محاولة الاستعادة من السحابة', 'error');
+            }
+            connectAndSyncCloud();
+        }
+
+        window.addEventListener('online', () => {
+            setStartupStatus('⏳ عاد الإنترنت — جارٍ مزامنة التعديلات...');
+            connectAndSyncCloud();
+        });
+        window.addEventListener('offline', () => {
+            cloudConnected = false;
+            setStartupStatus('🟠 لا يوجد إنترنت — النسخة المحلية جاهزة ومحفوظة', 'local');
+            setSyncStatus('🟠 وضع محلي؛ لن يضيع أي تعديل', '#b45309');
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                saveUiState();
+                scheduleLocalPersistence(0);
+            } else if (Date.now() - lastCloudSyncAt > 30000) connectAndSyncCloud();
+        });
+        window.addEventListener('pagehide', () => { saveUiState(); writeLocalStorageFallback(buildLocalSnapshot()); });
+        window.addEventListener('beforeunload', () => { saveUiState(); writeLocalStorageFallback(buildLocalSnapshot()); });
+        window.addEventListener('error', event => {
+            console.error('خطأ واجهة غير معالج:', event.error || event.message);
+            scheduleLocalPersistence(0);
+        });
+        window.addEventListener('unhandledrejection', event => {
+            console.error('Promise غير معالج:', event.reason);
+            scheduleLocalPersistence(0);
+        });
+        setInterval(() => {
+            if (state.initialLoadDone) persistLocalState('interval');
+            if (!cloudConnected && !cloudSyncPromise) connectAndSyncCloud();
+        }, 30000);
 
         // ==============================================================
         //  HASH PASSWORD (SHA-256)
@@ -1422,9 +1981,8 @@
                     recordAudit('استعادة نسخة احتياطية', { fileName: file.name, backupVersion: data.version || data.schemaVersion || 'غير محدد', repairedEnrollmentAttendances, recalculatedSubjectHours, linksAdded: linkRepair.added, linksRemoved: linkRepair.removed });
 
                     const ok = await saveAll();
-                    if (!ok) throw new Error('تعذر رفع النسخة المستعادة إلى Firebase');
                     renderAll();
-                    alert('✅ تم التحقق من النسخة الاحتياطية واستعادتها وحفظها في السحابة بنجاح.');
+                    alert(ok ? '✅ تم التحقق من النسخة الاحتياطية واستعادتها وحفظها محليا وسحابيا.' : '🟠 تم التحقق من النسخة واستعادتها وحفظها في هذا المتصفح. سترتفع للسحابة تلقائيا عند عودة الاتصال.');
                 } catch (err) {
                     alert('❌ خطأ في الاستعادة: ' + err.message);
                 } finally {
@@ -1439,127 +1997,211 @@
         // ==============================================================
         let sessionTimer = null;
         let lastSessionActivity = Date.now();
+        let lastSessionPersistAt = 0;
 
         function getLoginGuard() {
-            try { return JSON.parse(localStorage.getItem('attendance_login_guard_v20') || '{}') || {}; }
+            try { return JSON.parse(localStorage.getItem('attendance_login_guard_v21') || '{}') || {}; }
             catch (e) { return {}; }
         }
 
         function loginLockRemaining(username) {
-            const rec = getLoginGuard()[String(username || '').toLowerCase()];
+            const rec = getLoginGuard()[normalizeLoginIdentifier(username) || String(username || '').toLowerCase()];
             return rec?.lockedUntil > Date.now() ? rec.lockedUntil - Date.now() : 0;
         }
 
         function recordFailedLogin(username) {
-            const key = String(username || '').toLowerCase() || '_blank';
+            const key = normalizeLoginIdentifier(username) || String(username || '').toLowerCase() || '_blank';
             const guard = getLoginGuard();
             const previous = guard[key] || { attempts:0, lockedUntil:0 };
             const baseAttempts = previous.lockedUntil && previous.lockedUntil <= Date.now() ? 0 : (Number(previous.attempts) || 0);
             const attempts = baseAttempts + 1;
             guard[key] = { attempts, lockedUntil: attempts >= LOGIN_MAX_ATTEMPTS ? Date.now() + LOGIN_LOCK_MS : 0 };
-            localStorage.setItem('attendance_login_guard_v20', JSON.stringify(guard));
+            try { localStorage.setItem('attendance_login_guard_v21', JSON.stringify(guard)); } catch (e) {}
             return guard[key];
         }
 
         function clearLoginGuard(username) {
-            const key = String(username || '').toLowerCase();
+            const key = normalizeLoginIdentifier(username) || String(username || '').toLowerCase();
             const guard = getLoginGuard();
             delete guard[key];
-            localStorage.setItem('attendance_login_guard_v20', JSON.stringify(guard));
+            try { localStorage.setItem('attendance_login_guard_v21', JSON.stringify(guard)); } catch (e) {}
+        }
+
+        function normalizeLoginIdentifier(value) {
+            return normalizeProfessorIdentityName(String(value || '').replace(/ـ/g, '').trim());
+        }
+
+        function professorLoginAliases(prof) {
+            const profile = getProfessorProfile(prof, false);
+            const cluster = getProfessorIdentityCluster(prof);
+            return [...new Set([
+                prof?.name, prof?.username, profile?.canonicalName,
+                ...(profile?.nameAliases || []),
+                ...cluster.map(x => x.name),
+                ...cluster.map(x => x.username)
+            ].filter(Boolean).map(x => String(x).trim()))];
+        }
+
+        function findProfessorForLogin(username) {
+            const raw = String(username || '').trim();
+            const normalized = normalizeLoginIdentifier(raw);
+            if (!raw || !normalized) return { professor:null, ambiguous:false };
+            const candidates = getCanonicalProfessorRecords().filter(prof => {
+                const aliases = professorLoginAliases(prof);
+                return aliases.some(alias => alias === raw || alias.toLocaleLowerCase('ar') === raw.toLocaleLowerCase('ar')) ||
+                    aliases.some(alias => normalizeLoginIdentifier(alias) === normalized);
+            });
+            if (candidates.length === 1) return { professor:candidates[0], ambiguous:false };
+            if (candidates.length > 1) {
+                const exact = candidates.filter(prof => professorLoginAliases(prof).some(alias => alias === raw));
+                if (exact.length === 1) return { professor:exact[0], ambiguous:false };
+                return { professor:null, ambiguous:true };
+            }
+            return { professor:null, ambiguous:false };
+        }
+
+        function completeSuccessfulLogin(user, username) {
+            // الجلسة الدائمة للأساتذة فقط؛ حسابا الإدارة ومسؤول الغيابات يبقيان جلسات مؤقتة لحماية الصلاحيات.
+            const persistent = user.role === 'professor' && !!document.getElementById('keepSignedIn')?.checked;
+            state.currentUser = { ...user, persistent };
+            if (user.role === 'professor') {
+                const prof = (state.professors || []).find(p => String(p.id) === String(user.id));
+                state.currentUser.credentialSignature = prof ? String(getProfessorUnifiedPassword(prof).hash || '') : '';
+            }
+            clearLoginGuard(username);
+            saveAuthenticatedSession(state.currentUser, persistent);
+            const passwordField = document.getElementById('loginPassword');
+            if (passwordField) passwordField.value = '';
+            enterApp(false);
+        }
+
+        async function upgradePasswordWithoutBlocking(account, password, kind = 'professor') {
+            try {
+                const upgradedHash = await hashPasswordSecure(password);
+                if (kind === 'professor') {
+                    propagateProfessorPassword(account, upgradedHash);
+                    recordAudit('ترقية حماية كلمة مرور أستاذ', { professor:account.name });
+                    if (state.currentUser?.role === 'professor' && String(state.currentUser.id) === String(account.id)) {
+                        state.currentUser.credentialSignature = upgradedHash;
+                        saveAuthenticatedSession(state.currentUser, !!state.currentUser.persistent);
+                    }
+                } else {
+                    const settings = getGlobalAppSettings();
+                    settings[kind === 'admin' ? 'adminPasswordHash' : 'officerPasswordHash'] = upgradedHash;
+                    settings.securityUpdatedAt = Date.now();
+                    recordAudit(kind === 'admin' ? 'ترقية حماية حساب رئيس القسم' : 'ترقية حماية حساب مسؤول الغيابات');
+                }
+                await persistLocalState('password-upgrade', true);
+                pushToFirebase({ silent:true });
+            } catch (err) { console.error('تعذر ترقية بصمة كلمة المرور:', err); }
         }
 
         async function handleLogin() {
-            const username = document.getElementById('loginUsername').value.trim();
-            const password = document.getElementById('loginPassword').value.trim();
-            document.getElementById('loginError').innerText = '';
-            const remaining = loginLockRemaining(username);
-            if (remaining > 0) {
-                document.getElementById('loginError').innerText = `🔒 محاولات كثيرة. أعد المحاولة بعد ${Math.ceil(remaining / 60000)} دقيقة.`;
-                return;
-            }
-
-            const adminHash = '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9';
-            const officerHash = '118b8d35a17bcf2c7d2d790509e12308dc6332c5d234f0098d2d6be6700bebb1';
-            const securitySettings = getGlobalAppSettings();
-
-            if (username === 'admin') {
-                const stored = securitySettings.adminPasswordHash || '';
-                if (stored ? await verifyPassword(password, stored) : await hashPassword(password) === adminHash) {
-                    state.currentUser = { role: 'admin', id: 'admin', name: 'رئيس القسم' };
-                    if (!stored || /^[a-f0-9]{64}$/i.test(stored)) {
-                        securitySettings.adminPasswordHash = await hashPasswordSecure(password);
-                        securitySettings.securityUpdatedAt = Date.now();
-                        recordAudit('ترقية حماية حساب رئيس القسم');
-                        await saveAll();
-                    }
-                    clearLoginGuard(username);
-                    enterApp();
+            const usernameEl = document.getElementById('loginUsername');
+            const passwordEl = document.getElementById('loginPassword');
+            const errorEl = document.getElementById('loginError');
+            const button = document.getElementById('loginButton');
+            const username = usernameEl.value.trim();
+            const password = passwordEl.value;
+            errorEl.innerText = '';
+            if (!username || !password) { errorEl.innerText = 'يرجى إدخال اسم المستخدم وكلمة المرور.'; return; }
+            if (button.disabled) return;
+            button.disabled = true;
+            button.textContent = 'جارٍ التحقق...';
+            try {
+                if (applicationBootstrapPromise) await applicationBootstrapPromise;
+                const remaining = loginLockRemaining(username);
+                if (remaining > 0) {
+                    errorEl.innerText = `🔒 محاولات كثيرة. أعد المحاولة بعد ${Math.ceil(remaining / 60000)} دقيقة.`;
                     return;
                 }
-            }
-            if (username === 'officer') {
-                const stored = securitySettings.officerPasswordHash || '';
-                if (stored ? await verifyPassword(password, stored) : await hashPassword(password) === officerHash) {
-                    state.currentUser = { role: 'officer', id: 'officer', name: 'مسؤول الغيابات' };
-                    if (!stored || /^[a-f0-9]{64}$/i.test(stored)) {
-                        securitySettings.officerPasswordHash = await hashPasswordSecure(password);
-                        securitySettings.securityUpdatedAt = Date.now();
-                        recordAudit('ترقية حماية حساب مسؤول الغيابات');
-                        await saveAll();
-                    }
-                    clearLoginGuard(username);
-                    enterApp();
-                    return;
-                }
-            }
 
-            for (let prof of getCanonicalProfessorRecords()) {
-                if (prof.name === username) {
-                    let pwd=getProfessorUnifiedPassword(prof);
-                    const legacyPlaintext = pwd.hasPassword && pwd.hash && !isPasswordHash(pwd.hash);
-                    const valid = legacyPlaintext ? password === pwd.hash : (pwd.hasPassword && await verifyPassword(password, pwd.hash));
+                const adminHash = '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9';
+                const officerHash = '118b8d35a17bcf2c7d2d790509e12308dc6332c5d234f0098d2d6be6700bebb1';
+                const securitySettings = getGlobalAppSettings();
+                const accountName = username.toLocaleLowerCase('en-US');
+
+                if (accountName === 'admin') {
+                    const stored = securitySettings.adminPasswordHash || '';
+                    const valid = stored ? await verifyPassword(password, stored) : await hashPassword(password) === adminHash;
                     if (valid) {
-                        if (legacyPlaintext || /^[a-f0-9]{64}$/i.test(pwd.hash)) {
-                            const upgradedHash = await hashPasswordSecure(password);
-                            propagateProfessorPassword(prof,upgradedHash);
-                            recordAudit('ترقية حماية كلمة مرور أستاذ', { professor: prof.name });
-                            await saveAll();
-                        }
-                        const canonical=chooseCanonicalProfessor(getProfessorIdentityCluster(prof))||prof;
-                        state.currentUser = { role: 'professor', id: canonical.id, name: canonical.name };
-                        clearLoginGuard(username);
-                        enterApp();
+                        completeSuccessfulLogin({ role:'admin', id:'admin', name:'رئيس القسم' }, username);
+                        if (!stored || /^[a-f0-9]{64}$/i.test(stored)) upgradePasswordWithoutBlocking(null, password, 'admin');
                         return;
                     }
                 }
+                if (accountName === 'officer') {
+                    const stored = securitySettings.officerPasswordHash || '';
+                    const valid = stored ? await verifyPassword(password, stored) : await hashPassword(password) === officerHash;
+                    if (valid) {
+                        completeSuccessfulLogin({ role:'officer', id:'officer', name:'مسؤول الغيابات' }, username);
+                        if (!stored || /^[a-f0-9]{64}$/i.test(stored)) upgradePasswordWithoutBlocking(null, password, 'officer');
+                        return;
+                    }
+                }
+
+                let match = findProfessorForLogin(username);
+                if (!match.professor && !match.ambiguous && cloudSyncPromise && navigator.onLine !== false) {
+                    await withTimeout(cloudSyncPromise, 6000, 'انتهت مهلة تحديث قائمة الأساتذة').catch(() => false);
+                    match = findProfessorForLogin(username);
+                }
+                if (match.ambiguous) {
+                    errorEl.innerText = 'يوجد أكثر من أستاذ بالاسم نفسه. اطلب من رئيس القسم تعيين اسم مستخدم مميز.';
+                    return;
+                }
+                const prof = match.professor;
+                if (prof) {
+                    const pwd = getProfessorUnifiedPassword(prof);
+                    const legacyPlaintext = pwd.hasPassword && pwd.hash && !isPasswordHash(pwd.hash);
+                    const valid = legacyPlaintext ? password === pwd.hash : (pwd.hasPassword && await verifyPassword(password, pwd.hash));
+                    if (valid) {
+                        const canonical = chooseCanonicalProfessor(getProfessorIdentityCluster(prof)) || prof;
+                        completeSuccessfulLogin({ role:'professor', id:canonical.id, name:canonical.name }, username);
+                        if (legacyPlaintext || /^[a-f0-9]{64}$/i.test(pwd.hash)) upgradePasswordWithoutBlocking(canonical, password, 'professor');
+                        return;
+                    }
+                }
+
+                const failure = recordFailedLogin(username);
+                const left = Math.max(0, LOGIN_MAX_ATTEMPTS - failure.attempts);
+                errorEl.innerText = failure.lockedUntil ? '🔒 تم إيقاف المحاولات 15 دقيقة لحماية الحساب.' : `❌ اسم المستخدم أو كلمة المرور غير صحيحة. المحاولات المتبقية: ${left}`;
+            } catch (err) {
+                console.error('خطأ تسجيل الدخول:', err);
+                errorEl.innerText = 'تعذر إكمال التحقق الآن. أعد المحاولة؛ النسخة المحلية لم تتضرر.';
+            } finally {
+                button.disabled = false;
+                button.textContent = 'دخول';
             }
-            const failure = recordFailedLogin(username);
-            const left = Math.max(0, LOGIN_MAX_ATTEMPTS - failure.attempts);
-            document.getElementById('loginError').innerText = failure.lockedUntil ? '🔒 تم إيقاف المحاولات 15 دقيقة لحماية الحساب.' : `❌ اسم المستخدم أو كلمة المرور غير صحيحة. المحاولات المتبقية: ${left}`;
         }
 
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !document.getElementById('loginPage').classList.contains('hidden')) handleLogin();
         });
 
-        function enterApp() {
+        function enterApp(restored = false) {
             document.getElementById('loginPage').classList.add('hidden');
             document.getElementById('appContainer').classList.remove('hidden');
             document.getElementById('currentUserDisplay').innerText = '👤 ' + state.currentUser.name;
-            renderAll();
-            setAutoDateRange();
+            if (restored) restoreUiState();
+            try { renderAll(); setAutoDateRange(); }
+            catch (err) {
+                console.error('تعذر رسم الواجهة بعد الدخول:', err);
+                setSyncStatus('⚠️ تم الدخول، لكن تعذر عرض جزء من الواجهة. أعد تحميل الصفحة.', '#b45309');
+            }
             lastSessionActivity = Date.now();
             clearInterval(sessionTimer);
-            sessionTimer = setInterval(() => {
-                if (state.currentUser && Date.now() - lastSessionActivity >= SESSION_TIMEOUT_MS) {
-                    logout(true);
-                }
-            }, 30000);
+            if (!state.currentUser.persistent) {
+                sessionTimer = setInterval(() => {
+                    if (state.currentUser && Date.now() - lastSessionActivity >= SESSION_TIMEOUT_MS) logout(true);
+                }, 30000);
+            }
         }
 
         function logout(timedOut = false) {
+            saveUiState();
             clearInterval(sessionTimer);
             sessionTimer = null;
+            clearAuthenticatedSession();
             state.currentUser = null;
             state.currentProfessorSubjectId = null;
             document.getElementById('appContainer').classList.add('hidden');
@@ -1576,7 +2218,13 @@
         }
 
         ['click','keydown','touchstart'].forEach(eventName => document.addEventListener(eventName, () => {
-            if (state.currentUser) lastSessionActivity = Date.now();
+            if (state.currentUser) {
+                lastSessionActivity = Date.now();
+                if (state.currentUser.persistent && Date.now() - lastSessionPersistAt > 60000) {
+                    lastSessionPersistAt = Date.now();
+                    saveAuthenticatedSession(state.currentUser, true);
+                }
+            }
         }, { passive:true }));
 
         // ==============================================================
@@ -1605,6 +2253,7 @@
         function importStudentsFromExcel(event) {
             const file = event.target.files[0];
             if (!file) return;
+            if (!requireOptionalLibrary(() => typeof XLSX !== 'undefined', 'Excel')) { event.target.value=''; return; }
             const statusDiv = document.getElementById('excelImportStatus');
             statusDiv.textContent = '⏳ جاري قراءة ملف Excel الموحد...';
 
@@ -1701,7 +2350,7 @@
                     renderAll();
                     statusDiv.textContent = `${ok?'✅':'⚠️'} تمت المعالجة: ${added} جديد، ${updated} مُحدّث، ${transferred} تغيير توزيع، ${skipped} دون تغيير، ${errors.length} خطأ.`;
                     if (errors.length) statusDiv.textContent += ` ⚠️ ${errors.slice(0,8).join('؛ ')}${errors.length>8?' ...':''}`;
-                    alert(`${ok?'✅ اكتملت معالجة ملف Excel.':'⚠️ تمت المعالجة محلياً وتعذر حفظ آخر تعديل في السحابة.'}\nجديد: ${added}\nمحدّث: ${updated}\nتغيير توزيع: ${transferred}\nدون تغيير: ${skipped}\nأخطاء: ${errors.length}`);
+                    alert(`${ok?'✅ اكتملت معالجة ملف Excel.':'🟠 تمت المعالجة وحُفظت محليا؛ ستُزامن تلقائيا عند عودة الاتصال.'}\nجديد: ${added}\nمحدّث: ${updated}\nتغيير توزيع: ${transferred}\nدون تغيير: ${skipped}\nأخطاء: ${errors.length}`);
                 } catch (err) {
                     console.error(err);
                     statusDiv.textContent = '❌ خطأ: ' + err.message;
@@ -1713,6 +2362,7 @@
         }
 
         function downloadUnifiedStudentsExcel() {
+            if (!requireOptionalLibrary(() => typeof XLSX !== 'undefined', 'Excel')) return;
             try {
                 ensureStudentGroupingModel();
                 const rows = [...state.students]
@@ -2526,9 +3176,15 @@
             const {entries,stats}=buildReminderSchedulePayload();
             const map={}; entries.forEach((x,i)=>{const key=String(x.id||`lecture_${i}`).replace(/[.#$\[\]\/]/g,'_');map[key]=x;});
             const config=getLectureReminderConfig();
+            if(!database) {
+                renderLectureReminderStatus(stats,'الاتصال السحابي غير متاح حاليا؛ ستبقى إعداداتك محفوظة محليا.');
+                scheduleCloudRetry();
+                if(showAlert) alert('🟠 لا يوجد اتصال سحابي الآن. الإعدادات محفوظة محليا وستتم المحاولة تلقائيا عند عودة الاتصال.');
+                return false;
+            }
             try {
-                await database.ref('/lectureReminderSchedule').set(map);
-                await database.ref('/lectureReminderConfig/global').set({...config,updatedAt:firebase.database.ServerValue.TIMESTAMP});
+                await withTimeout(database.ref('/lectureReminderSchedule').set(map), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة رفع جدول التذكيرات');
+                await withTimeout(database.ref('/lectureReminderConfig/global').set({...config,updatedAt:firebase.database.ServerValue.TIMESTAMP}), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ إعدادات التذكيرات');
                 renderLectureReminderStatus(stats);
                 if(showAlert) alert(`✅ تمت مزامنة ${stats.total} محاضرة.\nالجاهزة للإرسال: ${stats.ready}\nغير المطابقة: ${stats.unmatched}\nبدون رقم: ${stats.missingPhone}\nبدون موافقة: ${stats.noConsent}`);
                 return true;
@@ -2746,6 +3402,14 @@
                 (state.subjects||[]).forEach(s=>{if(ids.has(String(s.professorId)) && String(s.professorId)!==String(canonical.id)){s.professorId=canonical.id;changed=true;}});
                 (state.submissions||[]).forEach(x=>{if(ids.has(String(x.professorId)) && String(x.professorId)!==String(canonical.id)){x.professorId=canonical.id;x.professorName=canonical.name;changed=true;}});
                 (state.notifications||[]).forEach(x=>{if(ids.has(String(x.professorId)) && String(x.professorId)!==String(canonical.id)){x.professorId=canonical.id;changed=true;}});
+                if(state.currentUser?.role==='professor' && ids.has(String(state.currentUser.id))){
+                    if(String(state.currentUser.id)!==String(canonical.id) || state.currentUser.name!==canonical.name){
+                        state.currentUser.id=canonical.id;
+                        state.currentUser.name=canonical.name;
+                        saveAuthenticatedSession(state.currentUser,!!state.currentUser.persistent);
+                        changed=true;
+                    }
+                }
                 const nextAliasIds=[...new Set([...(canonical.aliasProfessorIds||[]),...cluster.filter(x=>x!==canonical).map(x=>String(x.id))])];
                 if(JSON.stringify(nextAliasIds)!==JSON.stringify(canonical.aliasProfessorIds||[])){canonical.aliasProfessorIds=nextAliasIds;changed=true;}
                 if(profile){
@@ -2823,24 +3487,36 @@
             const profile=getProfessorProfile(prof,true);
             mergeLegacyProfessorDataIntoProfile(prof,profile);
             canonicalizeProfessorReferences();
+            await persistLocalState('professor-identity',true);
+            if(!database){
+                scheduleCloudRetry();
+                return {...profile,_cloudSaved:false,_localSaved:true};
+            }
             const cluster=getProfessorIdentityCluster(prof);
             const profileBase=mapsById(lastSyncedCollections.professorProfiles||[]).get(String(profile.id));
             const professorBase=mapsById(lastSyncedCollections.professors||[]);
             const changes=[{name:'professorProfiles',id:String(profile.id),before:profileBase,after:{...profile,id:profile.id}}];
             (cluster.length?cluster:[prof]).forEach(p=>changes.push({name:'professors',id:String(p.id),before:professorBase.get(String(p.id)),after:{...p,id:p.id}}));
-            const conflicts=await commitFirebaseChanges(changes);
-            if(conflicts.length) throw new Error('عُدّل ملف الأستاذ من جهاز آخر. تم إيقاف الحفظ لتجنب استبدال التعديل الأحدث. حدّث الصفحة ثم أعد المحاولة.');
-            const [profileSnap, profsSnap, profilesSnap]=await Promise.all([
-                database.ref(`/professorProfiles/${firebaseRecordKey(profile.id)}`).once('value'),
-                database.ref('/professors').once('value'),
-                database.ref('/professorProfiles').once('value')
-            ]);
-            if(!profileSnap.exists()) throw new Error('فشل التحقق من ملف الأستاذ بعد الحفظ');
-            state.professors=normalizeCollection(profsSnap.val(),'professors');
-            state.professorProfiles=normalizeCollection(profilesSnap.val(),'professorProfiles');
-            lastSyncedCollections.professors=JSON.parse(JSON.stringify(state.professors));
-            lastSyncedCollections.professorProfiles=JSON.parse(JSON.stringify(state.professorProfiles));
-            return profileSnap.val();
+            try{
+                const conflicts=await commitFirebaseChanges(changes);
+                if(conflicts.length) return {...profile,_cloudSaved:false,_localSaved:true,_conflict:true};
+                const [profileSnap, profsSnap, profilesSnap]=await Promise.all([
+                    withTimeout(database.ref(`/professorProfiles/${firebaseRecordKey(profile.id)}`).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق من ملف الأستاذ'),
+                    withTimeout(database.ref('/professors').once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تحديث الأساتذة'),
+                    withTimeout(database.ref('/professorProfiles').once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تحديث ملفات الأساتذة')
+                ]);
+                if(!profileSnap.exists()) throw new Error('فشل التحقق من ملف الأستاذ بعد الحفظ');
+                state.professors=normalizeCollection(profsSnap.val(),'professors');
+                state.professorProfiles=normalizeCollection(profilesSnap.val(),'professorProfiles');
+                lastSyncedCollections.professors=JSON.parse(JSON.stringify(state.professors));
+                lastSyncedCollections.professorProfiles=JSON.parse(JSON.stringify(state.professorProfiles));
+                await persistLocalState('professor-identity-cloud',true);
+                return {...profileSnap.val(),_cloudSaved:true,_localSaved:true};
+            }catch(err){
+                console.error('تعذر الرفع الفوري لملف الأستاذ:',err);
+                scheduleCloudRetry();
+                return {...profile,_cloudSaved:false,_localSaved:true,_error:String(err.message||err)};
+            }
         }
 
         function refreshProfessorIdentityViews(levelHint=null){
@@ -2872,8 +3548,8 @@
                 const verified=normalizeWhatsAppNumber(verifyRaw)===normalized && !!savedProfile.whatsappOptIn===!!optInput?.checked;
                 if(!verified) throw new Error('البيانات المقروءة بعد الحفظ لا تطابق البيانات المدخلة');
                 refreshProfessorIdentityViews(levelHint);
-                if(getScheduleLink()?.snapshot?.structuredSchedule) await publishLectureReminderSchedule(false);
-                alert('✅ تم حفظ رقم الأستاذ والتحقق منه في السحابة.');
+                if(savedProfile._cloudSaved && getScheduleLink()?.snapshot?.structuredSchedule) await publishLectureReminderSchedule(false);
+                alert(savedProfile._cloudSaved ? '✅ تم حفظ رقم الأستاذ محليا وسحابيا والتحقق منه.' : '🟠 تم حفظ رقم الأستاذ في هذا المتصفح وسيُرفع تلقائيا عند عودة الاتصال.');
                 return true;
             }catch(err){
                 console.error('تعذر حفظ ملف الأستاذ:',err);
@@ -3368,6 +4044,11 @@
                 </div>`;
             setTimeout(()=>{
                 const canvas=document.getElementById(canvasId); if(!canvas)return;
+                if(typeof Chart==='undefined'){
+                    const holder=canvas.parentElement;
+                    if(holder) holder.innerHTML='<p style="color:#b45309;text-align:center;padding:12px;">تعذر تحميل الرسم البياني حاليا؛ الأرقام والتقارير ما زالت متاحة.</p>';
+                    return;
+                }
                 if(state.chartInstance){ state.chartInstance.destroy(); state.chartInstance=null; }
                 state.chartInstance=new Chart(canvas.getContext('2d'),{
                     type:'bar', data:{labels,datasets:[{label:'ساعات الغياب',data:dataValues,backgroundColor:colors,borderColor:'#2d3748',borderWidth:1}]},
@@ -3463,7 +4144,7 @@
             const pass = prompt(`أدخل كلمة مرور جديدة للأستاذ ${prof.name}:`);
             if (pass === null) return false;
             const clean = String(pass).trim();
-            if (clean.length < 4) { alert('كلمة المرور يجب أن تكون 4 محارف على الأقل.'); return false; }
+            if (clean.length < 8) { alert('كلمة المرور الجديدة يجب أن تكون 8 محارف على الأقل.'); return false; }
             const hash=await hashPasswordSecure(clean);
             propagateProfessorPassword(prof,hash);
             recordAudit('تعيين/تغيير كلمة مرور أستاذ', { professorId: prof.id, professorName: prof.name });
@@ -3471,7 +4152,7 @@
                 const savedProfile=await persistProfessorIdentityCritical(prof);
                 if(String(savedProfile.passwordHash||'')!==hash) throw new Error('فشل التحقق من كلمة المرور بعد الحفظ');
                 refreshProfessorIdentityViews(levelHint);
-                alert('✅ تم تعيين كلمة المرور والتحقق من حفظها في السحابة.');
+                alert(savedProfile._cloudSaved ? '✅ تم تعيين كلمة المرور وحفظها محليا وسحابيا.' : '🟠 تم تعيين كلمة المرور وحفظها في هذا المتصفح، وستُرفع تلقائيا عند عودة الاتصال.');
                 return true;
             }catch(err){
                 console.error('تعذر تثبيت كلمة مرور الأستاذ:',err);
@@ -3488,7 +4169,8 @@
             const whatsappOptIn = !!document.getElementById('newProfWhatsAppOptIn')?.checked;
             const level = parseInt(document.getElementById('newProfLevel').value);
             if (!name || !pass) { alert('يرجى إدخال اسم الأستاذ وكلمة المرور'); return; }
-            if (state.professors.find(p => p.name === name)) { alert('هذا الأستاذ موجود مسبقاً'); return; }
+            if (pass.length < 8) { alert('كلمة مرور الأستاذ يجب أن تكون 8 محارف على الأقل.'); return; }
+            if (state.professors.find(p => normalizeLoginIdentifier(p.name) === normalizeLoginIdentifier(name))) { alert('هذا الأستاذ أو اسم مطابق له موجود مسبقاً'); return; }
             const id = makeId('p');
             if (phone && !/^\d{8,15}$/.test(phoneNormalized)) { alert('رقم واتساب الأستاذ غير صالح'); return; }
             const hashedPass = await hashPasswordSecure(pass);
@@ -3649,7 +4331,8 @@
             const phoneNormalized = normalizeWhatsAppNumber(phone);
             const whatsappOptIn = !!document.getElementById('newProfWhatsAppOptInLevel')?.checked;
             if (!name || !pass) { alert('يرجى إدخال اسم الأستاذ وكلمة المرور'); return; }
-            if (state.professors.find(p => p.name === name)) { alert('هذا الأستاذ موجود مسبقاً'); return; }
+            if (pass.length < 8) { alert('كلمة مرور الأستاذ يجب أن تكون 8 محارف على الأقل.'); return; }
+            if (state.professors.find(p => normalizeLoginIdentifier(p.name) === normalizeLoginIdentifier(name))) { alert('هذا الأستاذ أو اسم مطابق له موجود مسبقاً'); return; }
             const id = makeId('p');
             if (phone && !/^\d{8,15}$/.test(phoneNormalized)) { alert('رقم واتساب الأستاذ غير صالح'); return; }
             const hashedPass = await hashPasswordSecure(pass);
@@ -3833,7 +4516,7 @@
 
             let msg = `✅ تمت مزامنة ربط الطلبة بالمواد.\n➕ روابط حالية مضافة: ${result.added}\n🧹 روابط قديمة غير فعالة أزيلت: ${result.removed}`;
             if (!result.added && !result.removed) msg = '📌 جميع الطلبة مرتبطون حالياً بالمواد المناسبة ولا توجد روابط قديمة تحتاج تنظيفاً.';
-            if (!ok) msg += '\n⚠️ تعذر حفظ آخر تغيير في السحابة.';
+            if (!ok) msg += '\n🟠 حُفظ آخر تغيير محليا وسيُرفع تلقائيا عند عودة الاتصال.';
             alert(msg);
             return result;
         }
@@ -4147,6 +4830,7 @@
         }
 
         function exportFilteredStatusExcel() {
+            if (!requireOptionalLibrary(() => typeof XLSX !== 'undefined', 'Excel')) return;
             const level=state.currentLevel;
             if (!level) return;
             const filter=state.officerStatusFilter||'الكل';
@@ -4163,6 +4847,7 @@
         }
 
         function exportFilteredStatusPDF() {
+            if (!requireOptionalLibrary(() => typeof html2canvas === 'function' && !!window.jspdf?.jsPDF, 'PDF')) return;
             const level=state.currentLevel;
             const filter=state.officerStatusFilter||'الكل';
             const rows=getFilteredStatusRows(level,filter);
@@ -4393,6 +5078,20 @@
         function applyLiveWeeklyTimetable(data) {
             const link=buildLiveWeeklyTimetable(data);
             liveWeeklyTimetable=link;
+            if(link?.snapshot){
+                const cachedLink={
+                    id:'weekly_timetable',
+                    source:'Firebase المباشر — نسخة محفوظة في المتصفح',
+                    linkedAt:new Date().toISOString(),
+                    createdAt:Number(link.createdAt)||Date.now(),
+                    snapshot:link.snapshot,
+                    analysis:link.analysis,
+                    liveCache:true
+                };
+                state.scheduleLinks=(state.scheduleLinks||[]).filter(x=>x.id!=='weekly_timetable');
+                state.scheduleLinks.push(cachedLink);
+                scheduleLocalPersistence(0);
+            }
             renderWeeklyScheduleLinkStatus();
             renderLectureReminderStatus();
             refreshProfessorTimetableViews();
@@ -4402,8 +5101,9 @@
         }
 
         async function refreshWeeklyTimetableCloud(showAlert=false) {
+            if(!database){ if(showAlert)alert('الجدول المحفوظ في هذا المتصفح متاح، أما التحديث السحابي فينتظر عودة الاتصال.'); scheduleCloudRetry(); return false; }
             try {
-                const snap=await database.ref('/weeklyTimetable/published').once('value');
+                const snap=await withTimeout(database.ref('/weeklyTimetable/published').once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة قراءة الجدول السحابي');
                 if(!snap.exists()) { liveWeeklyTimetable=null; renderWeeklyScheduleLinkStatus(); renderLectureReminderStatus(); if(showAlert)alert('لا يوجد جدول منشور في السحابة بعد. أنشئ الجدول في برنامج الجدول الأسبوعي واضغط إنشاء الجداول.'); return false; }
                 applyLiveWeeklyTimetable(snap.val());
                 if(showAlert){const link=getScheduleLink();alert(`✅ تم جلب الجدول السحابي.\nالمحاضرات: ${link?.snapshot?.structuredSchedule?.lectures?.length||0}\nالأساتذة المطابقون: ${link?.analysis?.matchedProfessors||0}/${link?.analysis?.teacherTotal||0}`);}
@@ -4412,7 +5112,7 @@
         }
 
         function listenWeeklyTimetableCloud() {
-            if(weeklyTimetableListenerStarted)return; weeklyTimetableListenerStarted=true;
+            if(weeklyTimetableListenerStarted || !database)return; weeklyTimetableListenerStarted=true;
             database.ref('/weeklyTimetable/published').on('value',snap=>{
                 if(snap.exists()) applyLiveWeeklyTimetable(snap.val());
                 else { liveWeeklyTimetable=null; renderWeeklyScheduleLinkStatus(); renderLectureReminderStatus(); }
@@ -4446,8 +5146,9 @@
         }
 
         async function forceAcademicCatalogResync() {
+            if(!database){ alert('النسخة المحلية تعمل، لكن إعادة المزامنة تحتاج اتصالا بالسحابة. سيحاول النظام تلقائيا.'); scheduleCloudRetry(); return; }
             try {
-                const snap=await database.ref('/weeklyTimetable/academicCatalog').once('value');
+                const snap=await withTimeout(database.ref('/weeklyTimetable/academicCatalog').once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة قراءة بيانات الأساتذة والمواد');
                 if(!snap.exists()){ alert('لا توجد بيانات أكاديمية منشورة من برنامج الجدول حتى الآن. افتح برنامج الجدول واضغط مزامنة الأساتذة والمواد الآن.'); return; }
                 lastAcademicCatalogSignature='';
                 liveAcademicCatalog=snap.val();
@@ -4575,7 +5276,7 @@
         }
 
         function listenAcademicCatalogFromTimetable() {
-            if(academicCatalogListenerStarted)return;
+            if(academicCatalogListenerStarted || !database)return;
             academicCatalogListenerStarted=true;
             database.ref('/weeklyTimetable/academicCatalog').on('value',snap=>{
                 if(!snap.exists()){ renderAcademicCatalogSyncStatus(null); return; }
@@ -4657,6 +5358,7 @@
         }
 
         function exportSubmissionTrackingExcel() {
+            if (!requireOptionalLibrary(() => typeof XLSX !== 'undefined', 'Excel')) return;
             const level=state.currentLevel;if(!level)return;const subjects=state.subjects.filter(s=>Number(s.level)===Number(level) && s.timetableActive!==false);
             const data=subjects.map((sub,i)=>{const prof=state.professors.find(p=>p.id===sub.professorId);const st=getSubmissionState(sub);const last=st.latest;return{'#':i+1,'المادة':sub.name,'النوع':sub.groupType||'','الأستاذ':prof?.name||'غير معين','عدد الطلبة':state.students.filter(x=>studentMatchesSubject(x,sub)).length,'الحالة':st.label,'آخر إرسال':last?`${last.date||''} ${last.time||''}`:'','واتساب':last?.whatsappPreparedAt?'رسالة جاهزة':(last?.whatsappNumberConfigured===false?'لا يوجد رقم':''),'مطابقة الجدول الأسبوعي':getScheduleLink()?(subjectTimetableMatch(sub,prof)?'مطابق':'غير مطابق'):'غير مربوط'};});
             const ws=XLSX.utils.json_to_sheet(data);ws['!cols']=[{wch:5},{wch:26},{wch:12},{wch:22},{wch:12},{wch:34},{wch:22},{wch:16},{wch:20}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'متابعة الإرسال');XLSX.writeFile(wb,`متابعة_إرسال_الغيابات_${getLevelName(level)}_${getLocalDateISO()}.xlsx`);
@@ -4809,6 +5511,7 @@
         }
 
         function exportOfficerReportPDF() {
+            if (!requireOptionalLibrary(() => typeof html2canvas === 'function' && !!window.jspdf?.jsPDF, 'PDF')) return;
             const element = document.getElementById('printable-report');
             if (!element) {
                 alert('⚠️ لا يوجد تقرير لتصديره. الرجاء اختيار مرحلة أولاً.');
@@ -4867,6 +5570,7 @@
         }
 
         function exportOfficerReportExcel() {
+            if (!requireOptionalLibrary(() => typeof XLSX !== 'undefined', 'Excel')) return;
             const level = state.currentLevel;
             if (!level) { alert('الرجاء اختيار مرحلة أولاً'); return; }
             const matchingStudentIds = getStudentsMatchingStatus(level, state.officerStatusFilter);
@@ -4903,7 +5607,7 @@
         // ==============================================================
         function getProfessorSubjects() {
             const profId = state.currentUser?.id;
-            return state.subjects.filter(s => s.professorId === profId && s.timetableActive !== false).sort((a,b) => String(a.name||'').localeCompare(String(b.name||''),'ar'));
+            return state.subjects.filter(s => String(s.professorId || '') === String(profId || '') && s.timetableActive !== false).sort((a,b) => String(a.name||'').localeCompare(String(b.name||''),'ar'));
         }
 
         function getProfessorSubject() {
@@ -4919,6 +5623,7 @@
             const allowed = getProfessorSubjects().some(s => s.id === subjectId);
             if (!allowed) return;
             state.currentProfessorSubjectId = subjectId;
+            saveUiState();
             renderProfessor();
         }
 
@@ -5750,7 +6455,7 @@
         // ==============================================================
         //  INITIALIZATION
         // ==============================================================
-        console.log('🏛️ نظام الغيابات Master V20 - جلسات متعددة + سياسات واضحة + مزامنة محمية من التعارض');
+        console.log('🏛️ نظام الغيابات Master V21 - تشغيل محلي دائم + مزامنة سحابية مرنة + جلسات مستعادة');
 
         document.addEventListener('change', function(e) {
             if (e.target.id === 'reportDateFrom' || e.target.id === 'reportDateTo') {
@@ -5759,14 +6464,8 @@
             }
         });
 
-        // تحميل البيانات أولًا ثم تشغيل المستمعات، لمنع ضياع أول حدث مزامنة أثناء الإقلاع.
-        loadFromFirebase().then(()=>{
-            listenToFirebase();
-            // بيانات الأساتذة والمواد والساعات تأتي لحظيًا من برنامج الجدول حتى قبل نشر السيناريو النهائي.
-            listenAcademicCatalogFromTimetable();
-            // أوقات المحاضرات المنشورة تبقى في مسار مستقل للتذكيرات والمتابعة.
-            listenWeeklyTimetableCloud();
-        });
+        // يبدأ من النسخة المحلية فوراً؛ الاتصال السحابي لا يعطل الدخول أو فتح الجدول.
+        applicationBootstrapPromise = bootstrapApplication();
 
     </script>
 </body>
