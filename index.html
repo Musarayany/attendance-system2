@@ -319,7 +319,7 @@
         .filtered-status-table td,.filtered-status-table th { font-size:11px; }
 
 
-        /* ===== Master V28: واجهة رئيس القسم المنظمة ===== */
+        /* ===== Master V29: واجهة رئيس القسم المنظمة ===== */
         .admin-clean-toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
         .admin-health{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
         .admin-health-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:#fff;border:1px solid #d7e1ea;font-size:10px;font-weight:800;color:#334155}
@@ -340,7 +340,7 @@
         .prof-status-chip.warn{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
         @media(max-width:700px){.admin-clean-toolbar button{flex:1 1 44%}.admin-fold-body{padding:6px}}
 
-        /* ===== Master V28: واجهة موحدة لبيانات الأستاذ ===== */
+        /* ===== Master V29: واجهة موحدة لبيانات الأستاذ ===== */
         .prof-editor-row{display:grid;grid-template-columns:minmax(180px,1.25fr) minmax(170px,.9fr) minmax(155px,.85fr) minmax(150px,.8fr) minmax(180px,1fr);gap:8px;align-items:center;padding:8px 6px;border-bottom:1px solid #e2e8f0;background:#fff}
         .prof-editor-row:nth-child(even){background:#fbfdff}
         .prof-editor-name{font-weight:900;color:#1f2937;font-size:12px}.prof-editor-sub{font-size:9.5px;color:#64748b;margin-top:2px}
@@ -832,7 +832,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '28.0';
+        const APP_VERSION = '29.0';
         const SCHEMA_VERSION = 14;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -1005,7 +1005,7 @@
         let attendanceToastTimer = null;
         let attendanceMutationBusy = false; // مخصص للعمليات الجماعية فقط
         let attendancePersistenceQueue = Promise.resolve(true);
-        // V26: يحمي الحذف المحلي من أن تعيده لقطة سحابية متأخرة. القيم مؤقتة ولا تغيّر بنية قاعدة البيانات.
+        // V29: حارس توافق قديم للحذف؛ النسخة الجديدة تحتفظ بالسجلات المكررة كمتجاوزة للتدقيق، والإلغاء الوظيفي يُسجّل كحضور صريح.
         const attendanceDeletionGuards = new Map();
         const OFFICER_WHATSAPP_FALLBACK_KEY = 'attendance_officer_whatsapp_v21';
 
@@ -1646,51 +1646,97 @@
                 return changed;
             }
 
-            // الغيابات حساسة للترتيب الزمني. قد تصل لقطة Firebase قديمة بعد تعديل أحدث محلياً،
-            // لذلك لا نسمح أبداً لسجل أقدم أن يعيد الطالب إلى حالته السابقة.
+            // الغيابات حساسة للترتيب الزمني ولوجود نسخ قديمة متعددة للمحاضرة نفسها.
+            // الأولوية لأي تعديل محلي غير مرفوع بعد، ثم تُوحّد المحاضرة منطقياً حتى لا يستطيع سجل قديم بمعرّف آخر إرجاع الحالة.
             if (name === 'attendances') {
                 const now = Date.now();
-                // نظف حراس الحذف القديمة بعد 10 دقائق؛ يكفي لتجاوز لقطات الشبكة المتأخرة.
                 for (const [id,ts] of attendanceDeletionGuards.entries()) {
-                    if (now - Number(ts || 0) > 10 * 60 * 1000) attendanceDeletionGuards.delete(id);
+                    if (now - Number(ts || 0) > 60 * 60 * 1000) attendanceDeletionGuards.delete(id);
                 }
+
+                const dirtyLogical=new Map();
+                local.forEach((l,id)=>{
+                    if(isEnrollmentRecord(l) || l?.superseded===true) return;
+                    const b=base.get(id);
+                    if(!sameRecord(l,b)){
+                        const key=attendanceLogicalKeyFromRecord(l);
+                        const cur=dirtyLogical.get(key);
+                        if(key && (!cur || attendanceRecordRevision(l)>=attendanceRecordRevision(cur))) dirtyLogical.set(key,l);
+                    }
+                });
+
                 const ids = new Set([...remote.keys(), ...local.keys(), ...base.keys(), ...attendanceDeletionGuards.keys()]);
                 ids.forEach(id => {
                     const l = local.get(id);
                     const r = remote.get(id);
                     const b = base.get(id);
                     const deletedAt = Number(attendanceDeletionGuards.get(id) || 0);
+                    const localDirty=!sameRecord(l,b);
 
                     if (!l && deletedAt) {
-                        // إذا كان الحذف المحلي أحدث من النسخة السحابية، لا تعيد السجل للحياة.
-                        const remoteRev = r ? attendanceRecordRevision(r) : 0;
-                        if (!r || deletedAt >= remoteRev) remote.delete(id);
-                        else attendanceDeletionGuards.delete(id);
+                        // حذف تقني لنسخة مكررة: لا تسمح للسحابة بإعادتها أثناء التنظيف.
+                        remote.delete(id);
                         return;
                     }
                     if (l && r) {
+                        // أهم قاعدة: ما دام السجل عُدّل محلياً ولم يصبح جزءاً من خط الأساس، لا يمكن للقطة سحابية أن ترجعه.
+                        if(localDirty){ remote.set(id,l); return; }
                         const localRev = attendanceRecordRevision(l);
                         const remoteRev = attendanceRecordRevision(r);
                         if (localRev > remoteRev) remote.set(id, l);
-                        else if (localRev === remoteRev && !sameRecord(l, r)) {
-                            // عند تساوي الزمن نفضّل التعديل المحلي إذا كان ما زال مختلفاً عن خط الأساس.
-                            if (!sameRecord(l, b)) remote.set(id, l);
-                        }
                         return;
                     }
                     if (l && !r) {
-                        // سجل محلي جديد أو تعديل لم يصل للسحابة بعد.
-                        if (!sameRecord(l, b) || attendanceRecordRevision(l) >= attendanceRecordRevision(b || {})) remote.set(id, l);
+                        if(localDirty) remote.set(id,l); // سجل جديد/تعديل محلي لم يُرفع بعد.
+                        // إذا كان السجل المحلي مطابقاً لخط الأساس وحُذف سحابياً، نقبل الحذف السحابي.
                         return;
                     }
-                    if (!l && r && b && !sameRecord(r, b)) {
-                        // حذف محلي غير مسجّل بحارس (حالة قديمة): حافظ على الحذف ما دام الخط الأساسي كان يحتوي السجل.
-                        // لا ينطبق على سجل جديد قادم من جهاز آخر لأن b سيكون فارغاً.
+                    if (!l && r && b) {
+                        // سجل كان في خط الأساس ثم اختفى محلياً: نعتبر ذلك إلغاءً سابقاً ونحوّله إلى حضور صريح
+                        // بدلاً من حذفه أو السماح للسحابة بإحياء الغياب. هذا يحفظ السجل التاريخي نفسه.
+                        const cancelAt=Math.max(now,attendanceRecordRevision(r)+1);
+                        remote.set(id,{...r,hours:0,excused:0,cancelled:true,cancelledAt:cancelAt,updatedAt:cancelAt,explicitState:'present',source:'migrated-local-deletion'});
                         return;
                     }
                 });
-                const changed = local.size !== remote.size || [...remote.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
-                state[name] = Array.from(remote.values());
+
+                // توحيد المحاضرة منطقياً: إذا وصل سجل قديم بمعرّف مختلف لنفس الطالب/المادة/الوقت،
+                // يربح التعديل المحلي المعلّق أولاً؛ وإلا يربح أحدث سجل فقط.
+                const grouped=new Map();
+                const passthrough=[];
+                for(const rec of remote.values()){
+                    if(isEnrollmentRecord(rec) || attendanceRecordSessionKey(rec)==='legacy') { passthrough.push(rec); continue; }
+                    const key=attendanceLogicalKeyFromRecord(rec);
+                    if(!grouped.has(key)) grouped.set(key,[]);
+                    grouped.get(key).push(rec);
+                }
+                const merged=[...passthrough];
+                grouped.forEach((records,key)=>{
+                    const preferred=dirtyLogical.get(key);
+                    let winner=null;
+                    if(preferred) winner=preferred;
+                    else winner=chooseLatestAttendanceRecord(records);
+                    records.forEach(rec=>{
+                        if(!winner) return;
+                        if(String(rec.id)===String(winner.id)){
+                            const active={...winner};
+                            delete active.superseded; delete active.supersededBy; delete active.supersededAt;
+                            merged.push(active);
+                        } else {
+                            // احتفظ بالسجل القديم كما هو، لكن علّمه بأنه متجاوز حتى لا يدخل في الحالة أو التقارير.
+                            merged.push({...rec,superseded:true,supersededBy:String(winner.id),supersededAt:Number(rec.supersededAt)||now});
+                        }
+                    });
+                    // قد يكون التعديل المحلي المفضل جديداً وغير موجود في لقطة remote بعد.
+                    if(winner && !records.some(r=>String(r.id)===String(winner.id))){
+                        const active={...winner}; delete active.superseded; delete active.supersededBy; delete active.supersededAt; merged.push(active);
+                    }
+                });
+
+                const mergedMap=mapsById(merged);
+                const changed = local.size !== mergedMap.size || [...mergedMap.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
+                state[name] = Array.from(mergedMap.values());
+                // نحتفظ باللقطة الخام كخط أساس حتى تُرفع تعديلات هذا الجهاز وتنظيف التكرارات فعلياً.
                 lastSyncedCollections[name] = remoteArr;
                 return changed;
             }
@@ -3059,6 +3105,28 @@
             return explicit || attendanceSessionKey(attendance?.sessionTime);
         }
 
+        // هوية منطقية ثابتة للمحاضرة: طالب + مادة + تاريخ + وقت.
+        // تمنع إنشاء سجلين مختلفين لنفس المحاضرة عند العمل من أكثر من جهاز/نسخة.
+        function attendanceLogicalSessionKey(studentId, subjectId, date, sessionTime) {
+            return [String(studentId||''),String(subjectId||''),String(date||''),attendanceSessionKey(sessionTime)].join('|');
+        }
+
+        function attendanceLogicalKeyFromRecord(attendance) {
+            if(!attendance || isEnrollmentRecord(attendance)) return '';
+            const sessionKey=attendanceRecordSessionKey(attendance);
+            if(sessionKey==='legacy') return `legacy|${String(attendance.id||'')}`;
+            return [String(attendance.studentId||''),String(attendance.subjectId||''),String(attendance.date||''),sessionKey].join('|');
+        }
+
+        function firebaseSafeAttendancePart(value) {
+            return encodeURIComponent(String(value ?? '')).replace(/\./g,'%2E');
+        }
+
+        function attendanceCanonicalId(studentId, subjectId, date, sessionTime) {
+            const key=attendanceLogicalSessionKey(studentId,subjectId,date,sessionTime);
+            return `attendance_${firebaseSafeAttendancePart(key)}`;
+        }
+
         function formatMinutes24(totalMinutes) {
             const value = Math.max(0, Math.min(1439, Number(totalMinutes) || 0));
             return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
@@ -3156,7 +3224,9 @@
         }
 
         function chooseLatestAttendanceRecord(records=[]) {
-            return [...records].sort((a,b)=>attendanceRecordRevision(b)-attendanceRecordRevision(a) || String(b.id||'').localeCompare(String(a.id||'')))[0] || null;
+            const active=(records||[]).filter(r=>r?.superseded!==true);
+            const pool=active.length?active:(records||[]);
+            return [...pool].sort((a,b)=>attendanceRecordRevision(b)-attendanceRecordRevision(a) || String(b.id||'').localeCompare(String(a.id||'')))[0] || null;
         }
 
         // يعرض/يحسب كل محاضرة مرة واحدة فقط. السجلات القديمة التي بلا وقت تبقى منفصلة حفاظاً على التاريخ.
@@ -3164,7 +3234,7 @@
             const passthrough=[];
             const sessions=new Map();
             (records||[]).forEach(att=>{
-                if(isEnrollmentRecord(att)) return;
+                if(isEnrollmentRecord(att) || att?.superseded===true) return;
                 const sessionKey=attendanceRecordSessionKey(att);
                 if(sessionKey==='legacy') { passthrough.push(att); return; }
                 const key=[String(att.studentId||''),String(att.subjectId||''),String(att.date||''),sessionKey].join('|');
@@ -3191,7 +3261,7 @@
 
         function findCrossSubjectAttendanceConflicts(studentId, subjectId, date, sessionTime) {
             const key=attendanceSessionKey(sessionTime);
-            return state.attendances.filter(att=>!isEnrollmentRecord(att)&&String(att.studentId)===String(studentId)&&String(att.subjectId)!==String(subjectId)&&String(att.date)===String(date)&&attendanceRecordSessionKey(att)===key);
+            return state.attendances.filter(att=>!isEnrollmentRecord(att)&&att?.superseded!==true&&String(att.studentId)===String(studentId)&&String(att.subjectId)!==String(subjectId)&&String(att.date)===String(date)&&attendanceRecordSessionKey(att)===key);
         }
 
         function attendanceProvenance(meta={}) {
@@ -3211,36 +3281,66 @@
 
         function makeAttendanceRecord(studentId, subjectId, date, sessionTime, hours, excused, meta={}) {
             const normalizedTime = normalizeSessionTime(sessionTime);
+            const now=Date.now();
             return {
-                id: makeId('a'), studentId, subjectId, date,
+                id: attendanceCanonicalId(studentId,subjectId,date,normalizedTime), studentId, subjectId, date,
                 sessionTime: normalizedTime,
                 sessionKey: attendanceSessionKey(normalizedTime),
                 hours: Number(hours) || 0,
                 excused: Number(excused) === 1 ? 1 : 0,
                 ...attendanceProvenance(meta),
-                createdAt: Date.now()
+                createdAt: now,
+                updatedAt: now
             };
         }
 
         function upsertAttendanceState(studentId, subject, context, hours, excused, source='professor-panel') {
             const records=findAttendanceRecordsForSession(studentId,subject.id,context.date,context.sessionTime);
-            const ordered=[...records].sort((a,b)=>Number(b.updatedAt||b.createdAt||0)-Number(a.updatedAt||a.createdAt||0));
-            let record=ordered[0]||null;
-            const duplicateIds=new Set(ordered.slice(1).map(r=>String(r.id)));
-            if(duplicateIds.size){
-                const deletionStamp=Date.now();
-                duplicateIds.forEach(id=>attendanceDeletionGuards.set(String(id),deletionStamp));
-                state.attendances=state.attendances.filter(a=>!duplicateIds.has(String(a.id)));
-            }
+            const ordered=[...records].sort((a,b)=>attendanceRecordRevision(b)-attendanceRecordRevision(a) || String(b.id||'').localeCompare(String(a.id||'')));
+            const previous=ordered[0]||null;
+            const canonicalId=attendanceCanonicalId(studentId,subject.id,context.date,context.sessionTime);
+            const duplicateIds=new Set(ordered.filter(r=>String(r.id)!==String(canonicalId)).map(r=>String(r.id)));
             const nextHours=Math.max(0,Number(hours)||0),nextExcused=nextHours>0&&Number(excused)===1?1:0;
             const meta={professorId:subject.professorId,source,lectureId:context.lectureId,groupName:context.groupName,schedulePublishedAt:context.schedulePublishedAt,scheduleVerified:!!context.lectureId,manualOverride:!!context.manualOverride};
-            let changed=duplicateIds.size>0;
-            if(!record){record=makeAttendanceRecord(studentId,subject.id,context.date,context.sessionTime,nextHours,nextExcused,meta);state.attendances.push(record);changed=true;}
-            else {
-                changed=changed||Number(record.hours)!==nextHours||Number(record.excused)!==nextExcused||normalizeSessionTime(record.sessionTime)!==context.sessionTime||String(record.lectureId||'')!==String(context.lectureId||'');
-                record.hours=nextHours;record.excused=nextExcused;record.sessionTime=context.sessionTime;record.sessionKey=attendanceSessionKey(context.sessionTime);
-                Object.assign(record,attendanceProvenance(meta),{updatedAt:Date.now(),lastUpdatedById:String(state.currentUser?.id||''),lastUpdatedByName:sanitizeText(state.currentUser?.name||'',120)});
+            const now=Date.now();
+            let record=state.attendances.find(a=>String(a.id)===String(canonicalId));
+            const beforeHours=Number(previous?.hours)||0;
+            const beforeExcused=Number(previous?.excused)||0;
+            const beforeTime=normalizeSessionTime(previous?.sessionTime);
+            const beforeLecture=String(previous?.lectureId||'');
+
+            // لا نحذف النسخ القديمة: نعلّمها كسجلات متجاوزة ونحتفظ بها للتدقيق التاريخي.
+            if(duplicateIds.size){
+                state.attendances.forEach(a=>{
+                    if(duplicateIds.has(String(a.id))){
+                        a.superseded=true;
+                        a.supersededBy=canonicalId;
+                        a.supersededAt=now;
+                        a.updatedAt=Math.max(Number(a.updatedAt)||0,now);
+                    }
+                });
             }
+
+            if(!record){
+                record=previous ? {...previous,id:canonicalId} : makeAttendanceRecord(studentId,subject.id,context.date,context.sessionTime,nextHours,nextExcused,meta);
+                if(!state.attendances.some(a=>String(a.id)===String(canonicalId))) state.attendances.push(record);
+            }
+            record.studentId=studentId;
+            record.subjectId=subject.id;
+            record.date=context.date;
+            record.hours=nextHours;
+            record.excused=nextExcused;
+            record.sessionTime=context.sessionTime;
+            record.sessionKey=attendanceSessionKey(context.sessionTime);
+            record.createdAt=Number(record.createdAt)||Number(previous?.createdAt)||now;
+            delete record.superseded; delete record.supersededBy; delete record.supersededAt;
+            Object.assign(record,attendanceProvenance(meta),{
+                updatedAt:now,
+                lastUpdatedById:String(state.currentUser?.id||''),
+                lastUpdatedByName:sanitizeText(state.currentUser?.name||'',120),
+                explicitState:nextHours>0?'absent':'present'
+            });
+            const changed=duplicateIds.size>0 || !previous || beforeHours!==nextHours || beforeExcused!==nextExcused || beforeTime!==context.sessionTime || beforeLecture!==String(context.lectureId||'') || String(previous?.id||'')!==String(canonicalId);
             return {record,changed,duplicateCount:duplicateIds.size};
         }
 
@@ -6868,23 +6968,21 @@
             if (!confirm(`إزالة غياب الطالب «${student.name}» من محاضرة ${context.displayTime}؟
 
 سيُلغى تسجيل هذه المحاضرة فقط، ولن تتأثر غياباته الأخرى.`)) return;
-            // احذف كل النسخ المكررة لنفس الطالب/المادة/التاريخ/وقت المحاضرة، لا أول سجل فقط.
-            const ids = new Set(records.map(r => String(r.id)));
+            // لا نحذف السجل: نسجل «حاضر» كحالة صريحة أحدث لنفس المحاضرة.
+            // بهذه الطريقة لا تستطيع نسخة Firebase قديمة إعادة الغياب بعد الإلغاء.
             const removedHours = absentRecords.reduce((sum,r)=>sum+getAttendanceEffectiveHours(r,sub),0);
-            const deletionStamp=Date.now();
-            ids.forEach(id=>attendanceDeletionGuards.set(String(id),deletionStamp));
-            state.attendances = state.attendances.filter(a => !ids.has(String(a.id)));
-            const stillAbsent = findAttendanceRecordsForSession(student.id, sub.id, context.date, context.sessionTime).some(r=>Number(r.hours||0)>0);
-            if(stillAbsent){
+            const result=upsertAttendanceState(student.id,sub,context,0,0,'remove-absence-explicit-present');
+            const verified=findAttendanceForSession(student.id,sub.id,context.date,context.sessionTime);
+            if(!verified || Number(verified.hours)!==0){
                 showAttendanceToast(`⚠️ لم يثبت إلغاء غياب ${student.name}.`,'error');
                 return;
             }
-            recordAudit('إزالة غياب من بطاقة الطالب', {attendanceIds:[...ids],duplicatesRemoved:Math.max(0,ids.size-1),studentId:student.id,student:student.name,subjectId:sub.id,subject:sub.name,date:context.date,sessionTime:context.sessionTime,hours:removedHours});
+            recordAudit('إزالة غياب من بطاقة الطالب', {attendanceId:verified.id,duplicatesRemoved:result.duplicateCount,studentId:student.id,student:student.name,subjectId:sub.id,subject:sub.name,date:context.date,sessionTime:context.sessionTime,hoursRemoved:removedHours,newState:'present'});
             const localPromise = persistAttendanceMutation('remove-current-session-absence');
             updateProfessorStudentAttendanceRow(student.id);
             renderProfessorAttendance(sub.id);
             renderProfessorSubmissionStatus(sub);
-            showAttendanceToast(ids.size>1 ? `✅ أُلغي غياب ${student.name} وأزيل ${ids.size-1} تكرار` : `✅ تمت إزالة غياب ${student.name}`);
+            showAttendanceToast(`✅ أُلغي غياب ${student.name} وثُبت حضوره لهذه المحاضرة`);
             localPromise.catch(err=>{console.error(err);showAttendanceToast('⚠️ تعذر تحديث التخزين المحلي بعد الإلغاء.','error');});
         }
 
@@ -6953,19 +7051,26 @@
         async function deleteAttendance(attendanceId) {
             const sub=getProfessorSubject();
             if(!canProfessorEditAttendanceForSubject(sub))return;
-            if (!confirm('⚠️ هل أنت متأكد من حذف غياب هذه المحاضرة؟')) return;
+            if (!confirm('⚠️ هل أنت متأكد من إلغاء غياب هذه المحاضرة؟')) return;
             const removed = state.attendances.find(a => String(a.id) === String(attendanceId));
-            if(!removed||!sub||String(removed.subjectId)!==String(sub.id)||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح بحذف سجل لا يخص المادة الحالية.');return;}
+            if(!removed||!sub||String(removed.subjectId)!==String(sub.id)||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح بإلغاء سجل لا يخص المادة الحالية.');return;}
             const savedView=captureProfessorViewState(removed.studentId);
-            let ids=new Set([String(removed.id)]);
-            if(attendanceRecordSessionKey(removed)!=='legacy'){
-                ids=new Set(findAttendanceRecordsForSession(removed.studentId,removed.subjectId,removed.date,removed.sessionTime).map(r=>String(r.id)));
+            const normalized=normalizeSessionTime(removed.sessionTime);
+            if(normalized){
+                const student=state.students.find(st=>String(st.id)===String(removed.studentId));
+                const context={date:String(removed.date),sessionTime:normalized,groupName:student?professorGroupNameForStudent(student,sub):String(removed.lectureGroup||''),lectureId:String(removed.lectureId||''),schedulePublishedAt:removed.schedulePublishedAt||null,manualOverride:removed.manualOverride===true};
+                const result=upsertAttendanceState(removed.studentId,sub,context,0,0,'cancel-attendance-explicit-present');
+                const verified=findAttendanceForSession(removed.studentId,removed.subjectId,removed.date,normalized);
+                if(!verified || Number(verified.hours)!==0){showAttendanceToast('⚠️ لم يثبت إلغاء السجل.','error');return;}
+                recordAudit('إلغاء سجل غياب',{attendanceId:verified.id,previousAttendanceId:attendanceId,duplicatesRemoved:result.duplicateCount,studentId:removed.studentId,subjectId:removed.subjectId,date:removed.date,sessionTime:removed.sessionTime,hoursRemoved:getAttendanceEffectiveHours(removed,sub),newState:'present'});
+            } else {
+                // السجلات القديمة بلا وقت لا يمكن ربطها بمحاضرة محددة؛ نجعلها ملغاة صراحة بدلاً من حذفها.
+                removed.hours=0;removed.excused=0;removed.cancelled=true;removed.cancelledAt=Date.now();removed.updatedAt=Date.now();removed.source='cancel-legacy-attendance';
+                recordAudit('إلغاء سجل غياب قديم',{attendanceId:removed.id,studentId:removed.studentId,subjectId:removed.subjectId,date:removed.date});
             }
-            state.attendances = state.attendances.filter(a => !ids.has(String(a.id)));
-            recordAudit('حذف سجل غياب',{attendanceIds:[...ids],duplicatesRemoved:Math.max(0,ids.size-1),studentId:removed.studentId,subjectId:removed.subjectId,date:removed.date,sessionTime:removed.sessionTime,hours:removed.hours});
             const localPromise=persistAttendanceMutation('delete-attendance');
             refreshProfessorAttendanceView(savedView,removed.studentId);
-            showAttendanceToast(ids.size>1?`✅ تم حذف الغياب ومعه ${ids.size-1} سجل مكرر لنفس المحاضرة`:'✅ تم حذف السجل');
+            showAttendanceToast('✅ تم إلغاء الغياب وتثبيت الحالة الجديدة');
             localPromise.catch(err=>console.error(err));
         }
 
@@ -7372,7 +7477,7 @@
         // ==============================================================
         //  INITIALIZATION
         // ==============================================================
-        console.log('🏛️ نظام الغيابات Master V28 - ساعات مواد مستقلة + تراجع إرسال لمرة واحدة + مزامنة بلا فقد');
+        console.log('🏛️ نظام الغيابات Master V29 - تثبيت منطقي للمحاضرة + منع عودة الغياب الملغى + مزامنة بلا فقد');
 
         document.addEventListener('change', function(e) {
             if (e.target.id === 'reportDateFrom' || e.target.id === 'reportDateTo') {
