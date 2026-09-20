@@ -52,8 +52,13 @@
         .quick-mode-toggle { background: #805ad5; color: white; border: none; padding: 6px 16px; border-radius: 30px; font-weight: bold; cursor: pointer; transition: 0.3s; font-size: 14px; }
         .quick-mode-toggle.active { background: #6b46c1; box-shadow: 0 0 0 3px #d6bcf7; }
         .student-quick-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: #f7fafc; border-radius: 8px; border: 1px solid #e2e8f0; flex-wrap: wrap; justify-content: space-between; scroll-margin: 70px 0; }
-        .student-quick-item.attendance-just-updated, .student-item.attendance-just-updated { animation: attendancePulse 1.15s ease-out; }
-        @keyframes attendancePulse { 0% { box-shadow: 0 0 0 4px rgba(49,130,206,.28); background:#ebf8ff; } 100% { box-shadow:none; } }
+        /* V26: تثبيت صفوف الطلبة أثناء أخذ الغياب؛ لا إعادة تحجيم/اهتزاز عند تغيير الحالة */
+        .student-quick-item.attendance-just-updated, .student-item.attendance-just-updated { animation:none !important; }
+        .student-quick-item .btn-group { flex-wrap:nowrap; }
+        .student-quick-item .btn-group button { transform:none !important; }
+        .student-quick-item .btn-present.attendance-selected { outline:3px solid #166534; opacity:1 !important; }
+        .student-quick-item .btn-absent.attendance-selected { outline:3px solid #991b1b; opacity:1 !important; }
+        .student-quick-item .btn-present.attendance-dimmed, .student-quick-item .btn-absent.attendance-dimmed { opacity:.58; outline:none; }
         .student-quick-item .student-name { font-weight: bold; font-size: 14px; flex: 1; min-width: 80px; }
         .student-quick-item .btn-group { display: flex; gap: 4px; }
         .student-quick-item .btn-group button { min-width: 55px; padding: 4px 12px; font-size: 13px; }
@@ -314,7 +319,7 @@
         .filtered-status-table td,.filtered-status-table th { font-size:11px; }
 
 
-        /* ===== Master V21: واجهة رئيس القسم المنظمة ===== */
+        /* ===== Master V26: واجهة رئيس القسم المنظمة ===== */
         .admin-clean-toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
         .admin-health{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
         .admin-health-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:#fff;border:1px solid #d7e1ea;font-size:10px;font-weight:800;color:#334155}
@@ -335,7 +340,7 @@
         .prof-status-chip.warn{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
         @media(max-width:700px){.admin-clean-toolbar button{flex:1 1 44%}.admin-fold-body{padding:6px}}
 
-        /* ===== Master V21: واجهة موحدة لبيانات الأستاذ ===== */
+        /* ===== Master V26: واجهة موحدة لبيانات الأستاذ ===== */
         .prof-editor-row{display:grid;grid-template-columns:minmax(180px,1.25fr) minmax(170px,.9fr) minmax(155px,.85fr) minmax(150px,.8fr) minmax(180px,1fr);gap:8px;align-items:center;padding:8px 6px;border-bottom:1px solid #e2e8f0;background:#fff}
         .prof-editor-row:nth-child(even){background:#fbfdff}
         .prof-editor-name{font-weight:900;color:#1f2937;font-size:12px}.prof-editor-sub{font-size:9.5px;color:#64748b;margin-top:2px}
@@ -998,6 +1003,8 @@
         let attendanceToastTimer = null;
         let attendanceMutationBusy = false; // مخصص للعمليات الجماعية فقط
         let attendancePersistenceQueue = Promise.resolve(true);
+        // V26: يحمي الحذف المحلي من أن تعيده لقطة سحابية متأخرة. القيم مؤقتة ولا تغيّر بنية قاعدة البيانات.
+        const attendanceDeletionGuards = new Map();
         const OFFICER_WHATSAPP_FALLBACK_KEY = 'attendance_officer_whatsapp_v21';
 
         function setStartupStatus(message, mode = '') {
@@ -1318,8 +1325,11 @@
             renderRefreshTimer = setTimeout(() => {
                 try {
                     // تغييرات الغياب اللحظية لا تحتاج إعادة بناء التطبيق كله؛ تحديث لوحة المادة فقط يمنع قفز قائمة الطلبة.
-                    if(state.currentUser?.role==='professor' && (sourceName==='attendances' || sourceName==='submissions')) {
-                        refreshProfessorAttendanceView(preservedProfessorView,'');
+                    if(state.currentUser?.role==='professor' && sourceName==='attendances') {
+                        // لا نعيد بناء قائمة الطلبة عند كل نبضة Firebase؛ نحدّث الحالات في مكانها فقط.
+                        refreshProfessorAttendanceSummariesOnly();
+                    } else if(state.currentUser?.role==='professor' && sourceName==='submissions') {
+                        renderProfessorSubmissionStatus(getProfessorSubject());
                     } else {
                         renderAll();
                         if(preservedProfessorView) restoreProfessorViewState(preservedProfessorView,'');
@@ -1615,6 +1625,56 @@
             const remote = mapsById(remoteArr);
             const local = mapsById(localArr);
             const base = mapsById(baseArr);
+
+            // الغيابات حساسة للترتيب الزمني. قد تصل لقطة Firebase قديمة بعد تعديل أحدث محلياً،
+            // لذلك لا نسمح أبداً لسجل أقدم أن يعيد الطالب إلى حالته السابقة.
+            if (name === 'attendances') {
+                const now = Date.now();
+                // نظف حراس الحذف القديمة بعد 10 دقائق؛ يكفي لتجاوز لقطات الشبكة المتأخرة.
+                for (const [id,ts] of attendanceDeletionGuards.entries()) {
+                    if (now - Number(ts || 0) > 10 * 60 * 1000) attendanceDeletionGuards.delete(id);
+                }
+                const ids = new Set([...remote.keys(), ...local.keys(), ...base.keys(), ...attendanceDeletionGuards.keys()]);
+                ids.forEach(id => {
+                    const l = local.get(id);
+                    const r = remote.get(id);
+                    const b = base.get(id);
+                    const deletedAt = Number(attendanceDeletionGuards.get(id) || 0);
+
+                    if (!l && deletedAt) {
+                        // إذا كان الحذف المحلي أحدث من النسخة السحابية، لا تعيد السجل للحياة.
+                        const remoteRev = r ? attendanceRecordRevision(r) : 0;
+                        if (!r || deletedAt >= remoteRev) remote.delete(id);
+                        else attendanceDeletionGuards.delete(id);
+                        return;
+                    }
+                    if (l && r) {
+                        const localRev = attendanceRecordRevision(l);
+                        const remoteRev = attendanceRecordRevision(r);
+                        if (localRev > remoteRev) remote.set(id, l);
+                        else if (localRev === remoteRev && !sameRecord(l, r)) {
+                            // عند تساوي الزمن نفضّل التعديل المحلي إذا كان ما زال مختلفاً عن خط الأساس.
+                            if (!sameRecord(l, b)) remote.set(id, l);
+                        }
+                        return;
+                    }
+                    if (l && !r) {
+                        // سجل محلي جديد أو تعديل لم يصل للسحابة بعد.
+                        if (!sameRecord(l, b) || attendanceRecordRevision(l) >= attendanceRecordRevision(b || {})) remote.set(id, l);
+                        return;
+                    }
+                    if (!l && r && b && !sameRecord(r, b)) {
+                        // حذف محلي غير مسجّل بحارس (حالة قديمة): حافظ على الحذف ما دام الخط الأساسي كان يحتوي السجل.
+                        // لا ينطبق على سجل جديد قادم من جهاز آخر لأن b سيكون فارغاً.
+                        return;
+                    }
+                });
+                const changed = local.size !== remote.size || [...remote.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
+                state[name] = Array.from(remote.values());
+                lastSyncedCollections[name] = remoteArr;
+                return changed;
+            }
+
             const localIds = new Set([...local.keys(), ...base.keys()]);
             localIds.forEach(id => {
                 const l = local.get(id);
@@ -3033,6 +3093,8 @@
             let record=ordered[0]||null;
             const duplicateIds=new Set(ordered.slice(1).map(r=>String(r.id)));
             if(duplicateIds.size){
+                const deletionStamp=Date.now();
+                duplicateIds.forEach(id=>attendanceDeletionGuards.set(String(id),deletionStamp));
                 state.attendances=state.attendances.filter(a=>!duplicateIds.has(String(a.id)));
             }
             const nextHours=Math.max(0,Number(hours)||0),nextExcused=nextHours>0&&Number(excused)===1?1:0;
@@ -6363,7 +6425,7 @@
                     const studentGroupContext = sub?.groupType==='عملي' ? `📖 ${studentTheoreticalGroup(st)}` : (studentPracticalGroup(st)?`🔬 ${studentPracticalGroup(st)}`:'🔬 غير موزع');
                     const encodedStudent=encodeURIComponent(String(st.id));
                     if (state.quickMode) {
-                        html += `<div class="student-quick-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name">${escapeHtml(st.name)} ${statusIcon}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button ${disabled} title="${actionTitle}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present" style="${isPresent?'outline:3px solid #166534;':hasAbsence?'opacity:.65;':''}">✅ حاضر</button><button ${disabled} title="${actionTitle}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent" style="${hasAbsence?'outline:3px solid #991b1b;':isPresent?'opacity:.65;':''}">❌ غائب</button>${hasAbsence?`<button title="إزالة غياب هذه المحاضرة" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-secondary" style="min-width:58px;padding:6px 8px;font-size:11px;">↩ إزالة</button>`:''}</div></div>`;
+                        html += `<div class="student-quick-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-label">${escapeHtml(st.name)}</span> <span class="student-status-icon">${statusIcon}</span><span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button ${disabled} title="${actionTitle}" data-attendance-action="present" aria-pressed="${isPresent?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present ${isPresent?'attendance-selected':hasAbsence?'attendance-dimmed':''}">✅ حاضر</button><button ${disabled} title="${actionTitle}" data-attendance-action="absent" aria-pressed="${hasAbsence?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent ${hasAbsence?'attendance-selected':isPresent?'attendance-dimmed':''}">❌ غائب</button></div></div>`;
                     } else {
                         const todayBadge = hasAbsence ? '<span class="badge bg-red" style="font-size:8px;">غائب في هذه المحاضرة</span>' : isPresent ? '<span class="badge bg-green" style="font-size:8px;">حاضر في هذه المحاضرة</span>' : '<span class="badge" style="font-size:8px;background:#e2e8f0;color:#475569;">لم تُسجل حالته</span>';
                         html += `<div class="student-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name">👨‍🎓 ${escapeHtml(st.name)} ${statusIcon} ${todayBadge}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="student-actions" style="display:flex;gap:4px;flex-wrap:wrap;"><button ${disabled} title="${actionTitle}" onclick="markStudentAbsent(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-warning" style="font-size:10px;">📝</button>${hasAbsence?`<button title="إزالة غياب هذه المحاضرة" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:''}</div></div>`;
@@ -6372,6 +6434,54 @@
                 html += `</div></div>`;
             }
             html += `</div>`; container.innerHTML = html;
+        }
+
+        function getProfessorStudentAttendanceVisual(student, sub, context=null) {
+            if(!student || !sub) return null;
+            const totalHours=Math.max(.5,getSubjectCourseHours(sub));
+            const atts=getLogicalAttendanceForStudentSubject(student.id,sub.id);
+            const totalAbsent=atts.reduce((sum,a)=>sum+getAttendanceEffectiveHours(a,sub),0);
+            const unexcusedAbsent=atts.filter(a=>Number(a.excused)===0).reduce((sum,a)=>sum+getAttendanceEffectiveHours(a,sub),0);
+            const status=getStatus((unexcusedAbsent/totalHours)*100,(totalAbsent/totalHours)*100);
+            const statusIcon=status==='جيد'?'🟢':status==='تنبيه'?'🔵':status==='إنذار أولي'?'🟡':status==='إنذار نهائي'?'🟠':'🔴';
+            const ctx=context||buildQuickAttendanceContext(sub,professorGroupNameForStudent(student,sub),true);
+            const sessionRecord=ctx?.ok?findAttendanceForSession(student.id,sub.id,ctx.date,ctx.sessionTime):null;
+            return {status,statusIcon,hasAbsence:Number(sessionRecord?.hours)>0,isPresent:!!sessionRecord&&Number(sessionRecord?.hours)<=0,context:ctx};
+        }
+
+        function updateProfessorStudentAttendanceRow(studentId) {
+            if(state.currentUser?.role!=='professor') return false;
+            const sub=getProfessorSubject();
+            const student=state.students.find(st=>String(st.id)===String(studentId));
+            const container=document.getElementById('profGroupsContainer');
+            if(!sub||!student||!container||String(container.dataset.subjectId||'')!==String(sub.id)) return false;
+            const row=[...container.querySelectorAll('[data-student-id]')].find(el=>String(el.dataset.studentId)===String(student.id));
+            if(!row) return false;
+            const visual=getProfessorStudentAttendanceVisual(student,sub);
+            if(!visual) return false;
+            const icon=row.querySelector('.student-status-icon');
+            if(icon) icon.textContent=visual.statusIcon;
+            const present=row.querySelector('[data-attendance-action="present"]');
+            const absent=row.querySelector('[data-attendance-action="absent"]');
+            if(present){present.classList.toggle('attendance-selected',visual.isPresent);present.classList.toggle('attendance-dimmed',visual.hasAbsence);present.setAttribute('aria-pressed',visual.isPresent?'true':'false');}
+            if(absent){absent.classList.toggle('attendance-selected',visual.hasAbsence);absent.classList.toggle('attendance-dimmed',visual.isPresent);absent.setAttribute('aria-pressed',visual.hasAbsence?'true':'false');}
+            return true;
+        }
+
+        function syncVisibleProfessorAttendanceRows() {
+            if(state.currentUser?.role!=='professor') return;
+            const sub=getProfessorSubject();
+            const container=document.getElementById('profGroupsContainer');
+            if(!sub||!container||String(container.dataset.subjectId||'')!==String(sub.id)) return;
+            container.querySelectorAll('[data-student-id]').forEach(row=>updateProfessorStudentAttendanceRow(row.dataset.studentId));
+        }
+
+        function refreshProfessorAttendanceSummariesOnly() {
+            const sub=getProfessorSubject();
+            if(!sub)return;
+            syncVisibleProfessorAttendanceRows();
+            renderProfessorAttendance(sub.id);
+            renderProfessorSubmissionStatus(sub);
         }
 
         function refreshProfessorAttendanceView(savedView=null, highlightStudentId='') {
@@ -6401,7 +6511,6 @@
                 alert(`أوقف النظام التسجيل لحماية البيانات: الطالب لديه حالة مسجلة في مادة «${other?.name||'أخرى'}» في الوقت نفسه (${context.sessionTime}). راجع مسؤول الغيابات قبل المتابعة.`);
                 return;
             }
-            const savedView=captureProfessorViewState(student.id);
             const hours=getSubjectWeeklyHours(sub);
             const excused=Number(document.getElementById('quickExcused')?.value)===1?1:0;
             const expectedHours=action==='present'?0:hours;
@@ -6413,8 +6522,10 @@
             }
             recordAudit(action==='present'?'تسجيل حضور سريع':'تسجيل غياب سريع',{studentId:student.id,student:student.name,subjectId:sub.id,subject:sub.name,professorId:sub.professorId,date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,groupName,hours:expectedHours,changed:result.changed,duplicatesRemoved:result.duplicateCount});
             const localPromise=persistAttendanceMutation(action==='present'?'quick-present':'quick-absent');
-            refreshProfessorAttendanceView(savedView,student.id);
-            showAttendanceToast(action==='present'?`✅ تم تسجيل حضور ${student.name}`:`❌ تم تسجيل غياب ${student.name} (${hours} س)`,action==='present'?'success':'warning');
+            updateProfessorStudentAttendanceRow(student.id);
+            renderProfessorAttendance(sub.id);
+            renderProfessorSubmissionStatus(sub);
+            showAttendanceToast(action==='present'?`✅ تم تثبيت حضور ${student.name}`:`❌ تم تثبيت غياب ${student.name} (${hours} س)`,action==='present'?'success':'warning');
             // لا نمنع الأستاذ من تسجيل الطالب التالي أثناء الحفظ؛ الطابور يحفظ بالترتيب.
             localPromise.catch(err=>{console.error(err);showAttendanceToast('⚠️ تعذر تحديث النسخة المحلية؛ صدّر نسخة احتياطية.','error');});
         }
@@ -6448,11 +6559,13 @@
                 if(!verified){state.attendances=before;throw new Error('تعذر التحقق من اكتمال العملية؛ لم يُحفظ أي جزء منها.');}
                 recordAudit(action==='present'?'حضور جماعي':'غياب جماعي',{subjectId:sub.id,subject:sub.name,professorId:sub.professorId,groupName,grouping:label,date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,total:students.length,changed,duplicates});
                 const localPromise=persistAttendanceMutation(action==='present'?'bulk-present':'bulk-absent');
-                refreshProfessorAttendanceView(savedView,'');
+                students.forEach(st=>updateProfessorStudentAttendanceRow(st.id));
+                renderProfessorAttendance(sub.id);
+                renderProfessorSubmissionStatus(sub);
                 showAttendanceToast(`✅ تم تثبيت ${verb} جميع طلاب ${groupName}: ${students.length}/${students.length}`);
                 await localPromise;
             } catch(err){
-                refreshProfessorAttendanceView(savedView,'');
+                refreshProfessorAttendanceSummariesOnly();
                 alert(err.message||'تعذر تنفيذ العملية الجماعية.');
             } finally { attendanceMutationBusy=false; }
         }
@@ -6542,10 +6655,11 @@
             if (!confirm(`إزالة غياب الطالب «${student.name}» من محاضرة ${context.displayTime}؟
 
 سيُلغى تسجيل هذه المحاضرة فقط، ولن تتأثر غياباته الأخرى.`)) return;
-            const savedView = captureProfessorViewState(student.id);
             // احذف كل النسخ المكررة لنفس الطالب/المادة/التاريخ/وقت المحاضرة، لا أول سجل فقط.
             const ids = new Set(records.map(r => String(r.id)));
             const removedHours = absentRecords.reduce((sum,r)=>sum+getAttendanceEffectiveHours(r,sub),0);
+            const deletionStamp=Date.now();
+            ids.forEach(id=>attendanceDeletionGuards.set(String(id),deletionStamp));
             state.attendances = state.attendances.filter(a => !ids.has(String(a.id)));
             const stillAbsent = findAttendanceRecordsForSession(student.id, sub.id, context.date, context.sessionTime).some(r=>Number(r.hours||0)>0);
             if(stillAbsent){
@@ -6554,7 +6668,9 @@
             }
             recordAudit('إزالة غياب من بطاقة الطالب', {attendanceIds:[...ids],duplicatesRemoved:Math.max(0,ids.size-1),studentId:student.id,student:student.name,subjectId:sub.id,subject:sub.name,date:context.date,sessionTime:context.sessionTime,hours:removedHours});
             const localPromise = persistAttendanceMutation('remove-current-session-absence');
-            refreshProfessorAttendanceView(savedView, student.id);
+            updateProfessorStudentAttendanceRow(student.id);
+            renderProfessorAttendance(sub.id);
+            renderProfessorSubmissionStatus(sub);
             showAttendanceToast(ids.size>1 ? `✅ أُلغي غياب ${student.name} وأزيل ${ids.size-1} تكرار` : `✅ تمت إزالة غياب ${student.name}`);
             localPromise.catch(err=>{console.error(err);showAttendanceToast('⚠️ تعذر تحديث التخزين المحلي بعد الإلغاء.','error');});
         }
