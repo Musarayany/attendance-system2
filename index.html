@@ -826,7 +826,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '21.1';
+        const APP_VERSION = '21.2';
         const SCHEMA_VERSION = 14;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -996,7 +996,9 @@
         let credentialValidationTimer = null;
         let professorViewRestoreToken = 0;
         let attendanceToastTimer = null;
-        let attendanceMutationBusy = false;
+        let attendanceMutationBusy = false; // مخصص للعمليات الجماعية فقط
+        let attendancePersistenceQueue = Promise.resolve(true);
+        const OFFICER_WHATSAPP_FALLBACK_KEY = 'attendance_officer_whatsapp_v21';
 
         function setStartupStatus(message, mode = '') {
             const el = document.getElementById('startupStatus');
@@ -2982,17 +2984,22 @@
 
         function upsertAttendanceState(studentId, subject, context, hours, excused, source='professor-panel') {
             const records=findAttendanceRecordsForSession(studentId,subject.id,context.date,context.sessionTime);
-            let record=records[0]||null;
+            const ordered=[...records].sort((a,b)=>Number(b.updatedAt||b.createdAt||0)-Number(a.updatedAt||a.createdAt||0));
+            let record=ordered[0]||null;
+            const duplicateIds=new Set(ordered.slice(1).map(r=>String(r.id)));
+            if(duplicateIds.size){
+                state.attendances=state.attendances.filter(a=>!duplicateIds.has(String(a.id)));
+            }
             const nextHours=Math.max(0,Number(hours)||0),nextExcused=nextHours>0&&Number(excused)===1?1:0;
             const meta={professorId:subject.professorId,source,lectureId:context.lectureId,groupName:context.groupName,schedulePublishedAt:context.schedulePublishedAt,scheduleVerified:!!context.lectureId,manualOverride:!!context.manualOverride};
-            let changed=false;
+            let changed=duplicateIds.size>0;
             if(!record){record=makeAttendanceRecord(studentId,subject.id,context.date,context.sessionTime,nextHours,nextExcused,meta);state.attendances.push(record);changed=true;}
             else {
-                changed=Number(record.hours)!==nextHours||Number(record.excused)!==nextExcused||normalizeSessionTime(record.sessionTime)!==context.sessionTime||String(record.lectureId||'')!==String(context.lectureId||'');
+                changed=changed||Number(record.hours)!==nextHours||Number(record.excused)!==nextExcused||normalizeSessionTime(record.sessionTime)!==context.sessionTime||String(record.lectureId||'')!==String(context.lectureId||'');
                 record.hours=nextHours;record.excused=nextExcused;record.sessionTime=context.sessionTime;record.sessionKey=attendanceSessionKey(context.sessionTime);
                 Object.assign(record,attendanceProvenance(meta),{updatedAt:Date.now(),lastUpdatedById:String(state.currentUser?.id||''),lastUpdatedByName:sanitizeText(state.currentUser?.name||'',120)});
             }
-            return {record,changed,duplicateCount:Math.max(0,records.length-1)};
+            return {record,changed,duplicateCount:duplicateIds.size};
         }
 
         function validateManualAttendanceContext(subject, student, date, sessionTime) {
@@ -3021,10 +3028,17 @@
             if(timeInput)timeInput.value=context.ok?context.sessionTime:'';
         }
 
-        async function persistAttendanceMutation(reason='attendance') {
-            const localSaved=await persistLocalState(reason,true);
-            pushToFirebase({silent:true}).catch(err=>console.warn('تعذر رفع تعديل الغياب الآن وسيعاد تلقائيا:',err));
-            return localSaved;
+        function persistAttendanceMutation(reason='attendance') {
+            // لا نسقط أي ضغطة عند التسجيل السريع. نحفظ كل تعديلات الغياب بالترتيب نفسه
+            // حتى لو ضغط الأستاذ على عدة طلاب متتالين بسرعة.
+            attendancePersistenceQueue = attendancePersistenceQueue
+                .catch(err => { console.warn('تم تجاوز خطأ سابق في طابور حفظ الغياب:', err); return false; })
+                .then(async () => {
+                    const localSaved = await persistLocalState(reason, true);
+                    pushToFirebase({silent:true}).catch(err=>console.warn('تعذر رفع تعديل الغياب الآن وسيعاد تلقائيا:',err));
+                    return localSaved;
+                });
+            return attendancePersistenceQueue;
         }
 
         function repairEnrollmentAttendanceRecords() {
@@ -3129,12 +3143,32 @@
         // ==============================================================
         //  إعدادات واتساب لمسؤول الغيابات
         // ==============================================================
+        function readOfficerWhatsAppFallback() {
+            try {
+                const value = localStorage.getItem(OFFICER_WHATSAPP_FALLBACK_KEY) || '';
+                const normalized = normalizeWhatsAppNumber(value);
+                return /^\d{8,15}$/.test(normalized) ? normalized : '';
+            } catch (e) { return ''; }
+        }
+
+        function writeOfficerWhatsAppFallback(value) {
+            const normalized = normalizeWhatsAppNumber(value);
+            if (!/^\d{8,15}$/.test(normalized)) return false;
+            try { localStorage.setItem(OFFICER_WHATSAPP_FALLBACK_KEY, normalized); return true; }
+            catch (e) { console.warn('تعذر حفظ رقم واتساب احتياطيا في هذا الجهاز:', e); return false; }
+        }
+
         function getGlobalAppSettings() {
             if (!Array.isArray(state.appSettings)) state.appSettings = [];
             let rec = state.appSettings.find(x => x && x.id === 'global');
             if (!rec) {
                 rec = { id: 'global', officerWhatsApp: '', lectureRemindersEnabled: false, lectureReminderActiveFrom: '', lectureReminderActiveTo: '', absenceStatusBasis: 'unexcused', bolognaTeachingWeeks: 15, annualTeachingWeeks: 30, updatedAt: 0 };
                 state.appSettings.push(rec);
+            }
+            const fallback = readOfficerWhatsAppFallback();
+            if (fallback && !normalizeWhatsAppNumber(rec.officerWhatsAppNormalized || rec.officerWhatsApp || '')) {
+                rec.officerWhatsApp = fallback;
+                rec.officerWhatsAppNormalized = fallback;
             }
             return rec;
         }
@@ -3222,9 +3256,13 @@
         }
 
         function getOfficerWhatsAppNumber() {
-            const raw = getGlobalAppSettings().officerWhatsApp || '';
-            const normalized = normalizeWhatsAppNumber(raw);
-            return /^\d{8,15}$/.test(normalized) ? normalized : '';
+            const settings = getGlobalAppSettings();
+            const candidates = [settings.officerWhatsAppNormalized, settings.officerWhatsApp, readOfficerWhatsAppFallback()];
+            for (const value of candidates) {
+                const normalized = normalizeWhatsAppNumber(value || '');
+                if (/^\d{8,15}$/.test(normalized)) return normalized;
+            }
+            return '';
         }
 
         function renderOfficerWhatsAppSettings() {
@@ -3232,8 +3270,8 @@
             const status = document.getElementById('officerWhatsAppStatus');
             if (!input || !status) return;
             const settings = getGlobalAppSettings();
-            input.value = settings.officerWhatsApp || '';
             const normalized = getOfficerWhatsAppNumber();
+            input.value = settings.officerWhatsApp || normalized || '';
             if (normalized) {
                 status.textContent = `✅ رقم واتساب محفوظ: +${normalized}`;
                 status.style.color = '#166534';
@@ -3245,6 +3283,7 @@
 
         async function saveOfficerWhatsAppSettings() {
             const input = document.getElementById('officerWhatsAppNumber');
+            const status = document.getElementById('officerWhatsAppStatus');
             if (!input) return;
             const raw = sanitizeText(input.value, 40);
             const normalized = normalizeWhatsAppNumber(raw);
@@ -3252,15 +3291,50 @@
                 alert('❌ رقم واتساب غير صالح. مثال عراقي: 07701234567 أو 9647701234567');
                 return;
             }
+
+            // تثبيت الرقم فورا محليا قبل أي اتصال بالشبكة حتى لا تختفي القيمة من الواجهة.
+            writeOfficerWhatsAppFallback(normalized);
             const settings = getGlobalAppSettings();
-            settings.officerWhatsApp = raw;
+            settings.officerWhatsApp = normalized;
             settings.officerWhatsAppNormalized = normalized;
             settings.updatedAt = Date.now();
             settings.updatedBy = state.currentUser?.id || 'admin';
             recordAudit('تحديث رقم واتساب مسؤول الغيابات', { numberEnding: normalized.slice(-4) });
-            const ok = await saveAll();
+            await persistLocalState('officer-whatsapp', true);
             renderOfficerWhatsAppSettings();
-            alert(ok ? '✅ تم حفظ رقم واتساب مسؤول الغيابات.' : '⚠️ تم تعديل الرقم محلياً لكن تعذر حفظه في السحابة.');
+            if (status) status.textContent = `✅ رقم واتساب محفوظ على هذا الجهاز: +${normalized} — جارٍ تثبيته سحابياً...`;
+
+            let cloudSaved = false;
+            if (database) {
+                try {
+                    await withTimeout(database.ref('/appSettings/global').update({
+                        id:'global',
+                        officerWhatsApp:normalized,
+                        officerWhatsAppNormalized:normalized,
+                        updatedAt:settings.updatedAt,
+                        updatedBy:settings.updatedBy
+                    }), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ رقم واتساب');
+                    cloudSaved = true;
+                    // اجعل مسار المزامنة العام يرى القيمة نفسها ولا يعيدها إلى نسخة أقدم.
+                    const base = mapsById(lastSyncedCollections.appSettings || []);
+                    const previous = base.get('global') || {};
+                    base.set('global', {...previous, ...settings, id:'global'});
+                    lastSyncedCollections.appSettings = Array.from(base.values());
+                    await persistLocalState('officer-whatsapp-cloud', true);
+                } catch (err) {
+                    console.warn('تعذر تثبيت رقم واتساب سحابياً الآن:', err);
+                    scheduleCloudRetry();
+                }
+            }
+
+            renderOfficerWhatsAppSettings();
+            if (cloudSaved) {
+                if (status) status.textContent = `✅ رقم واتساب محفوظ محلياً وسحابياً: +${normalized}`;
+                alert('✅ تم حفظ رقم واتساب مسؤول الغيابات محلياً وسحابياً.');
+            } else {
+                if (status) status.textContent = `🟠 رقم واتساب محفوظ على هذا الجهاز: +${normalized} — ستتم مزامنته سحابياً عند توفر الاتصال.`;
+                alert('✅ تم حفظ الرقم على هذا الجهاز. ستتم مزامنته مع السحابة تلقائياً عند توفر الاتصال.');
+            }
         }
 
         function buildOfficerWhatsAppMessage(subject, submission, students) {
@@ -4606,7 +4680,7 @@
 
         function deleteSubjectFull(subjectId) {
             if (!confirm('⚠️ هل أنت متأكد من حذف هذه المادة؟ سيتم حذف جميع غياباتها أيضاً.')) return;
-            const subject = state.subjects.find(s => s.id === subjectId);
+            const subject = state.subjects.find(s => String(s.id) === String(subjectId));
             const removedAttendances = state.attendances.filter(a => a.subjectId === subjectId).length;
             state.attendances = state.attendances.filter(a => a.subjectId !== subjectId);
             state.subjects = state.subjects.filter(s => s.id !== subjectId);
@@ -6167,7 +6241,7 @@
                 html += `<div class="group-card"><div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length})</span></div>
                     <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
                 groupStudents.forEach(st => {
-                    const atts = state.attendances.filter(a => a.studentId===st.id && a.subjectId===sub?.id && !isEnrollmentRecord(a));
+                    const atts = state.attendances.filter(a => String(a.studentId)===String(st.id) && String(a.subjectId)===String(sub?.id) && !isEnrollmentRecord(a));
                     const totalAbsent = atts.reduce((s,a)=>s+Number(a.hours||0),0);
                     const unexcusedAbsent = atts.filter(a=>Number(a.excused)===0).reduce((s,a)=>s+Number(a.hours||0),0);
                     const status = getStatus((unexcusedAbsent/totalHours)*100,(totalAbsent/totalHours)*100);
@@ -6199,7 +6273,10 @@
         }
 
         async function quickRecord(studentId, action) {
-            if(attendanceMutationBusy)return;
+            if(attendanceMutationBusy){
+                showAttendanceToast('⏳ توجد عملية جماعية قيد التنفيذ. انتظر اكتمالها ثم أعد المحاولة.','warning');
+                return;
+            }
             const sub=getProfessorSubject();
             if(!sub||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح لهذا الحساب بتسجيل غياب لهذه المادة.');return;}
             const student=state.students.find(s=>String(s.id)===String(studentId));
@@ -6213,22 +6290,26 @@
                 alert(`أوقف النظام التسجيل لحماية البيانات: الطالب لديه حالة مسجلة في مادة «${other?.name||'أخرى'}» في الوقت نفسه (${context.sessionTime}). راجع مسؤول الغيابات قبل المتابعة.`);
                 return;
             }
-            attendanceMutationBusy=true;
             const savedView=captureProfessorViewState(student.id);
-            try {
-                const hours=Math.max(.5,parseFloat(document.getElementById('quickAbsentHours')?.value)||1);
-                const excused=Number(document.getElementById('quickExcused')?.value)===1?1:0;
-                const result=upsertAttendanceState(student.id,sub,context,action==='present'?0:hours,action==='present'?0:excused,action==='present'?'quick-present':'quick-absent');
-                recordAudit(action==='present'?'تسجيل حضور سريع':'تسجيل غياب سريع',{studentId:student.id,student:student.name,subjectId:sub.id,subject:sub.name,professorId:sub.professorId,date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,groupName,hours:action==='present'?0:hours,changed:result.changed});
-                const localPromise=persistAttendanceMutation(action==='present'?'quick-present':'quick-absent');
-                refreshProfessorAttendanceView(savedView,student.id);
-                showAttendanceToast(action==='present'?`✅ تم تسجيل حضور ${student.name}`:`❌ تم تسجيل غياب ${student.name} (${hours} س)`,action==='present'?'success':'warning');
-                await localPromise;
-            } finally { attendanceMutationBusy=false; }
+            const hours=Math.max(.5,parseFloat(document.getElementById('quickAbsentHours')?.value)||1);
+            const excused=Number(document.getElementById('quickExcused')?.value)===1?1:0;
+            const expectedHours=action==='present'?0:hours;
+            const result=upsertAttendanceState(student.id,sub,context,expectedHours,action==='present'?0:excused,action==='present'?'quick-present':'quick-absent');
+            const verified=findAttendanceForSession(student.id,sub.id,context.date,context.sessionTime);
+            if(!verified || Number(verified.hours)!==Number(expectedHours)){
+                showAttendanceToast(`⚠️ لم يثبت تسجيل ${student.name}. أعد المحاولة.`,'error');
+                return;
+            }
+            recordAudit(action==='present'?'تسجيل حضور سريع':'تسجيل غياب سريع',{studentId:student.id,student:student.name,subjectId:sub.id,subject:sub.name,professorId:sub.professorId,date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,groupName,hours:expectedHours,changed:result.changed,duplicatesRemoved:result.duplicateCount});
+            const localPromise=persistAttendanceMutation(action==='present'?'quick-present':'quick-absent');
+            refreshProfessorAttendanceView(savedView,student.id);
+            showAttendanceToast(action==='present'?`✅ تم تسجيل حضور ${student.name}`:`❌ تم تسجيل غياب ${student.name} (${hours} س)`,action==='present'?'success':'warning');
+            // لا نمنع الأستاذ من تسجيل الطالب التالي أثناء الحفظ؛ الطابور يحفظ بالترتيب.
+            localPromise.catch(err=>{console.error(err);showAttendanceToast('⚠️ تعذر تحديث النسخة المحلية؛ صدّر نسخة احتياطية.','error');});
         }
 
         async function quickApplyAll(groupName, action) {
-            if(attendanceMutationBusy)return;
+            if(attendanceMutationBusy){showAttendanceToast('⏳ عملية جماعية أخرى قيد التنفيذ.','warning');return;}
             const sub=getProfessorSubject();
             if(!sub||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح لهذا الحساب بتسجيل غياب لهذه المادة.');return;}
             const students=getStudentsForProfessor().filter(st=>professorGroupNameForStudent(st,sub)===groupName);
@@ -6270,7 +6351,7 @@
 
         function renderProfessorAttendance(subjectId) {
             const div = document.getElementById('profAttendanceTable');
-            const allAttendances = state.attendances.filter(a => a.subjectId === subjectId && !isEnrollmentRecord(a) && Number(a.hours) > 0);
+            const allAttendances = state.attendances.filter(a => String(a.subjectId) === String(subjectId) && !isEnrollmentRecord(a) && Number(a.hours) > 0);
             if (allAttendances.length === 0) {
                 div.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px;">📭 لا توجد غيابات مسجلة</p>';
                 return;
@@ -6280,7 +6361,7 @@
             const studentIds = [...new Set(allAttendances.map(a => a.studentId))];
             const studentTotals = {};
             studentIds.forEach(id => {
-                const studentAtts = allAttendances.filter(a => a.studentId === id);
+                const studentAtts = allAttendances.filter(a => String(a.studentId) === String(id));
                 const totalAbsent = studentAtts.reduce((sum, a) => sum + Number(a.hours || 0), 0);
                 const unexcusedAbsent = studentAtts.filter(a => Number(a.excused) === 0).reduce((sum, a) => sum + Number(a.hours || 0), 0);
                 const pctUnexcused = (unexcusedAbsent / totalHours) * 100;
@@ -6302,7 +6383,7 @@
                     <th>التحكم</th>
                 </tr>`;
             sortedAttendances.forEach((att, idx) => {
-                const student = state.students.find(s => s.id === att.studentId);
+                const student = state.students.find(s => String(s.id) === String(att.studentId));
                 const studentName = student ? student.name : 'غير معروف';
                 const excusedText = Number(att.excused) === 1 ? 'بعذر' : 'بدون عذر';
                 const excusedBadge = Number(att.excused) === 1 ? 'bg-green' : 'bg-red';
@@ -6828,7 +6909,7 @@
         // ==============================================================
         //  INITIALIZATION
         // ==============================================================
-        console.log('🏛️ نظام الغيابات Master V21.1 - ثبات قوائم الطلبة + حماية هوية المحاضرة + مزامنة بلا فقد');
+        console.log('🏛️ نظام الغيابات Master V21.2 - تثبيت واتساب + طابور آمن للغيابات + مزامنة بلا فقد');
 
         document.addEventListener('change', function(e) {
             if (e.target.id === 'reportDateFrom' || e.target.id === 'reportDateTo') {
