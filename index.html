@@ -812,7 +812,7 @@
     <button id="backToTop" class="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
 
     <script>
-        // ===== V33: workflow lock state + verified bulk attendance operations =====
+        // ===== V32: workflow lock state + robust bulk absence correction =====
         // ==============================================================
         //  🔥 FIREBASE CONFIG - ضع إعدادات مشروعك هنا
         // ==============================================================
@@ -6989,47 +6989,6 @@
             return scheduled.ok?{...scheduled,absentCount:0}:{ok:false,absentCount:0,reason:scheduled.reason||'لا توجد محاضرة مسجلة يمكن تصحيحها.'};
         }
 
-        // V33: سياق موحد وموثوق للأوامر الجماعية.
-        // يفضل محاضرة اليوم المنشورة، وإن تعذر ذلك يستخدم آخر محاضرة مسجلة فعلياً لهذه المجموعة.
-        function latestRecordedSessionContext(subject, groupName=null) {
-            if(!subject)return null;
-            const candidates=getLogicalAttendanceRecords(state.attendances).filter(att=>
-                String(att.subjectId)===String(subject.id) && attendanceRecordSessionKey(att)!=='legacy' &&
-                attendanceRecordMatchesGroup(att,subject,groupName)
-            );
-            if(!candidates.length)return null;
-            const sessions=new Map();
-            candidates.forEach(att=>{
-                const key=`${String(att.date||'')}|${attendanceRecordSessionKey(att)}`;
-                const current=sessions.get(key)||{date:String(att.date||''),sessionTime:normalizeSessionTime(att.sessionTime),records:[],revision:0};
-                current.records.push(att);
-                current.revision=Math.max(current.revision,attendanceRecordRevision(att));
-                sessions.set(key,current);
-            });
-            const latest=[...sessions.values()].sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(b.sessionTime).localeCompare(String(a.sessionTime)) || b.revision-a.revision)[0];
-            if(!latest)return null;
-            return {
-                ok:true,code:'recorded',date:latest.date,sessionTime:latest.sessionTime,
-                sessionKey:attendanceSessionKey(latest.sessionTime),groupName:groupName||'',
-                subjectId:String(subject.id),professorId:String(subject.professorId||''),
-                lectureId:String(latest.records[0]?.lectureId||''),
-                schedulePublishedAt:Number(latest.records[0]?.schedulePublishedAt)||null,
-                displayTime:`${latest.date} · ${latest.sessionTime}`,fromRecordedAttendance:true,
-                recordedCount:latest.records.length
-            };
-        }
-
-        function resolveBulkAttendanceContext(subject, groupName) {
-            const scheduled=buildQuickAttendanceContext(subject,groupName,true);
-            if(scheduled.ok)return {...scheduled,contextSource:'schedule'};
-            const recorded=latestRecordedSessionContext(subject,groupName);
-            if(recorded)return {...recorded,contextSource:'recorded',fallbackReason:scheduled.reason||''};
-            return {
-                ok:false,code:scheduled.code||'no-context',
-                reason:(scheduled.reason||'تعذر تحديد المحاضرة.')+' لا توجد أيضاً محاضرة سابقة مسجلة لهذه المجموعة يمكن تطبيق الأمر الجماعي عليها.'
-            };
-        }
-
         function renderProfessorGroups(students) {
             const container = document.getElementById('profGroupsContainer');
             const sub = getProfessorSubject();
@@ -7047,14 +7006,13 @@
                 const encodedGroup=encodeURIComponent(groupName);
                 const chipClass=context.ok?'':(context.code==='future'?'waiting':'unavailable');
                 const chipText=context.ok?`${context.code==='current'?'● الآن':'✓ متاحة'} · ${context.displayTime}`:(context.code==='future'?`⏳ ${formatScheduleMinutes(context.lecture?.startMinutes)}`:'غير مجدولة اليوم');
-                // V33: لا نعطل الزرين بصمت بسبب فشل تحديد المحاضرة؛ الدالة نفسها تحاول السياق الحالي ثم آخر محاضرة مسجلة وتشرح أي مانع.
-                const disabled=!submissionLocked?'':'disabled aria-disabled="true"';
+                const disabled=(context.ok&&!submissionLocked)?'':'disabled aria-disabled="true"';
                 const bulkCancelContext=getBulkCancelContext(sub,groupName,groupStudents);
                 const currentAbsentCount=Number(bulkCancelContext?.absentCount)||0;
                 const cancelAllDisabled=!submissionLocked?'':'disabled aria-disabled="true"';
-                const actionTitle=escapeHtml(submissionLocked?'الغيابات مغلقة بعد الإرسال؛ استخدم فرصة التراجع إن كانت متاحة.':(context.ok?`تسجيل محاضرة ${context.displayTime}`:`اضغط للتنفيذ؛ سيحاول النظام تحديد المحاضرة الحالية أو آخر محاضرة مسجلة. ${context.reason||''}`));
+                const actionTitle=escapeHtml(submissionLocked?'الغيابات مغلقة بعد الإرسال؛ استخدم فرصة التراجع إن كانت متاحة.':(context.ok?`تسجيل محاضرة ${context.displayTime}`:context.reason));
                 html += `<div class="group-card"><div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length})</span></div>
-                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button><button data-attendance-control="1" ${cancelAllDisabled} title="${currentAbsentCount?`إزالة غياب ${currentAbsentCount} طالب من ${escapeHtml(bulkCancelContext.displayTime||'آخر محاضرة مسجلة')}`:'اضغط للبحث عن آخر محاضرة مسجلة فيها غياب لهذه المجموعة'}" data-cancel-all-group="${escapeHtml(encodedGroup)}" onclick="removeAllCurrentSessionAbsences(decodeURIComponent('${encodedGroup}'))" class="btn-secondary btn-sm" style="font-size:10px;">🗑️ إزالة غياب الكل${currentAbsentCount?` (${currentAbsentCount})`:''}</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button><button data-attendance-control="1" ${cancelAllDisabled} title="${currentAbsentCount?`إزالة غياب ${currentAbsentCount} طالب من ${escapeHtml(bulkCancelContext.displayTime||'آخر محاضرة مسجلة')}`:'اضغط للبحث عن آخر محاضرة مسجلة فيها غياب لهذه المجموعة'}" data-cancel-all-group="${escapeHtml(encodedGroup)}" onclick="removeAllCurrentSessionAbsences(decodeURIComponent('${encodedGroup}'))" class="btn-secondary btn-sm" style="font-size:10px;">🗑️ إزالة غياب الكل${currentAbsentCount?` (${currentAbsentCount})`:''}</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
                 groupStudents.forEach(st => {
                     const atts = getLogicalAttendanceForStudentSubject(st.id,sub?.id);
                     const totalAbsent = atts.reduce((s,a)=>s+getAttendanceEffectiveHours(a,sub),0);
@@ -7212,90 +7170,41 @@
             const sub=getProfessorSubject();
             if(!sub||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح لهذا الحساب بتسجيل غياب لهذه المادة.');return;}
             if(!canProfessorEditAttendanceForSubject(sub))return;
-
             const students=getStudentsForProfessor().filter(st=>professorGroupNameForStudent(st,sub)===groupName);
             if(!students.length){alert('لا يوجد طلاب في هذه المجموعة');return;}
-
-            const context=resolveBulkAttendanceContext(sub,groupName);
-            if(!context.ok){alert(context.reason||'تعذر تحديد المحاضرة التي سيطبق عليها الأمر الجماعي.');return;}
-
-            // لا نلغي الشعبة كلها بسبب طالب واحد متعارض؛ نعزل المتعارضين وننفذ على البقية.
-            const conflictRows=students.map(st=>({st,records:findCrossSubjectAttendanceConflicts(st.id,sub.id,context.date,context.sessionTime)})).filter(x=>x.records.length);
-            const conflictIds=new Set(conflictRows.map(x=>String(x.st.id)));
-            const eligible=students.filter(st=>!conflictIds.has(String(st.id)));
-            if(!eligible.length){
-                const names=conflictRows.slice(0,8).map(x=>x.st.name).join('، ');
-                alert(`تعذر تنفيذ الأمر الجماعي لأن جميع طلاب ${groupName} لديهم تسجيل في مادة أخرى في التاريخ والوقت نفسيهما (${context.date} ${context.sessionTime}).${names?`\n\nالأسماء: ${names}`:''}`);
+            const context=buildQuickAttendanceContext(sub,groupName);
+            if(!context.ok){alert(context.reason);return;}
+            const conflicts=students.map(st=>({st,records:findCrossSubjectAttendanceConflicts(st.id,sub.id,context.date,context.sessionTime)})).filter(x=>x.records.length);
+            if(conflicts.length){
+                const names=conflicts.slice(0,5).map(x=>x.st.name).join('، ');
+                alert(`لم يُنفذ الأمر على أي طالب حتى لا يحدث تسجيل جزئي. يوجد ${conflicts.length} طالباً لديهم تسجيل في مادة أخرى في الوقت نفسه.${names?`\n\nأول الأسماء: ${names}`:''}\n\nراجع مسؤول الغيابات أولاً.`);
                 return;
             }
-
             const label=sub.groupType==='عملي'?'المجموعة العملية':'الشعبة النظرية';
             const verb=action==='present'?'حضور':'غياب';
-            const sourceNote=context.contextSource==='recorded'?'\n\n⚠️ لا توجد محاضرة حالية مطابقة في الجدول؛ سيطبق الأمر على آخر محاضرة مسجلة لهذه المجموعة.':'';
-            const conflictNote=conflictRows.length?`\n\nسيتم استثناء ${conflictRows.length} طالب لديهم تسجيل في مادة أخرى في الوقت نفسه، ولن تتغير حالتهم.`:'';
-            if(!confirm(`تسجيل ${verb} ${eligible.length} من أصل ${students.length} طالب في ${label} ${groupName}؟\n\nالمحاضرة المستهدفة: ${context.displayTime}${sourceNote}${conflictNote}`))return;
-
+            if(!confirm(`تسجيل ${verb} جميع طلاب ${label} ${groupName} (${students.length} طالب) لمحاضرة ${context.displayTime}؟`))return;
             attendanceMutationBusy=true;
+            const savedView=captureProfessorViewState();
             const before=JSON.parse(JSON.stringify(state.attendances));
             try {
                 const hours=getSubjectWeeklyHours(sub);
                 const excused=Number(document.getElementById('quickExcused')?.value)===1?1:0;
-                const expectedHours=action==='present'?0:hours;
                 let changed=0,duplicates=0;
-
-                eligible.forEach(st=>{
-                    const result=upsertAttendanceState(st.id,sub,context,expectedHours,action==='present'?0:excused,action==='present'?'bulk-present-v33':'bulk-absent-v33');
-                    if(result.changed)changed++;
-                    duplicates+=result.duplicateCount;
-                });
-
-                // تحقق طالباً طالباً. نعيد المحاولة مرة واحدة لأي حالة لم تثبت قبل إعلان النجاح.
-                let failed=[];
-                const verify=st=>{
-                    const r=findAttendanceForSession(st.id,sub.id,context.date,context.sessionTime);
-                    return !!r && Number(r.hours)===Number(expectedHours);
-                };
-                failed=eligible.filter(st=>!verify(st));
-                if(failed.length){
-                    failed.forEach(st=>upsertAttendanceState(st.id,sub,context,expectedHours,action==='present'?0:excused,action==='present'?'bulk-present-retry-v33':'bulk-absent-retry-v33'));
-                    failed=failed.filter(st=>!verify(st));
-                }
-                if(failed.length){
-                    state.attendances=before;
-                    const names=failed.slice(0,8).map(st=>st.name).join('، ');
-                    throw new Error(`لم يثبت الأمر الجماعي لكل الطلبة، لذلك أعيدت الحالة السابقة دون فقد. تعذر تثبيت: ${names||failed.length+' طالب'}.`);
-                }
-
-                recordAudit(action==='present'?'حضور جماعي':'غياب جماعي',{
-                    subjectId:sub.id,subject:sub.name,professorId:sub.professorId,groupName,grouping:label,
-                    date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,
-                    requested:students.length,applied:eligible.length,skippedConflicts:conflictRows.length,changed,duplicates,
-                    contextSource:context.contextSource||'schedule'
-                });
-
-                const localPromise=persistAttendanceMutation(action==='present'?'bulk-present-v33':'bulk-absent-v33');
-                eligible.forEach(st=>updateProfessorStudentAttendanceRow(st.id));
+                students.forEach(st=>{const result=upsertAttendanceState(st.id,sub,context,action==='present'?0:hours,action==='present'?0:excused,action==='present'?'bulk-present':'bulk-absent');if(result.changed)changed++;duplicates+=result.duplicateCount;});
+                const verified=students.every(st=>{const r=findAttendanceForSession(st.id,sub.id,context.date,context.sessionTime);return !!r&&(action==='present'?Number(r.hours)===0:Number(r.hours)===hours);});
+                if(!verified){state.attendances=before;throw new Error('تعذر التحقق من اكتمال العملية؛ لم يُحفظ أي جزء منها.');}
+                recordAudit(action==='present'?'حضور جماعي':'غياب جماعي',{subjectId:sub.id,subject:sub.name,professorId:sub.professorId,groupName,grouping:label,date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,total:students.length,changed,duplicates});
+                const localPromise=persistAttendanceMutation(action==='present'?'bulk-present':'bulk-absent');
+                students.forEach(st=>updateProfessorStudentAttendanceRow(st.id));
                 updateProfessorGroupCancelAllButton(groupName);
                 renderProfessorAttendance(sub.id);
                 renderProfessorSubmissionStatus(sub);
-
-                const skippedText=conflictRows.length?` — استُثني ${conflictRows.length} لتعارض زمني`:'';
-                showAttendanceToast(`✅ تم تثبيت ${verb} ${eligible.length}/${students.length}${skippedText}`, conflictRows.length?'warning':'success');
+                showAttendanceToast(`✅ تم تثبيت ${verb} جميع طلاب ${groupName}: ${students.length}/${students.length}`);
                 await localPromise;
-
-                if(conflictRows.length){
-                    const details=conflictRows.slice(0,12).map(x=>{
-                        const other=state.subjects.find(ss=>String(ss.id)===String(x.records[0]?.subjectId));
-                        return `• ${x.st.name}: ${other?.name||'مادة أخرى'}`;
-                    }).join('\n');
-                    alert(`تم تنفيذ ${verb} ${eligible.length} طالب بنجاح.\n\nلم تتغير حالة ${conflictRows.length} طالب بسبب وجود تسجيل آخر في الوقت نفسه:\n${details}${conflictRows.length>12?'\n• ...':''}`);
-                }
             } catch(err){
                 refreshProfessorAttendanceSummariesOnly();
                 alert(err.message||'تعذر تنفيذ العملية الجماعية.');
-            } finally {
-                attendanceMutationBusy=false;
-            }
+            } finally { attendanceMutationBusy=false; }
         }
 
         async function applyBulkAbsenceRemoval(sub, context, groupName=null) {
@@ -8002,7 +7911,7 @@
         // ==============================================================
         //  INITIALIZATION
         // ==============================================================
-        console.log('🏛️ نظام الغيابات V33 - أوامر حضور/غياب جماعية موثقة ومتحقق منها');
+        console.log('🏛️ نظام الغيابات Master V30 - مراجعة صارمة للمزامنة والحذف والإرسال وواتساب');
 
         document.addEventListener('change', function(e) {
             if (e.target.id === 'reportDateFrom' || e.target.id === 'reportDateTo') {
