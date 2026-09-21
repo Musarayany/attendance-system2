@@ -6493,7 +6493,18 @@
         }
 
         function hasSubmissionUndoEverUsed(subjectId,professorId) {
-            return (state.submissions||[]).some(x=>String(x.subjectId)===String(subjectId)&&String(x.professorId)===String(professorId)&&(x.undoUsed===true||Number(x.undoneAt||0)>0));
+            // V31: سجل التراجع حدث مستقل؛ لا نعتمد على تعديل سجل الإرسال القديم نفسه.
+            return (state.submissions||[]).some(x=>
+                String(x.subjectId)===String(subjectId) &&
+                String(x.professorId)===String(professorId) &&
+                (x.declaration==='reopened' || x.undoEvent===true || x.undoUsed===true || Number(x.undoneAt||0)>0)
+            );
+        }
+
+        function getLatestCompletedSubmission(subjectId, professorId=null) {
+            return (state.submissions||[])
+                .filter(x=>String(x.subjectId)===String(subjectId) && (!professorId||String(x.professorId)===String(professorId)) && x.declaration==='completed')
+                .sort((a,b)=>(Number(b.createdAt)||0)-(Number(a.createdAt)||0))[0]||null;
         }
 
         function isProfessorSubjectLockedAfterSubmission(subject) {
@@ -6589,24 +6600,67 @@
         async function undoLastSubmissionOnce() {
             const sub=getProfessorSubject();
             if(!sub||state.currentUser?.role!=='professor'){alert('هذه العملية متاحة للأستاذ صاحب المادة فقط.');return;}
-            const latest=getLatestSubmission(sub.id,state.currentUser.id);
-            if(!latest||latest.declaration!=='completed'){alert('لا يوجد إرسال مكتمل يمكن التراجع عنه.');return;}
+            const latestCompleted=getLatestCompletedSubmission(sub.id,state.currentUser.id);
+            const latestState=getLatestSubmission(sub.id,state.currentUser.id);
+            if(latestState?.declaration==='reopened'){
+                // المادة مفتوحة فعلاً؛ أعد رسم الواجهة فقط إذا بقيت نسخة قديمة على الشاشة.
+                renderProfessor({preserveView:true});
+                showAttendanceToast('↩️ الغيابات مفتوحة للتعديل الآن.','success');
+                return;
+            }
+            if(!latestCompleted){alert('لا يوجد إرسال مكتمل يمكن التراجع عنه.');return;}
             if(hasSubmissionUndoEverUsed(sub.id,state.currentUser.id)){alert('⚠️ تم استخدام فرصة التراجع الوحيدة لهذه المادة سابقاً.');return;}
-            if(!confirm(`تراجع عن آخر إرسال لمادة «${sub.name}» وفتح الغيابات للتعديل؟\n\nهذه الفرصة متاحة مرة واحدة فقط لهذه المادة، وبعد استخدامها لن يمكن التراجع عن إرسال آخر.`))return;
+            if(!confirm(`تراجع عن آخر إرسال لمادة «${sub.name}» وفتح الغيابات للتعديل؟
+
+هذه الفرصة متاحة مرة واحدة فقط لهذه المادة. بعد التراجع ستُفتح أدوات الحذف والتعديل فوراً، ثم يجب إعادة الإرسال.`))return;
+
             const now=new Date();
-            latest.undoUsed=true;
-            latest.undoneAt=Date.now();
-            latest.undoneDate=getLocalDateISO(now);
-            latest.undoneTime=now.toLocaleTimeString('ar-IQ');
-            latest.undoneById=String(state.currentUser.id||'');
-            latest.undoneByName=sanitizeText(state.currentUser.name||'',120);
-            latest.declaration='reopened';
-            latest.reopenedForEdit=true;
-            state.notifications.push({id:makeId('note'),msg:`↩️ الأستاذ ${state.currentUser.name} تراجع عن آخر إرسال لغيابات مادة ${sub.name} لفتحها للتعديل — فرصة التراجع استُخدمت`,time:now.toLocaleString('ar-IQ'),professorId:state.currentUser.id,subjectId:sub.id,submissionId:latest.id});
-            recordAudit('تراجع الأستاذ عن آخر إرسال لمرة واحدة',{subjectId:sub.id,subject:sub.name,submissionId:latest.id,oneTimeUndoUsed:true,attendanceRecordsChanged:false});
-            const ok=await saveAll();
-            renderProfessor({preserveView:true});
-            alert(ok?'✅ تم التراجع عن آخر إرسال وفتح الغيابات للتعديل. هذه كانت فرصة التراجع الوحيدة لهذه المادة. بعد التصحيح أعد الإرسال.':'🟠 تم فتح الغيابات للتعديل محلياً واستخدام فرصة التراجع الوحيدة. ستتم مزامنة الحالة عند عودة الاتصال.');
+            const nowMs=Date.now();
+            // V31: لا نعدّل سجل الإرسال القديم. ننشئ حدث فتح جديداً أحدث منه، فيصبح هو الحالة الحاكمة
+            // حتى لا تستطيع نسخة Firebase قديمة من سجل completed إعادة قفل المادة.
+            const reopenEvent={
+                id:makeId('submission'),
+                professorId:String(state.currentUser.id||''),
+                professorName:sanitizeText(state.currentUser.name||'',120),
+                subjectId:sub.id,
+                subjectName:sanitizeText(sub.name,160),
+                level:Number(sub.level)||0,
+                fingerprint:getSubjectAttendanceFingerprint(sub.id),
+                date:getLocalDateISO(now),
+                time:now.toLocaleTimeString('ar-IQ'),
+                createdAt:nowMs,
+                updatedAt:nowMs,
+                declaration:'reopened',
+                reopenEvent:true,
+                undoEvent:true,
+                undoUsed:true,
+                undoneAt:nowMs,
+                undoneDate:getLocalDateISO(now),
+                undoneTime:now.toLocaleTimeString('ar-IQ'),
+                undoneById:String(state.currentUser.id||''),
+                undoneByName:sanitizeText(state.currentUser.name||'',120),
+                reopenedForEdit:true,
+                reopenedFromSubmissionId:String(latestCompleted.id||''),
+                oneTimeUndoConsumed:true
+            };
+            state.submissions.push(reopenEvent);
+            if(state.submissions.length>5000)state.submissions=state.submissions.slice(-5000);
+            state.notifications.push({id:makeId('note'),msg:`↩️ الأستاذ ${state.currentUser.name} فتح غيابات مادة ${sub.name} للتعديل بعد التراجع عن آخر إرسال — استُخدمت فرصة التراجع الوحيدة`,time:now.toLocaleString('ar-IQ'),professorId:state.currentUser.id,subjectId:sub.id,submissionId:reopenEvent.id});
+            recordAudit('تراجع الأستاذ عن آخر إرسال لمرة واحدة',{subjectId:sub.id,subject:sub.name,reopenEventId:reopenEvent.id,reopenedFromSubmissionId:latestCompleted.id,oneTimeUndoUsed:true,attendanceRecordsChanged:false});
+
+            // افتح الواجهة فوراً قبل انتظار الشبكة.
+            const savedView=captureProfessorViewState();
+            renderProfessor({preserveView:false});
+            restoreProfessorViewState(savedView,'');
+            renderProfessorSubmissionStatus(sub);
+            showAttendanceToast('↩️ تم فتح الغيابات للتعديل.','success');
+
+            const localSaved=await persistLocalState('undo-submission-v31',true);
+            const cloudSaved=await pushToFirebase({silent:true});
+            // مهما كانت حالة الشبكة يبقى حدث التراجع محفوظاً محلياً ولا نعيد القفل.
+            renderProfessorSubmissionStatus(getProfessorSubject());
+            if(localSaved&&cloudSaved) alert('✅ تم التراجع وفتح الغيابات للتعديل. هذه كانت فرصة التراجع الوحيدة. بعد التصحيح استخدم «إعادة إرسال الغيابات بعد التعديل».');
+            else alert('🟠 تم فتح الغيابات للتعديل وحفظ التراجع على هذا الجهاز. ستُزامن حالة الفتح تلقائياً عند استقرار الاتصال.');
         }
 
         function getStudentsForProfessor() {
@@ -6795,6 +6849,40 @@
             restoreProfessorViewState(preservedView,options.highlightStudentId||'');
         }
 
+        function getLatestAbsentSessionContextForGroup(subject, groupName, students=null) {
+            if(!subject)return null;
+            const memberIds=new Set((students||getStudentsForProfessor().filter(st=>professorGroupNameForStudent(st,subject)===groupName)).map(st=>String(st.id)));
+            const candidates=getLogicalAttendanceRecords(state.attendances).filter(att=>
+                String(att.subjectId)===String(subject.id) && memberIds.has(String(att.studentId)) && Number(att.hours||0)>0 && attendanceRecordSessionKey(att)!=='legacy'
+            );
+            if(!candidates.length)return null;
+            const sessions=new Map();
+            candidates.forEach(att=>{
+                const key=`${String(att.date||'')}|${attendanceRecordSessionKey(att)}`;
+                const current=sessions.get(key)||{date:String(att.date||''),sessionTime:normalizeSessionTime(att.sessionTime),records:[],revision:0};
+                current.records.push(att);
+                current.revision=Math.max(current.revision,attendanceRecordRevision(att));
+                sessions.set(key,current);
+            });
+            const latest=[...sessions.values()].sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(b.sessionTime).localeCompare(String(a.sessionTime)) || b.revision-a.revision)[0];
+            if(!latest)return null;
+            return {ok:true,code:'recorded',date:latest.date,sessionTime:latest.sessionTime,sessionKey:attendanceSessionKey(latest.sessionTime),groupName,subjectId:String(subject.id),professorId:String(subject.professorId||''),lectureId:String(latest.records[0]?.lectureId||''),schedulePublishedAt:Number(latest.records[0]?.schedulePublishedAt)||null,displayTime:`${latest.date} · ${latest.sessionTime}`,fromRecordedAttendance:true};
+        }
+
+        function getBulkCancelContext(subject, groupName, groupStudents) {
+            const scheduled=buildQuickAttendanceContext(subject,groupName,true);
+            if(scheduled.ok){
+                const currentAbsent=(groupStudents||[]).filter(st=>Number(findAttendanceForSession(st.id,subject.id,scheduled.date,scheduled.sessionTime)?.hours)>0);
+                if(currentAbsent.length)return {...scheduled,absentCount:currentAbsent.length};
+            }
+            const recorded=getLatestAbsentSessionContextForGroup(subject,groupName,groupStudents);
+            if(recorded){
+                const count=(groupStudents||[]).filter(st=>Number(findAttendanceForSession(st.id,subject.id,recorded.date,recorded.sessionTime)?.hours)>0).length;
+                if(count)return {...recorded,absentCount:count};
+            }
+            return scheduled.ok?{...scheduled,absentCount:0}:{ok:false,absentCount:0,reason:scheduled.reason||'لا توجد محاضرة مسجلة يمكن تصحيحها.'};
+        }
+
         function renderProfessorGroups(students) {
             const container = document.getElementById('profGroupsContainer');
             const sub = getProfessorSubject();
@@ -6813,11 +6901,12 @@
                 const chipClass=context.ok?'':(context.code==='future'?'waiting':'unavailable');
                 const chipText=context.ok?`${context.code==='current'?'● الآن':'✓ متاحة'} · ${context.displayTime}`:(context.code==='future'?`⏳ ${formatScheduleMinutes(context.lecture?.startMinutes)}`:'غير مجدولة اليوم');
                 const disabled=(context.ok&&!submissionLocked)?'':'disabled aria-disabled="true"';
-                const currentAbsentCount=context.ok?groupStudents.filter(st=>Number(findAttendanceForSession(st.id,sub?.id,context.date,context.sessionTime)?.hours)>0).length:0;
-                const cancelAllDisabled=(context.ok&&!submissionLocked&&currentAbsentCount>0)?'':'disabled aria-disabled="true"';
+                const bulkCancelContext=getBulkCancelContext(sub,groupName,groupStudents);
+                const currentAbsentCount=Number(bulkCancelContext?.absentCount)||0;
+                const cancelAllDisabled=(!submissionLocked&&bulkCancelContext?.ok&&currentAbsentCount>0)?'':'disabled aria-disabled="true"';
                 const actionTitle=escapeHtml(submissionLocked?'الغيابات مغلقة بعد الإرسال؛ استخدم فرصة التراجع إن كانت متاحة.':(context.ok?`تسجيل محاضرة ${context.displayTime}`:context.reason));
                 html += `<div class="group-card"><div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length})</span></div>
-                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button><button data-attendance-control="1" ${cancelAllDisabled} title="${currentAbsentCount?`إلغاء غياب ${currentAbsentCount} طالب في هذه المحاضرة`:'لا توجد غيابات لإلغائها'}" data-cancel-all-group="${escapeHtml(encodedGroup)}" onclick="removeAllCurrentSessionAbsences(decodeURIComponent('${encodedGroup}'))" class="btn-secondary btn-sm" style="font-size:10px;">↩ إلغاء غياب الكل${currentAbsentCount?` (${currentAbsentCount})`:''}</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button><button data-attendance-control="1" ${cancelAllDisabled} title="${currentAbsentCount?`حذف/إلغاء غياب ${currentAbsentCount} طالب من ${escapeHtml(bulkCancelContext.displayTime||'آخر محاضرة مسجلة')}`:'لا توجد غيابات لإلغائها'}" data-cancel-all-group="${escapeHtml(encodedGroup)}" onclick="removeAllCurrentSessionAbsences(decodeURIComponent('${encodedGroup}'))" class="btn-secondary btn-sm" style="font-size:10px;">🗑️ حذف غياب الكل${currentAbsentCount?` (${currentAbsentCount})`:''}</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
                 groupStudents.forEach(st => {
                     const atts = getLogicalAttendanceForStudentSubject(st.id,sub?.id);
                     const totalAbsent = atts.reduce((s,a)=>s+getAttendanceEffectiveHours(a,sub),0);
@@ -6894,14 +6983,14 @@
             const encoded=encodeURIComponent(String(groupName||''));
             const btn=[...container.querySelectorAll('[data-cancel-all-group]')].find(x=>String(x.dataset.cancelAllGroup||'')===encoded);
             if(!btn)return false;
-            const context=buildQuickAttendanceContext(sub,groupName,true);
             const students=getStudentsForProfessor().filter(st=>professorGroupNameForStudent(st,sub)===groupName);
-            const count=context.ok?students.filter(st=>Number(findAttendanceForSession(st.id,sub.id,context.date,context.sessionTime)?.hours)>0).length:0;
+            const context=getBulkCancelContext(sub,groupName,students);
+            const count=Number(context?.absentCount)||0;
             const locked=isProfessorSubjectLockedAfterSubmission(sub);
-            btn.disabled=!(context.ok&&!locked&&count>0);
+            btn.disabled=!(context?.ok&&!locked&&count>0);
             btn.setAttribute('aria-disabled',btn.disabled?'true':'false');
-            btn.textContent=`↩ إلغاء غياب الكل${count?` (${count})`:''}`;
-            btn.title=count?`إلغاء غياب ${count} طالب في هذه المحاضرة`:'لا توجد غيابات لإلغائها';
+            btn.textContent=`🗑️ حذف غياب الكل${count?` (${count})`:''}`;
+            btn.title=count?`حذف/إلغاء غياب ${count} طالب من ${context.displayTime||'آخر محاضرة مسجلة'}`:'لا توجد غيابات لإلغائها';
             return true;
         }
 
@@ -7018,32 +7107,38 @@
             if(!sub||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح لهذا الحساب بتعديل غياب هذه المادة.');return;}
             if(!canProfessorEditAttendanceForSubject(sub))return;
             const students=getStudentsForProfessor().filter(st=>professorGroupNameForStudent(st,sub)===groupName);
-            const context=buildQuickAttendanceContext(sub,groupName);
-            if(!context.ok){alert(context.reason);return;}
+            const context=getBulkCancelContext(sub,groupName,students);
+            if(!context.ok){alert(context.reason||'لا توجد محاضرة مسجلة يمكن حذف غيابها.');return;}
             const absentStudents=students.filter(st=>Number(findAttendanceForSession(st.id,sub.id,context.date,context.sessionTime)?.hours)>0);
-            if(!absentStudents.length){showAttendanceToast('لا توجد غيابات مسجلة لإلغائها في هذه المحاضرة.','warning');return;}
+            if(!absentStudents.length){showAttendanceToast('لا توجد غيابات مسجلة لإلغائها في المحاضرة المحددة.','warning');return;}
             const label=sub.groupType==='عملي'?'المجموعة العملية':'الشعبة النظرية';
-            if(!confirm(`إلغاء غياب جميع الطلبة الغائبين في ${label} ${groupName} لمحاضرة ${context.displayTime}؟\n\nسيتم تحويل ${absentStudents.length} حالة غياب إلى حضور صريح لهذه المحاضرة فقط، ولن تتأثر أي محاضرة أخرى.`))return;
+            const targetLabel=context.fromRecordedAttendance?`${context.date} الساعة ${context.sessionTime}`:`${context.displayTime}`;
+            if(!confirm(`حذف غياب جميع الطلبة الغائبين في ${label} ${groupName}؟
+
+المحاضرة المستهدفة: ${targetLabel}
+عدد الحالات التي ستتغير: ${absentStudents.length}
+
+سيتم تثبيتهم «حاضرين» لهذه المحاضرة فقط، ولن تتأثر أي محاضرة أخرى.`))return;
             attendanceMutationBusy=true;
             const before=JSON.parse(JSON.stringify(state.attendances));
             try{
                 let duplicates=0;
                 absentStudents.forEach(st=>{const r=upsertAttendanceState(st.id,sub,context,0,0,'remove-all-absence-explicit-present');duplicates+=r.duplicateCount;});
                 const verified=absentStudents.every(st=>{const r=findAttendanceForSession(st.id,sub.id,context.date,context.sessionTime);return !!r&&Number(r.hours)===0;});
-                if(!verified){state.attendances=before;throw new Error('تعذر التحقق من إلغاء كل الغيابات؛ أعيدت الحالة السابقة دون فقد.');}
-                recordAudit('إلغاء غياب جميع الطلبة لمحاضرة',{subjectId:sub.id,subject:sub.name,professorId:sub.professorId,groupName,date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,studentsChanged:absentStudents.length,duplicatesSuperseded:duplicates,newState:'present'});
-                await persistAttendanceMutation('remove-all-current-session-absences');
+                if(!verified){state.attendances=before;throw new Error('تعذر التحقق من حذف كل الغيابات؛ أعيدت الحالة السابقة دون فقد.');}
+                recordAudit('حذف غياب جميع الطلبة لمحاضرة',{subjectId:sub.id,subject:sub.name,professorId:sub.professorId,groupName,date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,studentsChanged:absentStudents.length,duplicatesSuperseded:duplicates,newState:'present',usedRecordedFallback:!!context.fromRecordedAttendance});
+                const localPromise=persistAttendanceMutation('remove-all-current-session-absences-v31');
                 absentStudents.forEach(st=>updateProfessorStudentAttendanceRow(st.id));
                 renderProfessorAttendance(sub.id);
                 renderProfessorSubmissionStatus(sub);
-                // أعد بناء رؤوس المجموعات فقط لإظهار عداد «إلغاء غياب الكل» الصحيح، مع حفظ موضع التمرير.
                 const savedView=captureProfessorViewState();
                 renderProfessorGroups(getStudentsForProfessor());
                 restoreProfessorViewState(savedView,'');
-                showAttendanceToast(`✅ تم إلغاء غياب ${absentStudents.length} طالب وتثبيت حضورهم لهذه المحاضرة`);
+                showAttendanceToast(`✅ حُذف غياب ${absentStudents.length} طالب من المحاضرة المحددة`);
+                await localPromise;
             }catch(err){
                 console.error(err);
-                alert(err.message||'تعذر إلغاء الغياب الجماعي.');
+                alert(err.message||'تعذر حذف الغياب الجماعي.');
             }finally{attendanceMutationBusy=false;}
         }
 
@@ -7297,6 +7392,7 @@
             const students = getStudentsForProfessor();
             const realRecords = getSubjectOperationalAttendanceRecords(sub.id);
             const previousSubmission=getLatestSubmission(sub.id,state.currentUser?.id);
+            const previousCompleted=getLatestCompletedSubmission(sub.id,state.currentUser?.id);
             const isResend=!!previousSubmission;
             const actionLabel=isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات';
             if (!confirm(`هل تؤكد ${actionLabel} لمادة «${sub.name}» حتى تاريخ ${getLocalDateISO()}؟\n\nعدد الطلبة الحاليين: ${students.length}\nالحالات التشغيلية للمحاضرات: ${realRecords.length}${getOfficerWhatsAppNumber()?'\n\nبعد الحفظ سيفتح واتساب، ويجب الضغط على «إرسال» داخله يدوياً.':''}`)) return;
@@ -7322,9 +7418,10 @@
                 date: getLocalDateISO(now),
                 time: now.toLocaleTimeString('ar-IQ'),
                 createdAt: Date.now(),
+                updatedAt: Date.now(),
                 declaration: 'completed',
                 revisionNumber:priorCompleted+1,
-                resendOfSubmissionId:isResend?String(previousSubmission.id||''):null,
+                resendOfSubmissionId:isResend?String(previousCompleted?.id||previousSubmission?.id||''):null,
                 undoEligible: !hasSubmissionUndoEverUsed(sub.id, state.currentUser.id),
                 undoUsed: false,
                 whatsappNumberConfigured: !!whatsappNumber,
