@@ -714,6 +714,7 @@
                         <h4>📤 إكمال وإرسال الغيابات</h4>
                         <button id="sendToOfficerBtn" onclick="sendToOfficer()" style="background:#805ad5; width:100%; margin-bottom:4px;">✅ تأكيد الإكمال داخل النظام</button>
                         <button id="undoSubmissionBtn" onclick="undoLastSubmissionOnce()" class="btn-warning" style="display:none;width:100%;margin-bottom:4px;">↩️ تراجع عن آخر إرسال وفتح التعديل</button>
+                        <button id="resendWhatsAppBtn" onclick="resendLastSubmissionWhatsApp()" class="btn-info" style="display:none;width:100%;margin-bottom:4px;">📱 إعادة فتح آخر رسالة واتساب</button>
                         <div id="profSubmissionStatus" class="prof-submission-status submission-pending">لم يتم الإرسال بعد</div>
                         <div id="profSubmissionDeliveryNote" style="font-size:10px;color:#991b1b;text-align:center;margin-top:6px;font-weight:900;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:7px;"></div>
                         <small style="display:block; margin-top:5px; color:#718096;">بعد الإرسال تُقفل الغيابات للأستاذ. إذا اكتُشف خطأ يمكن استخدام «تراجع عن آخر إرسال» مرة واحدة فقط للمادة، ثم تعديل الغيابات وإعادة الإرسال.</small>
@@ -832,8 +833,8 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '29.0';
-        const SCHEMA_VERSION = 14;
+        const APP_VERSION = '30.0';
+        const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
         const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
@@ -1741,6 +1742,19 @@
                 return changed;
             }
 
+            // حماية سجل واتساب المستقل داخل appSettings من أي لقطة قديمة للسجل العام أو من سباق مزامنة.
+            if (name === 'appSettings') {
+                const contactId='officerWhatsAppContact';
+                const l=local.get(contactId), r=remote.get(contactId), b=base.get(contactId);
+                if(l){
+                    const localNumber=normalizeWhatsAppNumber(l.whatsappNormalized||l.whatsappNumber||'');
+                    const remoteNumber=normalizeWhatsAppNumber(r?.whatsappNormalized||r?.whatsappNumber||'');
+                    const localDirty=!sameRecord(l,b);
+                    const localRev=Number(l.updatedAt)||0, remoteRev=Number(r?.updatedAt)||0;
+                    if(/^\d{8,15}$/.test(localNumber) && (!r || localDirty || localRev>remoteRev || !/^\d{8,15}$/.test(remoteNumber))) remote.set(contactId,l);
+                }
+            }
+
             const localIds = new Set([...local.keys(), ...base.keys()]);
             localIds.forEach(id => {
                 const l = local.get(id);
@@ -1858,12 +1872,13 @@
                 const repairedEnrollmentAttendances = repairEnrollmentAttendanceRecords();
                 const recalculatedSubjectHours = refreshAutomaticSubjectHours();
                 const subjectHourOverridesMigrated = migrateLegacySubjectHourOverrides();
+                const officerContactMigrated = migrateLegacyOfficerContact();
                 const linkRepair = ensureActiveSubjectLinks();
                 const professorProfilesMigrated=ensureProfessorProfilesFromLegacy();
                 const professorRefsCanonicalized=canonicalizeProfessorReferences();
-                const automaticRepairChanged=professorProfilesMigrated || professorRefsCanonicalized || repairedEnrollmentAttendances || recalculatedSubjectHours || subjectHourOverridesMigrated || linkRepair.added || linkRepair.removed;
+                const automaticRepairChanged=professorProfilesMigrated || professorRefsCanonicalized || repairedEnrollmentAttendances || recalculatedSubjectHours || subjectHourOverridesMigrated || officerContactMigrated || linkRepair.added || linkRepair.removed;
                 if(automaticRepairChanged){
-                    recordAudit('ترحيل وإصلاح تلقائي للبيانات',{profiles:(state.professorProfiles||[]).length,repairedEnrollmentAttendances,recalculatedSubjectHours,subjectHourOverridesMigrated,linksAdded:linkRepair.added,linksRemoved:linkRepair.removed});
+                    recordAudit('ترحيل وإصلاح تلقائي للبيانات',{profiles:(state.professorProfiles||[]).length,repairedEnrollmentAttendances,recalculatedSubjectHours,subjectHourOverridesMigrated,officerContactMigrated,linksAdded:linkRepair.added,linksRemoved:linkRepair.removed});
                 }
                 cloudConnected = true;
                 lastCloudSyncAt = Date.now();
@@ -2033,6 +2048,7 @@
                 if (!loaded) await initializeDefaultData();
                 state.initialLoadDone = true;
                 ensureAllRecordIds();
+                migrateLegacyOfficerContact();
                 ensureProfessorProfilesFromLegacy();
                 canonicalizeProfessorReferences();
                 await persistLocalState('bootstrap', true);
@@ -2167,7 +2183,7 @@
                 appSettings: state.appSettings,
                 schemaVersion: SCHEMA_VERSION,
                 backupDate: new Date().toISOString(),
-                version: `${APP_VERSION}-reviewed-attendance-integrity`
+                version: `${APP_VERSION}-strict-sync-review`
             };
             const json = JSON.stringify(data, null, 2);
             const blob = new Blob([json], { type: 'application/json' });
@@ -2222,10 +2238,11 @@
                     const repairedEnrollmentAttendances = repairEnrollmentAttendanceRecords();
                     const recalculatedSubjectHours = refreshAutomaticSubjectHours();
                     const subjectHourOverridesMigrated = migrateLegacySubjectHourOverrides();
+                    const officerContactMigrated = migrateLegacyOfficerContact();
                     const linkRepair = ensureActiveSubjectLinks();
                     ensureProfessorProfilesFromLegacy();
                     canonicalizeProfessorReferences();
-                    recordAudit('استعادة نسخة احتياطية', { fileName: file.name, backupVersion: data.version || data.schemaVersion || 'غير محدد', repairedEnrollmentAttendances, recalculatedSubjectHours, subjectHourOverridesMigrated, linksAdded: linkRepair.added, linksRemoved: linkRepair.removed });
+                    recordAudit('استعادة نسخة احتياطية', { fileName: file.name, backupVersion: data.version || data.schemaVersion || 'غير محدد', repairedEnrollmentAttendances, recalculatedSubjectHours, subjectHourOverridesMigrated, officerContactMigrated, linksAdded: linkRepair.added, linksRemoved: linkRepair.removed });
 
                     const ok = await saveAll();
                     renderAll();
@@ -3503,17 +3520,48 @@
             catch (e) { console.warn('تعذر حفظ رقم واتساب احتياطيا في هذا الجهاز:', e); return false; }
         }
 
+        function getOfficerContactRecord(create = false) {
+            // سجل مستقل داخل appSettings نفسها: لا يتأثر بتحديث السجل global ولا يحتاج مسار Firebase جديداً أو قواعد جديدة.
+            if (!Array.isArray(state.appSettings)) state.appSettings = [];
+            let rec = state.appSettings.find(x => x && x.id === 'officerWhatsAppContact') || null;
+            if (!rec && create) {
+                rec = { id:'officerWhatsAppContact', whatsappNumber:'', whatsappNormalized:'', updatedAt:0, updatedBy:'' };
+                state.appSettings.push(rec);
+            }
+            return rec;
+        }
+
+        function legacyOfficerWhatsAppCandidate() {
+            const settings = Array.isArray(state.appSettings) ? state.appSettings.find(x => x && x.id === 'global') : null;
+            const candidates = [settings?.officerWhatsAppNormalized, settings?.officerWhatsApp, readOfficerWhatsAppFallback()];
+            for (const value of candidates) {
+                const normalized = normalizeWhatsAppNumber(value || '');
+                if (/^\d{8,15}$/.test(normalized)) return normalized;
+            }
+            return '';
+        }
+
+        function migrateLegacyOfficerContact() {
+            const existing = getOfficerContactRecord(false);
+            if (existing && /^\d{8,15}$/.test(normalizeWhatsAppNumber(existing.whatsappNormalized || existing.whatsappNumber || ''))) return 0;
+            const legacy = legacyOfficerWhatsAppCandidate();
+            if (!legacy) return 0;
+            const settings = Array.isArray(state.appSettings) ? state.appSettings.find(x => x && x.id === 'global') : null;
+            const rec = existing || getOfficerContactRecord(true);
+            rec.whatsappNumber = legacy;
+            rec.whatsappNormalized = legacy;
+            rec.updatedAt = Math.max(Number(rec.updatedAt)||0, Number(settings?.officerWhatsAppUpdatedAt)||0, Number(settings?.updatedAt)||0, 1);
+            rec.updatedBy = rec.updatedBy || String(settings?.updatedBy || 'legacy-migration');
+            writeOfficerWhatsAppFallback(legacy);
+            return 1;
+        }
+
         function getGlobalAppSettings() {
             if (!Array.isArray(state.appSettings)) state.appSettings = [];
             let rec = state.appSettings.find(x => x && x.id === 'global');
             if (!rec) {
                 rec = { id: 'global', officerWhatsApp: '', lectureRemindersEnabled: false, lectureReminderActiveFrom: '', lectureReminderActiveTo: '', absenceStatusBasis: 'unexcused', bolognaTeachingWeeks: 15, annualTeachingWeeks: 30, updatedAt: 0 };
                 state.appSettings.push(rec);
-            }
-            const fallback = readOfficerWhatsAppFallback();
-            if (fallback && !normalizeWhatsAppNumber(rec.officerWhatsAppNormalized || rec.officerWhatsApp || '')) {
-                rec.officerWhatsApp = fallback;
-                rec.officerWhatsAppNormalized = fallback;
             }
             return rec;
         }
@@ -3654,8 +3702,13 @@
         }
 
         function getOfficerWhatsAppNumber() {
+            const contact = getOfficerContactRecord(false);
             const settings = getGlobalAppSettings();
-            const candidates = [settings.officerWhatsAppNormalized, settings.officerWhatsApp, readOfficerWhatsAppFallback()];
+            const candidates = [
+                contact?.whatsappNormalized, contact?.whatsappNumber,
+                settings.officerWhatsAppNormalized, settings.officerWhatsApp,
+                readOfficerWhatsAppFallback()
+            ];
             for (const value of candidates) {
                 const normalized = normalizeWhatsAppNumber(value || '');
                 if (/^\d{8,15}$/.test(normalized)) return normalized;
@@ -3667,19 +3720,20 @@
             const input = document.getElementById('officerWhatsAppNumber');
             const status = document.getElementById('officerWhatsAppStatus');
             if (!input || !status) return;
-            const settings = getGlobalAppSettings();
+            const contact = getOfficerContactRecord(false);
             const normalized = getOfficerWhatsAppNumber();
-            input.value = settings.officerWhatsApp || normalized || '';
+            input.value = contact?.whatsappNumber || contact?.whatsappNormalized || normalized || '';
             if (normalized) {
-                status.textContent = `✅ رقم واتساب محفوظ: +${normalized}`;
+                status.textContent = `✅ رقم واتساب معتمد ومحفوظ: +${normalized}`;
                 status.style.color = '#166534';
             } else {
-                status.textContent = settings.officerWhatsApp ? '⚠️ الرقم المحفوظ غير صالح. أدخله بصيغة 07... أو الصيغة الدولية.' : 'لم يتم تحديد رقم واتساب بعد.';
-                status.style.color = settings.officerWhatsApp ? '#9a3412' : '#475569';
+                status.textContent = 'لم يتم تحديد رقم واتساب بعد.';
+                status.style.color = '#475569';
             }
         }
 
         async function saveOfficerWhatsAppSettings() {
+            if(state.currentUser?.role!=='admin'){alert('هذه الصلاحية لرئيس القسم فقط.');return;}
             const input = document.getElementById('officerWhatsAppNumber');
             const status = document.getElementById('officerWhatsAppStatus');
             if (!input) return;
@@ -3690,35 +3744,39 @@
                 return;
             }
 
-            // تثبيت الرقم فورا محليا قبل أي اتصال بالشبكة حتى لا تختفي القيمة من الواجهة.
+            const now=Date.now();
             writeOfficerWhatsAppFallback(normalized);
+            const contact = getOfficerContactRecord(true);
+            contact.whatsappNumber = normalized;
+            contact.whatsappNormalized = normalized;
+            contact.updatedAt = now;
+            contact.updatedBy = state.currentUser?.id || 'admin';
+
+            // توافق فقط مع النسخ الأقدم. المصدر المعتمد في V30 هو سجل appSettings مستقل عن global.
             const settings = getGlobalAppSettings();
             settings.officerWhatsApp = normalized;
             settings.officerWhatsAppNormalized = normalized;
-            settings.updatedAt = Date.now();
-            settings.updatedBy = state.currentUser?.id || 'admin';
-            recordAudit('تحديث رقم واتساب مسؤول الغيابات', { numberEnding: normalized.slice(-4) });
-            await persistLocalState('officer-whatsapp', true);
+            settings.officerWhatsAppUpdatedAt = now;
+
+            recordAudit('تحديث رقم واتساب مسؤول الغيابات', { numberEnding: normalized.slice(-4), storage:'dedicated-appSettings-record' });
+            await persistLocalState('officer-whatsapp-v30', true);
             renderOfficerWhatsAppSettings();
-            if (status) status.textContent = `✅ رقم واتساب محفوظ على هذا الجهاز: +${normalized} — جارٍ تثبيته سحابياً...`;
+            if (status) status.textContent = `✅ الرقم محفوظ محلياً: +${normalized} — جارٍ التثبيت السحابي المستقل...`;
 
             let cloudSaved = false;
             if (database) {
                 try {
-                    await withTimeout(database.ref('/appSettings/global').update({
-                        id:'global',
-                        officerWhatsApp:normalized,
-                        officerWhatsAppNormalized:normalized,
-                        updatedAt:settings.updatedAt,
-                        updatedBy:settings.updatedBy
-                    }), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ رقم واتساب');
+                    await withTimeout(database.ref('/appSettings/officerWhatsAppContact').set({...contact}), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ رقم واتساب');
+                    const snap=await withTimeout(database.ref('/appSettings/officerWhatsAppContact').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة التحقق من رقم واتساب');
+                    const verified=normalizeWhatsAppNumber(snap.val()?.whatsappNormalized||snap.val()?.whatsappNumber||'');
+                    if(verified!==normalized) throw new Error('القيمة السحابية بعد الحفظ لا تطابق الرقم الجديد');
                     cloudSaved = true;
-                    // اجعل مسار المزامنة العام يرى القيمة نفسها ولا يعيدها إلى نسخة أقدم.
                     const base = mapsById(lastSyncedCollections.appSettings || []);
-                    const previous = base.get('global') || {};
-                    base.set('global', {...previous, ...settings, id:'global'});
+                    base.set('officerWhatsAppContact', {...contact});
                     lastSyncedCollections.appSettings = Array.from(base.values());
-                    await persistLocalState('officer-whatsapp-cloud', true);
+                    // تحديث توافق للنسخ القديمة، لكن فشله لا يمس الرقم المعتمد.
+                    database.ref('/appSettings/global').update({officerWhatsApp:normalized,officerWhatsAppNormalized:normalized,officerWhatsAppUpdatedAt:now}).catch(()=>{});
+                    await persistLocalState('officer-whatsapp-cloud-v30', true);
                 } catch (err) {
                     console.warn('تعذر تثبيت رقم واتساب سحابياً الآن:', err);
                     scheduleCloudRetry();
@@ -3727,10 +3785,10 @@
 
             renderOfficerWhatsAppSettings();
             if (cloudSaved) {
-                if (status) status.textContent = `✅ رقم واتساب محفوظ محلياً وسحابياً: +${normalized}`;
+                if (status) status.textContent = `✅ رقم واتساب محفوظ في سجل سحابي مستقل: +${normalized}`;
                 alert('✅ تم حفظ رقم واتساب مسؤول الغيابات محلياً وسحابياً.');
             } else {
-                if (status) status.textContent = `🟠 رقم واتساب محفوظ على هذا الجهاز: +${normalized} — ستتم مزامنته سحابياً عند توفر الاتصال.`;
+                if (status) status.textContent = `🟠 الرقم محفوظ على هذا الجهاز: +${normalized} — ستتم مزامنته تلقائياً.`;
                 alert('✅ تم حفظ الرقم على هذا الجهاز. ستتم مزامنته مع السحابة تلقائياً عند توفر الاتصال.');
             }
         }
@@ -3763,8 +3821,8 @@
                 `🟠 إنذار نهائي: ${counts['إنذار نهائي']}`,
                 `🔴 راسب: ${counts['راسب']}`,
                 '',
-                '✅ أكد الأستاذ إكمال تسجيل الغيابات وأرسلها لمسؤول الغيابات.',
-                'يرجى مراجعة لوحة «متابعة الإرسال» في النظام.'
+                '✅ أكد الأستاذ إكمال تسجيل الغيابات داخل النظام.',
+                '📱 هذه رسالة واتساب يرسلها الأستاذ يدوياً إلى مسؤول الغيابات؛ يرجى مراجعة لوحة «متابعة الإرسال» في النظام.'
             ].join('\n');
         }
 
@@ -5526,7 +5584,7 @@
         // ==============================================================
         function studentRelevantToSubject(student, subject) {
             if (studentMatchesSubject(student, subject)) return true;
-            return state.attendances.some(a => a.studentId===student.id && a.subjectId===subject.id && Number(a.hours)>0);
+            return getLogicalAttendanceRecords(state.attendances).some(a => String(a.studentId)===String(student.id) && String(a.subjectId)===String(subject.id) && Number(a.hours)>0);
         }
 
         function getStatusRowsForLevel(level) {
@@ -6129,9 +6187,9 @@
             const subjects=state.subjects.filter(s=>Number(s.level)===Number(level) && s.timetableActive!==false).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ar'));
             if(!subjects.length){container.innerHTML='<div class="card"><p>لا توجد مواد في هذه المرحلة.</p></div>';return;}
             const stats={ok:0,pending:0,dirty:0,unassigned:0};
-            const rows=subjects.map(sub=>{const prof=state.professors.find(p=>p.id===sub.professorId);const st=getSubmissionState(sub);stats[st.code]=(stats[st.code]||0)+1;return{sub,prof,st,tt:subjectTimetableMatch(sub,prof)};});
-            let html=`<div class="card"><div class="flex-between"><div><h4 style="margin:0;">✅ متابعة إكمال وإرسال الغيابات</h4><small>الحالة تُقارن آلياً مع آخر نسخة أرسلها الأستاذ؛ أي تعديل بعد الإرسال يظهر فوراً.</small></div><button onclick="exportSubmissionTrackingExcel()" class="btn-excel btn-sm">📊 تصدير المتابعة</button></div>
-                <div class="status-count-grid"><div class="status-count-card submission-ok"><strong>${stats.ok}</strong>مكتمل ومُرسل</div><div class="status-count-card submission-pending"><strong>${stats.pending}</strong>لم يرسل</div><div class="status-count-card submission-dirty"><strong>${stats.dirty}</strong>يحتاج إعادة إرسال</div><div class="status-count-card submission-unassigned"><strong>${stats.unassigned}</strong>بلا أستاذ</div><div class="status-count-card" style="background:#ede9fe;color:#5b21b6;"><strong>${getScheduleLink()?'نعم':'لا'}</strong>ربط الجدول</div></div></div>`;
+            const rows=subjects.map(sub=>{const prof=state.professors.find(p=>p.id===sub.professorId);const st=getSubmissionState(sub);const bucket=st.code==='reopened'?'dirty':st.code;stats[bucket]=(stats[bucket]||0)+1;return{sub,prof,st,tt:subjectTimetableMatch(sub,prof)};});
+            let html=`<div class="card"><div class="flex-between"><div><h4 style="margin:0;">✅ متابعة إكمال وإرسال الغيابات</h4><small>الحالة تُقارن آلياً مع آخر نسخة أكدها الأستاذ؛ واتساب إرسال يدوي ولا يمكن للنظام إثبات الضغط على زر الإرسال داخله.</small></div><button onclick="exportSubmissionTrackingExcel()" class="btn-excel btn-sm">📊 تصدير المتابعة</button></div>
+                <div class="status-count-grid"><div class="status-count-card submission-ok"><strong>${stats.ok}</strong>مكتمل داخل النظام</div><div class="status-count-card submission-pending"><strong>${stats.pending}</strong>لم يؤكد</div><div class="status-count-card submission-dirty"><strong>${stats.dirty}</strong>يحتاج إعادة إرسال</div><div class="status-count-card submission-unassigned"><strong>${stats.unassigned}</strong>بلا أستاذ</div><div class="status-count-card" style="background:#ede9fe;color:#5b21b6;"><strong>${getScheduleLink()?'نعم':'لا'}</strong>ربط الجدول</div></div></div>`;
             html+='<div class="card"><div class="report-table-wrapper"><table class="report-table"><thead><tr><th>#</th><th>المادة</th><th>النوع</th><th>الأستاذ</th><th>الطلبة</th><th>آخر إرسال</th><th>الحالة</th><th>واتساب</th><th>الجدول الأسبوعي</th></tr></thead><tbody>';
             rows.forEach((r,i)=>{const studentCount=state.students.filter(st=>studentMatchesSubject(st,r.sub)).length;const last=r.st.latest;html+=`<tr><td>${i+1}</td><td>${escapeHtml(r.sub.name)}</td><td>${escapeHtml(r.sub.groupType||'')}</td><td>${escapeHtml(r.prof?.name||'غير معين')}</td><td>${studentCount}</td><td>${last?escapeHtml((last.date||'')+' '+(last.time||'')):'—'}</td><td><span class="submission-state ${r.st.cls}">${escapeHtml(r.st.label)}</span></td><td>${last?.whatsappPreparedAt?'📱 واتساب جُهز — الإرسال اليدوي مطلوب':(last?.whatsappNumberConfigured===false?'⚠️ لا يوجد رقم':'—')}</td><td>${getScheduleLink()?(r.tt?'✅ مطابق':'⚠️ غير مطابق'):'غير مربوط'}</td></tr>`;});
             html+='</tbody></table></div></div>';
@@ -6203,7 +6261,7 @@
 
             const from = document.getElementById('reportDateFrom').value;
             const to = document.getElementById('reportDateTo').value;
-            let filteredAttendances = state.attendances;
+            let filteredAttendances = getLogicalAttendanceRecords(state.attendances).filter(a=>Number(a.hours)>0);
             if (from) filteredAttendances = filteredAttendances.filter(a => a.date >= from);
             if (to) filteredAttendances = filteredAttendances.filter(a => a.date <= to);
 
@@ -6212,9 +6270,9 @@
                 container.innerHTML = '<div class="card"><p style="text-align:center;color:#718096;">لا توجد مواد فعلية نشطة لهذه المرحلة. لن يعرض البرنامج مواد منهجية افتراضية على أنها بلا غياب.</p></div>';
                 return;
             }
-            const levelStudentIds = new Set(studentsInLevel.map(st => st.id));
-            const levelSubjectIds = new Set(finalSubjects.map(s => s.id));
-            const periodRecords = filteredAttendances.filter(a => levelStudentIds.has(a.studentId) && levelSubjectIds.has(a.subjectId) && Number(a.hours) > 0);
+            const levelStudentIds = new Set(studentsInLevel.map(st => String(st.id)));
+            const levelSubjectIds = new Set(finalSubjects.map(s => String(s.id)));
+            const periodRecords = filteredAttendances.filter(a => levelStudentIds.has(String(a.studentId)) && levelSubjectIds.has(String(a.subjectId)) && Number(a.hours) > 0);
             let periodDetailsHtml = '';
             if (from || to) {
                 const sortedPeriod = [...periodRecords].sort((a,b) => String(b.date).localeCompare(String(a.date)));
@@ -6412,10 +6470,11 @@
         }
 
         function getSubjectOperationalAttendanceRecords(subjectId) {
-            return state.attendances
-                .filter(a => a.subjectId === subjectId && !isEnrollmentRecord(a))
-                .map(a => ({id:String(a.id||''),studentId:String(a.studentId||''),date:String(a.date||''),sessionTime:normalizeSessionTime(a.sessionTime),sessionKey:attendanceRecordSessionKey(a),hours:Number(a.hours)||0,excused:Number(a.excused)||0}))
-                .sort((a,b) => (a.date+a.sessionKey+a.studentId+a.id).localeCompare(b.date+b.sessionKey+b.studentId+b.id));
+            // البصمة تعتمد فقط على الحالة النهائية المنطقية لكل محاضرة، لا على نسخ مكررة/متجاوزة تقنية.
+            return getLogicalAttendanceRecords(state.attendances)
+                .filter(a => String(a.subjectId) === String(subjectId))
+                .map(a => ({studentId:String(a.studentId||''),date:String(a.date||''),sessionTime:normalizeSessionTime(a.sessionTime),sessionKey:attendanceRecordSessionKey(a),hours:Number(a.hours)||0,excused:Number(a.excused)||0,explicitState:String(a.explicitState||((Number(a.hours)||0)>0?'absent':'present'))}))
+                .sort((a,b) => (a.date+a.sessionKey+a.studentId).localeCompare(b.date+b.sessionKey+b.studentId));
         }
 
         function simpleHash(text) {
@@ -6442,8 +6501,8 @@
             const latest=getLatestSubmission(subject.id,state.currentUser.id);
             if(!latest)return false;
             if(latest.declaration==='reopened')return false;
-            const current=getSubjectAttendanceFingerprint(subject.id);
-            if(current!==latest.fingerprint)return false;
+            // بعد الإرسال تبقى المادة مقفلة دائماً للأستاذ حتى يستخدم فرصة التراجع الوحيدة.
+            // اختلاف البصمة قد يأتي من مزامنة/إصلاح تقني ولا يجب أن يفتح الصلاحية تلقائياً.
             return latest.declaration==='completed';
         }
 
@@ -6480,10 +6539,21 @@
             const whatsappConfigured=!!getOfficerWhatsAppNumber();
             const button=document.getElementById('sendToOfficerBtn');
             const undoButton=document.getElementById('undoSubmissionBtn');
+            const resendButton=document.getElementById('resendWhatsAppBtn');
             const note=document.getElementById('profSubmissionDeliveryNote');
             const undoUsed=subject&&state.currentUser?.role==='professor'?hasSubmissionUndoEverUsed(subject.id,state.currentUser.id):false;
             const locked=isProfessorSubjectLockedAfterSubmission(subject);
-            if(button)button.textContent=(st.code==='reopened'||st.code==='dirty')?(whatsappConfigured?'✅ إعادة تأكيد الإكمال وفتح واتساب':'✅ إعادة تأكيد الإكمال داخل النظام'):(whatsappConfigured?'✅ تأكيد الإكمال وفتح واتساب':'✅ تأكيد الإكمال داخل النظام');
+            if(button){
+                const needsNewSubmission=(st.code==='reopened'||st.code==='dirty'||st.code==='pending');
+                button.style.display=st.code==='ok'?'none':'block';
+                button.disabled=!needsNewSubmission;
+                button.textContent=(st.code==='reopened'||st.code==='dirty')?(whatsappConfigured?'🔄 إعادة إرسال الغيابات بعد التعديل':'🔄 إعادة تأكيد الغيابات بعد التعديل'):(whatsappConfigured?'✅ تأكيد الإكمال وفتح واتساب':'✅ تأكيد الإكمال داخل النظام');
+            }
+            if(resendButton){
+                resendButton.style.display=st.code==='ok'?'block':'none';
+                resendButton.disabled=!(st.code==='ok'&&whatsappConfigured);
+                resendButton.textContent=whatsappConfigured?'📱 إعادة فتح آخر رسالة واتساب':'📱 رقم مسؤول الغيابات غير مضبوط';
+            }
             if(undoButton){undoButton.style.display=locked&&!undoUsed?'block':'none';undoButton.disabled=!(locked&&!undoUsed);}
             if(note){
                 if(locked&&!undoUsed)note.textContent='🔒 تم إغلاق الغيابات بعد الإرسال. إذا وجدت خطأ فلديك فرصة تراجع واحدة فقط لفتح المادة وتعديلها ثم إعادة الإرسال.';
@@ -6491,6 +6561,29 @@
                 else if(st.code==='reopened')note.textContent='↩️ تم استخدام فرصة التراجع الوحيدة. عدّل الغيابات المطلوبة ثم أعد التأكيد والإرسال.';
                 else note.textContent=whatsappConfigured?'⚠️ مهم: الغيابات لا تُعد واصلة لمسؤول الغيابات بمجرد الحفظ. بعد فتح واتساب يجب أن تضغط «إرسال» بنفسك.':'⚠️ مهم: رقم واتساب مسؤول الغيابات غير مفعّل. الحفظ داخل النظام لا يعني وصول الغيابات إليه عبر واتساب.';
             }
+        }
+
+        async function resendLastSubmissionWhatsApp() {
+            const sub=getProfessorSubject();
+            if(!sub||state.currentUser?.role!=='professor'){alert('هذه العملية متاحة للأستاذ صاحب المادة فقط.');return;}
+            const st=getSubmissionState(sub);
+            const latest=st.latest||getLatestSubmission(sub.id,state.currentUser.id);
+            if(!latest||latest.declaration!=='completed'){alert('لا يوجد إرسال مكتمل يمكن إعادة فتح رسالته.');return;}
+            if(st.code!=='ok'){
+                alert('توجد تغييرات بعد آخر إرسال. استخدم زر «إعادة إرسال الغيابات بعد التعديل» أولاً حتى تصل النسخة الحالية.');
+                return;
+            }
+            const number=getOfficerWhatsAppNumber();
+            if(!number){alert('رقم واتساب مسؤول الغيابات غير مضبوط. اطلب من رئيس القسم حفظ الرقم أولاً.');return;}
+            const students=getStudentsForProfessor();
+            const url=buildWhatsAppUrl(number,buildOfficerWhatsAppMessage(sub,latest,students));
+            if(!url){alert('تعذر إنشاء رابط واتساب بسبب رقم غير صالح.');return;}
+            const popup=window.open(url,'_blank','noopener');
+            latest.whatsappReopenCount=(Number(latest.whatsappReopenCount)||0)+1;
+            latest.whatsappLastReopenedAt=Date.now();
+            recordAudit('إعادة فتح رسالة واتساب لآخر إرسال',{subjectId:sub.id,subject:sub.name,submissionId:latest.id,reopenCount:latest.whatsappReopenCount});
+            persistLocalState('resend-whatsapp-v30',true).then(()=>pushToFirebase({silent:true})).catch(console.error);
+            alert(popup?'📱 تم فتح آخر رسالة واتساب من جديد.\n\nاضغط «إرسال» داخل واتساب حتى تصل فعلياً لمسؤول الغيابات.':'⚠️ منع المتصفح فتح واتساب. اسمح بالنوافذ المنبثقة ثم اضغط الزر مرة أخرى.');
         }
 
         async function undoLastSubmissionOnce() {
@@ -6720,9 +6813,11 @@
                 const chipClass=context.ok?'':(context.code==='future'?'waiting':'unavailable');
                 const chipText=context.ok?`${context.code==='current'?'● الآن':'✓ متاحة'} · ${context.displayTime}`:(context.code==='future'?`⏳ ${formatScheduleMinutes(context.lecture?.startMinutes)}`:'غير مجدولة اليوم');
                 const disabled=(context.ok&&!submissionLocked)?'':'disabled aria-disabled="true"';
+                const currentAbsentCount=context.ok?groupStudents.filter(st=>Number(findAttendanceForSession(st.id,sub?.id,context.date,context.sessionTime)?.hours)>0).length:0;
+                const cancelAllDisabled=(context.ok&&!submissionLocked&&currentAbsentCount>0)?'':'disabled aria-disabled="true"';
                 const actionTitle=escapeHtml(submissionLocked?'الغيابات مغلقة بعد الإرسال؛ استخدم فرصة التراجع إن كانت متاحة.':(context.ok?`تسجيل محاضرة ${context.displayTime}`:context.reason));
                 html += `<div class="group-card"><div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length})</span></div>
-                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button><button data-attendance-control="1" ${cancelAllDisabled} title="${currentAbsentCount?`إلغاء غياب ${currentAbsentCount} طالب في هذه المحاضرة`:'لا توجد غيابات لإلغائها'}" data-cancel-all-group="${escapeHtml(encodedGroup)}" onclick="removeAllCurrentSessionAbsences(decodeURIComponent('${encodedGroup}'))" class="btn-secondary btn-sm" style="font-size:10px;">↩ إلغاء غياب الكل${currentAbsentCount?` (${currentAbsentCount})`:''}</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
                 groupStudents.forEach(st => {
                     const atts = getLogicalAttendanceForStudentSubject(st.id,sub?.id);
                     const totalAbsent = atts.reduce((s,a)=>s+getAttendanceEffectiveHours(a,sub),0);
@@ -6735,10 +6830,10 @@
                     const studentGroupContext = sub?.groupType==='عملي' ? `📖 ${studentTheoreticalGroup(st)}` : (studentPracticalGroup(st)?`🔬 ${studentPracticalGroup(st)}`:'🔬 غير موزع');
                     const encodedStudent=encodeURIComponent(String(st.id));
                     if (state.quickMode) {
-                        html += `<div class="student-quick-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-label">${escapeHtml(st.name)}</span> <span class="student-status-icon">${statusIcon}</span><span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button ${disabled} title="${actionTitle}" data-attendance-action="present" aria-pressed="${isPresent?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present ${isPresent?'attendance-selected':hasAbsence?'attendance-dimmed':''}">✅ حاضر</button><button ${disabled} title="${actionTitle}" data-attendance-action="absent" aria-pressed="${hasAbsence?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent ${hasAbsence?'attendance-selected':isPresent?'attendance-dimmed':''}">❌ غائب</button></div></div>`;
+                        html += `<div class="student-quick-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-label">${escapeHtml(st.name)}</span> <span class="student-status-icon">${statusIcon}</span><span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="present" aria-pressed="${isPresent?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present ${isPresent?'attendance-selected':hasAbsence?'attendance-dimmed':''}">✅ حاضر</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="absent" aria-pressed="${hasAbsence?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent ${hasAbsence?'attendance-selected':isPresent?'attendance-dimmed':''}">❌ غائب</button></div></div>`;
                     } else {
-                        const todayBadge = hasAbsence ? '<span class="badge bg-red" style="font-size:8px;">غائب في هذه المحاضرة</span>' : isPresent ? '<span class="badge bg-green" style="font-size:8px;">حاضر في هذه المحاضرة</span>' : '<span class="badge" style="font-size:8px;background:#e2e8f0;color:#475569;">لم تُسجل حالته</span>';
-                        html += `<div class="student-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name">👨‍🎓 ${escapeHtml(st.name)} ${statusIcon} ${todayBadge}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="student-actions" style="display:flex;gap:4px;flex-wrap:wrap;"><button ${disabled} title="${actionTitle}" onclick="markStudentAbsent(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-warning" style="font-size:10px;">📝</button>${hasAbsence?`<button ${submissionLocked?'disabled aria-disabled="true"':''} title="${submissionLocked?'الغيابات مغلقة بعد الإرسال':'إزالة غياب هذه المحاضرة'}" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:''}</div></div>`;
+                        const todayBadge = hasAbsence ? '<span data-attendance-session-badge="1" class="badge bg-red" style="font-size:8px;">غائب في هذه المحاضرة</span>' : isPresent ? '<span data-attendance-session-badge="1" class="badge bg-green" style="font-size:8px;">حاضر في هذه المحاضرة</span>' : '<span data-attendance-session-badge="1" class="badge" style="font-size:8px;background:#e2e8f0;color:#475569;">لم تُسجل حالته</span>';
+                        html += `<div class="student-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name">👨‍🎓 ${escapeHtml(st.name)} <span class="student-status-icon">${statusIcon}</span> ${todayBadge}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="student-actions" style="display:flex;gap:4px;flex-wrap:wrap;"><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="markStudentAbsent(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-warning" style="font-size:10px;">📝</button><span data-remove-absence-slot="1">${hasAbsence?`<button data-attendance-control="1" ${submissionLocked?'disabled aria-disabled="true"':''} title="${submissionLocked?'الغيابات مغلقة بعد الإرسال':'إزالة غياب هذه المحاضرة'}" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:''}</span></div></div>`;
                     }
                 });
                 html += `</div></div>`;
@@ -6775,6 +6870,38 @@
             const absent=row.querySelector('[data-attendance-action="absent"]');
             if(present){present.classList.toggle('attendance-selected',visual.isPresent);present.classList.toggle('attendance-dimmed',visual.hasAbsence);present.setAttribute('aria-pressed',visual.isPresent?'true':'false');}
             if(absent){absent.classList.toggle('attendance-selected',visual.hasAbsence);absent.classList.toggle('attendance-dimmed',visual.isPresent);absent.setAttribute('aria-pressed',visual.hasAbsence?'true':'false');}
+
+            // العرض العادي: حدّث الشارة وزر الإلغاء في نفس الصف بدلاً من إعادة بناء القائمة وتحريكها.
+            const sessionBadge=row.querySelector('[data-attendance-session-badge]');
+            if(sessionBadge){
+                if(visual.hasAbsence){sessionBadge.className='badge bg-red';sessionBadge.style.fontSize='8px';sessionBadge.textContent='غائب في هذه المحاضرة';}
+                else if(visual.isPresent){sessionBadge.className='badge bg-green';sessionBadge.style.fontSize='8px';sessionBadge.textContent='حاضر في هذه المحاضرة';}
+                else{sessionBadge.className='badge';sessionBadge.style.cssText='font-size:8px;background:#e2e8f0;color:#475569;';sessionBadge.textContent='لم تُسجل حالته';}
+            }
+            const removeSlot=row.querySelector('[data-remove-absence-slot]');
+            if(removeSlot){
+                const locked=isProfessorSubjectLockedAfterSubmission(sub);
+                const encodedStudent=encodeURIComponent(String(student.id));
+                removeSlot.innerHTML=visual.hasAbsence?`<button data-attendance-control="1" ${locked?'disabled aria-disabled="true"':''} title="${locked?'الغيابات مغلقة بعد الإرسال':'إزالة غياب هذه المحاضرة'}" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:'';
+            }
+            return true;
+        }
+
+        function updateProfessorGroupCancelAllButton(groupName) {
+            const sub=getProfessorSubject();
+            const container=document.getElementById('profGroupsContainer');
+            if(!sub||!container)return false;
+            const encoded=encodeURIComponent(String(groupName||''));
+            const btn=[...container.querySelectorAll('[data-cancel-all-group]')].find(x=>String(x.dataset.cancelAllGroup||'')===encoded);
+            if(!btn)return false;
+            const context=buildQuickAttendanceContext(sub,groupName,true);
+            const students=getStudentsForProfessor().filter(st=>professorGroupNameForStudent(st,sub)===groupName);
+            const count=context.ok?students.filter(st=>Number(findAttendanceForSession(st.id,sub.id,context.date,context.sessionTime)?.hours)>0).length:0;
+            const locked=isProfessorSubjectLockedAfterSubmission(sub);
+            btn.disabled=!(context.ok&&!locked&&count>0);
+            btn.setAttribute('aria-disabled',btn.disabled?'true':'false');
+            btn.textContent=`↩ إلغاء غياب الكل${count?` (${count})`:''}`;
+            btn.title=count?`إلغاء غياب ${count} طالب في هذه المحاضرة`:'لا توجد غيابات لإلغائها';
             return true;
         }
 
@@ -6784,6 +6911,7 @@
             const container=document.getElementById('profGroupsContainer');
             if(!sub||!container||String(container.dataset.subjectId||'')!==String(sub.id)) return;
             container.querySelectorAll('[data-student-id]').forEach(row=>updateProfessorStudentAttendanceRow(row.dataset.studentId));
+            container.querySelectorAll('[data-cancel-all-group]').forEach(btn=>updateProfessorGroupCancelAllButton(decodeURIComponent(btn.dataset.cancelAllGroup||'')));
         }
 
         function refreshProfessorAttendanceSummariesOnly() {
@@ -6834,6 +6962,7 @@
             recordAudit(action==='present'?'تسجيل حضور سريع':'تسجيل غياب سريع',{studentId:student.id,student:student.name,subjectId:sub.id,subject:sub.name,professorId:sub.professorId,date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,groupName,hours:expectedHours,changed:result.changed,duplicatesRemoved:result.duplicateCount});
             const localPromise=persistAttendanceMutation(action==='present'?'quick-present':'quick-absent');
             updateProfessorStudentAttendanceRow(student.id);
+            updateProfessorGroupCancelAllButton(groupName);
             renderProfessorAttendance(sub.id);
             renderProfessorSubmissionStatus(sub);
             showAttendanceToast(action==='present'?`✅ تم تثبيت حضور ${student.name}`:`❌ تم تثبيت غياب ${student.name} (${hours} س)`,action==='present'?'success':'warning');
@@ -6872,6 +7001,7 @@
                 recordAudit(action==='present'?'حضور جماعي':'غياب جماعي',{subjectId:sub.id,subject:sub.name,professorId:sub.professorId,groupName,grouping:label,date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,total:students.length,changed,duplicates});
                 const localPromise=persistAttendanceMutation(action==='present'?'bulk-present':'bulk-absent');
                 students.forEach(st=>updateProfessorStudentAttendanceRow(st.id));
+                updateProfessorGroupCancelAllButton(groupName);
                 renderProfessorAttendance(sub.id);
                 renderProfessorSubmissionStatus(sub);
                 showAttendanceToast(`✅ تم تثبيت ${verb} جميع طلاب ${groupName}: ${students.length}/${students.length}`);
@@ -6880,6 +7010,41 @@
                 refreshProfessorAttendanceSummariesOnly();
                 alert(err.message||'تعذر تنفيذ العملية الجماعية.');
             } finally { attendanceMutationBusy=false; }
+        }
+
+        async function removeAllCurrentSessionAbsences(groupName) {
+            if(attendanceMutationBusy){showAttendanceToast('⏳ عملية جماعية أخرى قيد التنفيذ.','warning');return;}
+            const sub=getProfessorSubject();
+            if(!sub||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح لهذا الحساب بتعديل غياب هذه المادة.');return;}
+            if(!canProfessorEditAttendanceForSubject(sub))return;
+            const students=getStudentsForProfessor().filter(st=>professorGroupNameForStudent(st,sub)===groupName);
+            const context=buildQuickAttendanceContext(sub,groupName);
+            if(!context.ok){alert(context.reason);return;}
+            const absentStudents=students.filter(st=>Number(findAttendanceForSession(st.id,sub.id,context.date,context.sessionTime)?.hours)>0);
+            if(!absentStudents.length){showAttendanceToast('لا توجد غيابات مسجلة لإلغائها في هذه المحاضرة.','warning');return;}
+            const label=sub.groupType==='عملي'?'المجموعة العملية':'الشعبة النظرية';
+            if(!confirm(`إلغاء غياب جميع الطلبة الغائبين في ${label} ${groupName} لمحاضرة ${context.displayTime}؟\n\nسيتم تحويل ${absentStudents.length} حالة غياب إلى حضور صريح لهذه المحاضرة فقط، ولن تتأثر أي محاضرة أخرى.`))return;
+            attendanceMutationBusy=true;
+            const before=JSON.parse(JSON.stringify(state.attendances));
+            try{
+                let duplicates=0;
+                absentStudents.forEach(st=>{const r=upsertAttendanceState(st.id,sub,context,0,0,'remove-all-absence-explicit-present');duplicates+=r.duplicateCount;});
+                const verified=absentStudents.every(st=>{const r=findAttendanceForSession(st.id,sub.id,context.date,context.sessionTime);return !!r&&Number(r.hours)===0;});
+                if(!verified){state.attendances=before;throw new Error('تعذر التحقق من إلغاء كل الغيابات؛ أعيدت الحالة السابقة دون فقد.');}
+                recordAudit('إلغاء غياب جميع الطلبة لمحاضرة',{subjectId:sub.id,subject:sub.name,professorId:sub.professorId,groupName,date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,studentsChanged:absentStudents.length,duplicatesSuperseded:duplicates,newState:'present'});
+                await persistAttendanceMutation('remove-all-current-session-absences');
+                absentStudents.forEach(st=>updateProfessorStudentAttendanceRow(st.id));
+                renderProfessorAttendance(sub.id);
+                renderProfessorSubmissionStatus(sub);
+                // أعد بناء رؤوس المجموعات فقط لإظهار عداد «إلغاء غياب الكل» الصحيح، مع حفظ موضع التمرير.
+                const savedView=captureProfessorViewState();
+                renderProfessorGroups(getStudentsForProfessor());
+                restoreProfessorViewState(savedView,'');
+                showAttendanceToast(`✅ تم إلغاء غياب ${absentStudents.length} طالب وتثبيت حضورهم لهذه المحاضرة`);
+            }catch(err){
+                console.error(err);
+                alert(err.message||'تعذر إلغاء الغياب الجماعي.');
+            }finally{attendanceMutationBusy=false;}
         }
 
         function quickAbsentAll(groupName) { return quickApplyAll(groupName,'absent'); }
@@ -6892,7 +7057,7 @@
                 div.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px;">📭 لا توجد غيابات مسجلة</p>';
                 return;
             }
-            const subject = state.subjects.find(s => s.id === subjectId);
+            const subject = state.subjects.find(s => String(s.id) === String(subjectId));
             const totalHours = subject ? getSubjectCourseHours(subject) : 1;
             const studentIds = [...new Set(allAttendances.map(a => a.studentId))];
             const studentTotals = {};
@@ -6980,6 +7145,7 @@
             recordAudit('إزالة غياب من بطاقة الطالب', {attendanceId:verified.id,duplicatesRemoved:result.duplicateCount,studentId:student.id,student:student.name,subjectId:sub.id,subject:sub.name,date:context.date,sessionTime:context.sessionTime,hoursRemoved:removedHours,newState:'present'});
             const localPromise = persistAttendanceMutation('remove-current-session-absence');
             updateProfessorStudentAttendanceRow(student.id);
+            updateProfessorGroupCancelAllButton(groupName);
             renderProfessorAttendance(sub.id);
             renderProfessorSubmissionStatus(sub);
             showAttendanceToast(`✅ أُلغي غياب ${student.name} وثُبت حضوره لهذه المحاضرة`);
@@ -7008,7 +7174,10 @@
             }
             recordAudit('تسجيل غياب من بطاقة الطالب',{studentId:student.id,student:student.name,subjectId:sub.id,subject:sub.name,professorId:sub.professorId,date:context.date,sessionTime:context.sessionTime,lectureId:context.lectureId,groupName,hours:parsedHours,excused:excused?1:0,duplicatesRemoved:result.duplicateCount});
             const localPromise=persistAttendanceMutation('student-card-attendance');
-            refreshProfessorAttendanceView(savedView,student.id);
+            updateProfessorStudentAttendanceRow(student.id);
+            updateProfessorGroupCancelAllButton(groupName);
+            renderProfessorAttendance(sub.id);
+            renderProfessorSubmissionStatus(sub);
             showAttendanceToast(`✅ تم تثبيت غياب ${student.name}`,'warning');
             localPromise.catch(err=>{console.error(err);showAttendanceToast('⚠️ تعذر تحديث التخزين المحلي؛ صدّر نسخة احتياطية.','error');});
         }
@@ -7043,7 +7212,10 @@
             }
             recordAudit(existing?'تحديث غياب يدوي':'تسجيل غياب يدوي',{studentId:student.id,student:student.name,subjectId:sub.id,subject:sub.name,professorId:sub.professorId,date,sessionTime,hours,excused,lectureId:context.lectureId,groupName:context.groupName,manualOverride:context.manualOverride,changed:result.changed,duplicatesRemoved:result.duplicateCount});
             const localPromise=persistAttendanceMutation('manual-attendance');
-            refreshProfessorAttendanceView(savedView,student.id);
+            updateProfessorStudentAttendanceRow(student.id);
+            updateProfessorGroupCancelAllButton(context.groupName);
+            renderProfessorAttendance(sub.id);
+            renderProfessorSubmissionStatus(sub);
             showAttendanceToast('✅ تم تثبيت الغياب بنجاح');
             localPromise.catch(err=>{console.error(err);showAttendanceToast('⚠️ تعذر تحديث التخزين المحلي.','error');});
         }
@@ -7069,13 +7241,17 @@
                 recordAudit('إلغاء سجل غياب قديم',{attendanceId:removed.id,studentId:removed.studentId,subjectId:removed.subjectId,date:removed.date});
             }
             const localPromise=persistAttendanceMutation('delete-attendance');
-            refreshProfessorAttendanceView(savedView,removed.studentId);
+            updateProfessorStudentAttendanceRow(removed.studentId);
+            const removedStudent=state.students.find(st=>String(st.id)===String(removed.studentId));
+            if(removedStudent)updateProfessorGroupCancelAllButton(professorGroupNameForStudent(removedStudent,sub));
+            renderProfessorAttendance(sub.id);
+            renderProfessorSubmissionStatus(sub);
             showAttendanceToast('✅ تم إلغاء الغياب وتثبيت الحالة الجديدة');
             localPromise.catch(err=>console.error(err));
         }
 
         async function editAttendance(attendanceId) {
-            const attendance = state.attendances.find(a => a.id === attendanceId);
+            const attendance = state.attendances.find(a => String(a.id) === String(attendanceId));
             if (!attendance) { alert('غير موجود'); return; }
             const sub=getProfessorSubject();
             if(!canProfessorEditAttendanceForSubject(sub))return;
@@ -7090,7 +7266,7 @@
             const context=validateManualAttendanceContext(sub,student,attendance.date,normalizedSessionTime);
             if(!context.ok){alert(context.reason);return;}
             if(context.requiresConfirmation&&!confirm('الوقت الجديد لا يطابق محاضرة منشورة لهذه الشعبة في ذلك اليوم. هل تريد اعتماده كاستثناء يدوي؟'))return;
-            const duplicate = state.attendances.some(a => a.id !== attendance.id && !isEnrollmentRecord(a) && String(a.studentId) === String(attendance.studentId) && String(a.subjectId) === String(attendance.subjectId) && String(a.date) === String(attendance.date) && attendanceRecordSessionKey(a) === attendanceSessionKey(normalizedSessionTime));
+            const duplicate = state.attendances.some(a => a.id !== attendance.id && !isEnrollmentRecord(a) && a?.superseded!==true && String(a.studentId) === String(attendance.studentId) && String(a.subjectId) === String(attendance.subjectId) && String(a.date) === String(attendance.date) && attendanceRecordSessionKey(a) === attendanceSessionKey(normalizedSessionTime));
             if (duplicate) { alert('يوجد سجل آخر للطالب في المادة والتاريخ ووقت المحاضرة نفسه.'); return; }
             const cross=findCrossSubjectAttendanceConflicts(attendance.studentId,attendance.subjectId,attendance.date,normalizedSessionTime);
             if(cross.length){alert('يوجد للطالب تسجيل في مادة أخرى في الوقت الجديد نفسه.');return;}
@@ -7103,7 +7279,9 @@
             recordAudit('تعديل سجل غياب', { attendanceId, before, after: { hours: attendance.hours, excused: attendance.excused, sessionTime: attendance.sessionTime } });
             const savedView=captureProfessorViewState(attendance.studentId);
             const localPromise=persistAttendanceMutation('edit-attendance');
-            refreshProfessorAttendanceView(savedView,attendance.studentId);
+            updateProfessorStudentAttendanceRow(attendance.studentId);
+            renderProfessorAttendance(sub.id);
+            renderProfessorSubmissionStatus(sub);
             showAttendanceToast('✅ تم تعديل السجل');
             await localPromise;
         }
@@ -7111,17 +7289,26 @@
         async function sendToOfficer() {
             const sub = getProfessorSubject();
             if (!sub) { alert('لا توجد مادة'); return; }
+            const currentState=getSubmissionState(sub);
+            if(currentState.code==='ok' && currentState.latest){
+                await resendLastSubmissionWhatsApp();
+                return;
+            }
             const students = getStudentsForProfessor();
             const realRecords = getSubjectOperationalAttendanceRecords(sub.id);
-            if (!confirm(`هل تؤكد أنك أكملت تسجيل غيابات مادة «${sub.name}» حتى تاريخ ${getLocalDateISO()} وتريد تثبيت اكتمالها ثم فتح رسالة واتساب لمسؤول الغيابات؟\n\nعدد الطلبة الحاليين: ${students.length}\nسجلات الحضور/الغياب التشغيلية: ${realRecords.length}`)) return;
+            const previousSubmission=getLatestSubmission(sub.id,state.currentUser?.id);
+            const isResend=!!previousSubmission;
+            const actionLabel=isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات';
+            if (!confirm(`هل تؤكد ${actionLabel} لمادة «${sub.name}» حتى تاريخ ${getLocalDateISO()}؟\n\nعدد الطلبة الحاليين: ${students.length}\nالحالات التشغيلية للمحاضرات: ${realRecords.length}${getOfficerWhatsAppNumber()?'\n\nبعد الحفظ سيفتح واتساب، ويجب الضغط على «إرسال» داخله يدوياً.':''}`)) return;
 
+            const savedView=captureProfessorViewState();
             const now = new Date();
             const whatsappNumber = getOfficerWhatsAppNumber();
-            // احجز نافذة واتساب أثناء نقرة المستخدم نفسها حتى لا يمنعها المتصفح بعد انتظار Firebase.
             let whatsappWindow = null;
             if (whatsappNumber) {
                 try { whatsappWindow = window.open('about:blank', '_blank'); } catch (e) {}
             }
+            const priorCompleted=(state.submissions||[]).filter(x=>String(x.subjectId)===String(sub.id)&&String(x.professorId)===String(state.currentUser.id)&&x.declaration==='completed').length;
             const submission = {
                 id: makeId('submission'),
                 professorId: state.currentUser.id,
@@ -7136,6 +7323,8 @@
                 time: now.toLocaleTimeString('ar-IQ'),
                 createdAt: Date.now(),
                 declaration: 'completed',
+                revisionNumber:priorCompleted+1,
+                resendOfSubmissionId:isResend?String(previousSubmission.id||''):null,
                 undoEligible: !hasSubmissionUndoEverUsed(sub.id, state.currentUser.id),
                 undoUsed: false,
                 whatsappNumberConfigured: !!whatsappNumber,
@@ -7143,19 +7332,24 @@
             };
             state.submissions.push(submission);
             if (state.submissions.length > 5000) state.submissions = state.submissions.slice(-5000);
-            state.notifications.push({ id: makeId('note'), msg: `✅ الأستاذ ${state.currentUser.name} أكد إكمال غيابات مادة ${sub.name} داخل النظام`, time: now.toLocaleString('ar-IQ'), professorId:state.currentUser.id, subjectId:sub.id, submissionId:submission.id });
-            recordAudit('تأكيد إكمال الغيابات وتجهيز واتساب لمسؤول الغيابات', { subject: sub.name, students: students.length, records: realRecords.length, submissionId: submission.id, whatsappPrepared: !!whatsappNumber });
+            state.notifications.push({ id: makeId('note'), msg: `${isResend?'🔄':'✅'} الأستاذ ${state.currentUser.name} ${isResend?'أعاد إرسال':'أكد إكمال'} غيابات مادة ${sub.name} داخل النظام`, time: now.toLocaleString('ar-IQ'), professorId:state.currentUser.id, subjectId:sub.id, submissionId:submission.id });
+            recordAudit(isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات وتجهيز واتساب لمسؤول الغيابات', { subject: sub.name, students: students.length, records: realRecords.length, submissionId: submission.id, previousSubmissionId:submission.resendOfSubmissionId, revisionNumber:submission.revisionNumber, whatsappPrepared: !!whatsappNumber });
 
             const ok = await saveAll();
             renderProfessorSubmissionStatus(sub);
             if (!ok) {
                 try { if (whatsappWindow && !whatsappWindow.closed) whatsappWindow.close(); } catch (e) {}
-                alert('⚠️ تم تسجيل الإرسال محلياً لكن تعذر حفظه في السحابة. أعد المحاولة بعد عودة الاتصال.');
+                alert('⚠️ تم تسجيل التأكيد محلياً لكن تعذر تثبيته في السحابة. ستعاد المزامنة تلقائياً؛ لا تعتبر الإرسال مكتملاً على جهاز آخر حتى يعود الاتصال.');
                 return;
             }
 
+            // الإرسال الجديد يقفل أدوات الغياب فوراً بصرياً ومنطقياً، مع حفظ موضع القائمة.
+            renderProfessorGroups(getStudentsForProfessor());
+            restoreProfessorViewState(savedView,'');
+            renderProfessorSubmissionStatus(sub);
+
             if (!whatsappNumber) {
-                alert('✅ تم توثيق إكمال الغيابات داخل النظام.\n\n⚠️ لم يتم إرسالها عبر واتساب لأن رقم مسؤول الغيابات غير مضبوط. الحفظ داخل النظام وحده لا يعني وصولها إلى المسؤول.');
+                alert('✅ تم توثيق إكمال الغيابات داخل النظام.\n\n⚠️ رقم واتساب مسؤول الغيابات غير مضبوط، لذلك لم تُفتح رسالة واتساب.');
                 return;
             }
 
@@ -7172,12 +7366,13 @@
                 }
             } catch (e) {}
             if (opened) {
-                alert('✅ تم توثيق اكتمال الغيابات داخل النظام وفتح واتساب.\n\n⚠️ يجب أن تضغط «إرسال» داخل واتساب؛ ما لم ترسل الرسالة فعلياً فلا تُعد الغيابات واصلة لمسؤول الغيابات.');
+                submission.whatsappOpenedAt=Date.now();
+                submission.whatsappOpenCount=(Number(submission.whatsappOpenCount)||0)+1;
+                persistLocalState('submission-whatsapp-opened',true).then(()=>pushToFirebase({silent:true})).catch(console.error);
+                alert(`${isResend?'🔄 تم تثبيت النسخة المعدلة وفتح واتساب من جديد.':'✅ تم توثيق اكتمال الغيابات وفتح واتساب.'}\n\n⚠️ يجب الضغط على «إرسال» داخل واتساب؛ فتح النافذة وحده لا يعني وصول الرسالة لمسؤول الغيابات.`);
             } else {
-                try {
-                    await navigator.clipboard.writeText(buildOfficerWhatsAppMessage(sub, submission, students));
-                } catch (e) {}
-                alert('✅ تم توثيق اكتمال الغيابات داخل النظام.\n⚠️ لم تُرسل رسالة واتساب لمسؤول الغيابات. منع المتصفح فتح واتساب تلقائياً؛ اسمح بالنوافذ المنبثقة ثم أعد فتح الرسالة وأرسلها يدوياً.');
+                try { await navigator.clipboard.writeText(message); } catch (e) {}
+                alert('✅ تم تثبيت الغيابات داخل النظام.\n⚠️ منع المتصفح فتح واتساب؛ اسمح بالنوافذ المنبثقة ثم استخدم زر «إعادة فتح آخر رسالة واتساب».');
             }
         }
 
@@ -7191,13 +7386,12 @@
             const studentsInLevel = state.students.filter(st => st.level === level);
             if (studentsInLevel.length === 0) { container.innerHTML = '<p style="color:#a0aec0;">لا يوجد طلاب</p>'; return; }
             if (state.selectedStudents.length === 0) {
-                state.selectedStudents = studentsInLevel.filter(st => state.attendances.some(a => a.studentId === st.id &&
-                    Number(a.hours) > 0)).map(st => st.id);
+                state.selectedStudents = studentsInLevel.filter(st => getLogicalAttendanceRecords(state.attendances).some(a => String(a.studentId) === String(st.id) && Number(a.hours) > 0)).map(st => st.id);
                 if (state.selectedStudents.length === 0) state.selectedStudents = studentsInLevel.map(st => st.id);
             }
             let html = '';
             studentsInLevel.forEach(st => {
-                const hasAbsence = state.attendances.some(a => a.studentId === st.id && Number(a.hours) > 0);
+                const hasAbsence = getLogicalAttendanceRecords(state.attendances).some(a => String(a.studentId) === String(st.id) && Number(a.hours) > 0);
                 const checked = state.selectedStudents.includes(st.id) ? 'checked' : '';
                 const badge = hasAbsence ? '<span class="badge bg-red" style="font-size:8px;">غائب</span>' :
                     '<span class="badge bg-green" style="font-size:8px;">حاضر</span>';
@@ -7232,8 +7426,7 @@
         function selectStudentsWithAbsence() {
             const level = state.currentLevel;
             if (!level) return;
-            state.selectedStudents = state.students.filter(st => st.level === level && state.attendances.some(a => a
-                .studentId === st.id && Number(a.hours) > 0)).map(st => st.id);
+            state.selectedStudents = state.students.filter(st => st.level === level && getLogicalAttendanceRecords(state.attendances).some(a => String(a.studentId) === String(st.id) && Number(a.hours) > 0)).map(st => st.id);
             document.querySelectorAll('.student-checkbox').forEach(cb => { cb.checked = state.selectedStudents.includes(cb
                     .value); });
             if (state.selectedStudents.length === 0) alert('لا يوجد طلاب لديهم غيابات');
@@ -7445,10 +7638,11 @@
         }
 
         function setAutoDateRange() {
-            if (state.attendances.length === 0) { document.getElementById('reportDateFrom').value = '';
+            const logicalAbsences=getLogicalAttendanceRecords(state.attendances).filter(a=>Number(a.hours)>0);
+            if (logicalAbsences.length === 0) { document.getElementById('reportDateFrom').value = '';
                 document.getElementById('reportDateTo').value = '';
                 updateReportDateDisplay(); return; }
-            const dates = state.attendances.map(a => a.date).filter(d => d);
+            const dates = logicalAbsences.map(a => a.date).filter(d => d);
             if (dates.length === 0) { document.getElementById('reportDateFrom').value = '';
                 document.getElementById('reportDateTo').value = '';
                 updateReportDateDisplay(); return; }
@@ -7477,7 +7671,7 @@
         // ==============================================================
         //  INITIALIZATION
         // ==============================================================
-        console.log('🏛️ نظام الغيابات Master V29 - تثبيت منطقي للمحاضرة + منع عودة الغياب الملغى + مزامنة بلا فقد');
+        console.log('🏛️ نظام الغيابات Master V30 - مراجعة صارمة للمزامنة والحذف والإرسال وواتساب');
 
         document.addEventListener('change', function(e) {
             if (e.target.id === 'reportDateFrom' || e.target.id === 'reportDateTo') {
