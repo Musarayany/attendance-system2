@@ -387,6 +387,38 @@
         .prof-own-schedule-body{padding:8px}
         @media(max-width:700px){.prof-lecture-list{grid-template-columns:1fr}.prof-schedule-panel summary{align-items:flex-start}}
 
+
+        /* ===== V37: تصدير سجل حضور ورقي PDF / Word ===== */
+        .roster-export-card{background:#f8fafc;border:2px solid #6366f1}
+        .roster-export-card .roster-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:end}
+        @media(min-width:900px){.roster-export-card .roster-tools{grid-template-columns:repeat(4,minmax(0,1fr))}}
+        .roster-logo-preview{width:58px;height:58px;border:1px dashed #94a3b8;border-radius:10px;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:10px;font-weight:900;color:#1e3a8a;text-align:center;line-height:1.15}
+        .roster-logo-preview img{width:100%;height:100%;object-fit:contain}
+        .roster-export-status{margin-top:8px;padding:8px;border-radius:9px;background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;font-size:11px;font-weight:800;white-space:pre-line}
+        .attendance-export-stage{position:fixed;left:-20000px;top:0;z-index:-1;background:#fff}
+        .attendance-export-page{width:297mm;height:210mm;padding:4mm;background:#fff;color:#111827;direction:rtl;box-sizing:border-box;overflow:hidden;font-family:Tahoma,'Segoe UI',Arial,sans-serif}
+        .attendance-export-header{display:grid;grid-template-columns:26mm 1fr 26mm;align-items:center;gap:3mm;margin-bottom:2mm;min-height:23mm}
+        .attendance-export-logo{width:22mm;height:22mm;object-fit:contain;justify-self:center}
+        .attendance-export-logo-fallback{width:20mm;height:20mm;border:1.2mm solid #173a68;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8pt;font-weight:900;color:#173a68;justify-self:center}
+        .attendance-export-heading{text-align:center;line-height:1.25}
+        .attendance-export-heading .univ{font-size:11pt;font-weight:900}
+        .attendance-export-heading .college{font-size:9pt;font-weight:800}
+        .attendance-export-heading .dept{font-size:9pt;font-weight:800}
+        .attendance-export-heading .title{font-size:9pt;font-weight:900;margin-top:1mm;text-decoration:underline}
+        .attendance-export-meta{display:grid;grid-template-columns:repeat(4,1fr);gap:1mm 3mm;font-size:6.4pt;border:0.3mm solid #64748b;border-radius:1.5mm;padding:1.5mm;margin-bottom:2mm}
+        .attendance-export-meta span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .attendance-roster-table{width:100%;border-collapse:collapse;table-layout:fixed;direction:rtl}
+        .attendance-roster-table col.student-col{width:44mm}
+        .attendance-roster-table col.lecture-col{width:8mm}
+        .attendance-roster-table th,.attendance-roster-table td{border:0.22mm solid #111827;text-align:center;vertical-align:middle;padding:0.3mm;overflow:hidden}
+        .attendance-roster-table thead th{background:#f1f5f9;font-weight:900}
+        .attendance-roster-table .student-head{font-size:7pt}
+        .attendance-roster-table .lecture-head{font-size:4.6pt;line-height:1.05;height:10mm;white-space:normal;word-break:normal}
+        .attendance-roster-table .date-head{font-size:4.5pt;height:7mm;font-weight:700;white-space:nowrap}
+        .attendance-roster-table tbody td{height:6.2mm;font-size:5.6pt}
+        .attendance-roster-table tbody td.student-name-cell{text-align:right;padding-right:1.2mm;font-size:6.5pt;font-weight:700;white-space:nowrap;text-overflow:ellipsis}
+        .attendance-export-footer{display:flex;justify-content:space-between;align-items:center;margin-top:1.5mm;font-size:5.5pt;color:#475569}
+
 </style>
 </head>
 <body>
@@ -394,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V24</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V37</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -553,6 +585,43 @@
             </div>
                 </div>
             </details>
+
+            <!-- ====== V37: تصدير سجل حضور ورقي ====== -->
+            <details class="admin-fold" id="adminAttendanceRosterExportFold">
+                <summary>🖨️ سجل الحضور الورقي — PDF / Word</summary>
+                <div class="admin-fold-body">
+                    <div class="card roster-export-card">
+                        <div class="flex-between" style="align-items:flex-start;">
+                            <div>
+                                <h4 style="margin:0;">📋 تصدير أسماء الطلبة مع 30 محاضرة</h4>
+                                <small style="margin-top:4px;">يُنشأ الملف من البيانات الحالية لحظة التصدير؛ أي إضافة أو حذف أو نقل طالب تنعكس تلقائياً دون حفظ قائمة مستقلة.</small>
+                            </div>
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                                <div id="attendanceRosterLogoPreview" class="roster-logo-preview">AUIQ<br>LOGO</div>
+                                <div style="min-width:180px;">
+                                    <label style="margin-top:0;">شعار جامعة العين</label>
+                                    <input type="file" id="attendanceRosterLogoInput" accept="image/png,image/jpeg,image/webp" onchange="saveAttendanceRosterLogo(event)" style="font-size:10px;padding:5px;">
+                                    <button type="button" onclick="clearAttendanceRosterLogo()" class="btn-secondary btn-sm" style="margin-top:4px;">مسح الشعار المحفوظ</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="roster-tools" style="margin-top:9px;">
+                            <div><label>المرحلة</label><select id="attendanceRosterLevel" onchange="refreshAttendanceRosterExportSelectors('level')"></select></div>
+                            <div><label>الشعبة النظرية</label><select id="attendanceRosterTheory" onchange="refreshAttendanceRosterExportSelectors('theory')"></select></div>
+                            <div><label>المجموعة العملية</label><select id="attendanceRosterPractical" onchange="refreshAttendanceRosterExportSelectors('practical')"></select></div>
+                            <div><label>المادة</label><select id="attendanceRosterSubject" onchange="updateAttendanceRosterExportStatus()"></select></div>
+                        </div>
+                        <div id="attendanceRosterExportStatus" class="roster-export-status">اختر المرحلة والمجموعة والمادة.</div>
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+                            <button type="button" onclick="previewAttendanceRoster()" class="btn-secondary btn-sm">👁️ معاينة / طباعة</button>
+                            <button type="button" onclick="exportAttendanceRosterPDF()" class="btn-pdf btn-sm" style="background:#dc2626;">📄 PDF — A4 أفقي</button>
+                            <button type="button" onclick="exportAttendanceRosterWord()" class="btn-info btn-sm">📝 Word (.doc) — A4 أفقي</button>
+                        </div>
+                        <small style="display:block;margin-top:7px;color:#64748b;">كل كشف يحتوي: اسم الجامعة والكلية والقسم، اسم المادة والأستاذ، المرحلة والشعبة/المجموعة، ثم اسم الطالب و30 عموداً للمحاضرات مع خانة تاريخ فارغة يملؤها الأستاذ يدوياً. عند كثرة الطلبة تتكرر الترويسة تلقائياً في كل صفحة.</small>
+                    </div>
+                </div>
+            </details>
+
 
             <div id="levelView" class="level-view">
                 <div class="flex-between" style="margin-bottom:8px;">
@@ -4774,6 +4843,7 @@
             renderAbsencePolicySettings();
             renderLectureReminderSettings();
             renderProfessorProfileHealth();
+            populateAttendanceRosterExportControls();
             document.getElementById('excelImportStatus').textContent = '';
         }
 
@@ -4846,6 +4916,7 @@
             document.getElementById('levelDetailView').classList.remove('active');
             document.getElementById('levelView').classList.remove('hidden');
             renderLevels();
+            populateAttendanceRosterExportControls();
         }
 
         // ==============================================================
@@ -8388,10 +8459,304 @@
             window.print();
         }
 
+
+
+        // ==============================================================
+        //  V37: تصدير سجل الحضور الورقي PDF / Word — قراءة فقط من state
+        // ============================================================== 
+        const ATTENDANCE_ROSTER_LOGO_KEY = 'aui_physics_attendance_roster_logo_v1';
+        const ATTENDANCE_ROSTER_STUDENTS_PER_PAGE = 24;
+
+        function getAttendanceRosterLogoData() {
+            try { return String(localStorage.getItem(ATTENDANCE_ROSTER_LOGO_KEY) || ''); }
+            catch (e) { return ''; }
+        }
+
+        function renderAttendanceRosterLogoPreview() {
+            const box = document.getElementById('attendanceRosterLogoPreview');
+            if (!box) return;
+            const data = getAttendanceRosterLogoData();
+            box.innerHTML = data ? `<img src="${data}" alt="شعار جامعة العين">` : 'AUIQ<br>LOGO';
+        }
+
+        function saveAttendanceRosterLogo(event) {
+            const file = event?.target?.files?.[0];
+            if (!file) return;
+            if (!/^image\/(png|jpeg|webp)$/i.test(file.type || '')) { alert('اختر صورة PNG أو JPG أو WEBP للشعار.'); return; }
+            if (file.size > 4 * 1024 * 1024) { alert('حجم صورة الشعار كبير جداً. اختر صورة أقل من 4 MB.'); return; }
+            const reader = new FileReader();
+            reader.onload = () => {
+                const img = new Image();
+                img.onload = () => {
+                    try {
+                        const max = 320;
+                        const scale = Math.min(1, max / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+                        const canvas = document.createElement('canvas');
+                        canvas.width = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
+                        canvas.height = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
+                        const ctx = canvas.getContext('2d');
+                        ctx.clearRect(0,0,canvas.width,canvas.height);
+                        ctx.drawImage(img,0,0,canvas.width,canvas.height);
+                        const data = canvas.toDataURL('image/png');
+                        localStorage.setItem(ATTENDANCE_ROSTER_LOGO_KEY, data);
+                        renderAttendanceRosterLogoPreview();
+                        if (event.target) event.target.value = '';
+                        showAttendanceToast('✅ تم حفظ شعار الكشف على هذا الجهاز');
+                    } catch (err) { alert('تعذر حفظ الشعار: ' + err.message); }
+                };
+                img.onerror = () => alert('تعذر قراءة صورة الشعار.');
+                img.src = String(reader.result || '');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function clearAttendanceRosterLogo() {
+            try { localStorage.removeItem(ATTENDANCE_ROSTER_LOGO_KEY); } catch (e) {}
+            renderAttendanceRosterLogoPreview();
+            const input = document.getElementById('attendanceRosterLogoInput');
+            if (input) input.value = '';
+        }
+
+        function attendanceRosterSafeFilePart(value) {
+            return String(value || '').replace(/[\\/:*?"<>|]/g,'-').replace(/\s+/g,'_').slice(0,80) || 'كشف';
+        }
+
+        function setRosterSelectOptions(select, options, preferredValue='') {
+            if (!select) return '';
+            const preferred = String(preferredValue ?? select.value ?? '');
+            select.innerHTML = options.map(o => `<option value="${escapeHtml(String(o.value))}">${escapeHtml(String(o.label))}</option>`).join('');
+            const values = options.map(o => String(o.value));
+            const chosen = values.includes(preferred) ? preferred : (values[0] || '');
+            select.value = chosen;
+            return chosen;
+        }
+
+        function attendanceRosterLevels() {
+            const values = [...new Set([
+                ...getConfiguredLevels(),
+                ...(state.students || []).map(st => Number(st.level)),
+                ...(state.subjects || []).map(sub => Number(sub.level))
+            ].filter(n => Number.isInteger(n) && n > 0 && n <= 10))].sort((a,b)=>a-b);
+            return values;
+        }
+
+        function populateAttendanceRosterExportControls() {
+            const levelEl = document.getElementById('attendanceRosterLevel');
+            if (!levelEl) return;
+            const previous = {
+                level: levelEl.value,
+                theory: document.getElementById('attendanceRosterTheory')?.value || '',
+                practical: document.getElementById('attendanceRosterPractical')?.value || '',
+                subject: document.getElementById('attendanceRosterSubject')?.value || ''
+            };
+            const levels = attendanceRosterLevels();
+            const level = Number(setRosterSelectOptions(levelEl, levels.map(n=>({value:n,label:getLevelName(n)})), previous.level || levels[0] || '')) || 0;
+            populateAttendanceRosterGroupsAndSubjects(level, previous);
+            renderAttendanceRosterLogoPreview();
+            updateAttendanceRosterExportStatus();
+        }
+
+        function populateAttendanceRosterGroupsAndSubjects(level, preferred={}) {
+            const deleted = typeof getOfficiallyDeletedStudentIds === 'function' ? getOfficiallyDeletedStudentIds() : new Set();
+            const students = (state.students || []).filter(st => Number(st.level) === Number(level) && !deleted.has(String(st.id)));
+            const theoryGroups = [...new Set(students.map(studentTheoreticalGroup).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar'));
+            const theoryEl = document.getElementById('attendanceRosterTheory');
+            const theory = setRosterSelectOptions(theoryEl,
+                [{value:'__all__',label:'كل الشعب النظرية'},...theoryGroups.map(g=>({value:g,label:g}))],
+                preferred.theory || theoryEl?.value || '__all__');
+
+            const practicalBase = students.filter(st => theory === '__all__' || studentTheoreticalGroup(st) === theory);
+            const practicalGroups = [...new Set(practicalBase.map(studentPracticalGroup).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar'));
+            const practicalEl = document.getElementById('attendanceRosterPractical');
+            setRosterSelectOptions(practicalEl,
+                [{value:'__all__',label:'كل المجاميع العملية'},...practicalGroups.map(g=>({value:g,label:g}))],
+                preferred.practical || practicalEl?.value || '__all__');
+
+            const subjects = (state.subjects || []).filter(sub => Number(sub.level)===Number(level) && sub.timetableActive!==false)
+                .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ar'));
+            const subjectEl = document.getElementById('attendanceRosterSubject');
+            setRosterSelectOptions(subjectEl,
+                subjects.map(sub=>({value:sub.id,label:`${sub.name} — ${sub.groupType||'مادة'}`})),
+                preferred.subject || subjectEl?.value || subjects[0]?.id || '');
+        }
+
+        function refreshAttendanceRosterExportSelectors(source='') {
+            const levelEl = document.getElementById('attendanceRosterLevel');
+            if (!levelEl) return;
+            const level = Number(levelEl.value)||0;
+            const preferred = {
+                theory: source==='level' ? '__all__' : (document.getElementById('attendanceRosterTheory')?.value || '__all__'),
+                practical: (source==='level' || source==='theory') ? '__all__' : (document.getElementById('attendanceRosterPractical')?.value || '__all__'),
+                subject: document.getElementById('attendanceRosterSubject')?.value || ''
+            };
+            populateAttendanceRosterGroupsAndSubjects(level, preferred);
+            updateAttendanceRosterExportStatus();
+        }
+
+        function getAttendanceRosterProfessor(subject) {
+            if (!subject) return null;
+            const direct = (state.professors || []).find(p => String(p.id) === String(subject.professorId));
+            if (direct) return direct;
+            return (state.professors || []).find(p => (p.aliasProfessorIds || []).map(String).includes(String(subject.professorId))) || null;
+        }
+
+        function getAttendanceRosterExportData() {
+            const level = Number(document.getElementById('attendanceRosterLevel')?.value)||0;
+            const theory = String(document.getElementById('attendanceRosterTheory')?.value || '__all__');
+            const practical = String(document.getElementById('attendanceRosterPractical')?.value || '__all__');
+            const subjectId = String(document.getElementById('attendanceRosterSubject')?.value || '');
+            const subject = (state.subjects || []).find(sub => String(sub.id) === subjectId);
+            if (!level || !subject) return { ok:false, reason:'اختر المرحلة والمادة أولاً.' };
+            const deleted = typeof getOfficiallyDeletedStudentIds === 'function' ? getOfficiallyDeletedStudentIds() : new Set();
+            let students = (state.students || []).filter(st => Number(st.level)===level && !deleted.has(String(st.id)));
+            if (theory !== '__all__') students = students.filter(st => studentTheoreticalGroup(st) === theory);
+            if (practical !== '__all__') students = students.filter(st => studentPracticalGroup(st) === practical);
+            students = students.filter(st => studentMatchesSubject(st, subject));
+            students.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ar'));
+            const professor = getAttendanceRosterProfessor(subject);
+            return {
+                ok:true, level, theory, practical, subject, professor, students,
+                levelLabel:getLevelName(level),
+                theoryLabel:theory==='__all__'?'كل الشعب النظرية':theory,
+                practicalLabel:practical==='__all__'?'كل المجاميع العملية':practical,
+                professorName:professor?.name || 'غير معين',
+                subjectName:subject.name || 'مادة',
+                subjectType:subject.groupType || '',
+                logoData:getAttendanceRosterLogoData()
+            };
+        }
+
+        function updateAttendanceRosterExportStatus() {
+            const status = document.getElementById('attendanceRosterExportStatus');
+            if (!status) return;
+            const data = getAttendanceRosterExportData();
+            if (!data.ok) { status.textContent = data.reason; return; }
+            status.textContent = `المادة: ${data.subjectName} — الأستاذ: ${data.professorName}\n${data.levelLabel} — الشعبة النظرية: ${data.theoryLabel} — المجموعة العملية: ${data.practicalLabel}\nعدد الطلبة في الكشف: ${data.students.length}`;
+        }
+
+        function attendanceRosterLogoHtml(data) {
+            return data.logoData
+                ? `<img class="attendance-export-logo" src="${data.logoData}" alt="شعار جامعة العين العراقية">`
+                : `<div class="attendance-export-logo-fallback">AUIQ</div>`;
+        }
+
+        function buildAttendanceRosterTableHtml(students) {
+            const cols = '<col class="student-col">' + Array.from({length:30},()=>'<col class="lecture-col">').join('');
+            const lectureHeads = Array.from({length:30},(_,i)=>`<th class="lecture-head">المحاضرة<br>${i+1}</th>`).join('');
+            const dateHeads = Array.from({length:30},()=>'<th class="date-head">التاريخ<br>__/__/__</th>').join('');
+            const rows = students.map(st => `<tr><td class="student-name-cell">${escapeHtml(st.name||'')}</td>${Array.from({length:30},()=>'<td>&nbsp;</td>').join('')}</tr>`).join('');
+            return `<table class="attendance-roster-table"><colgroup>${cols}</colgroup><thead><tr><th class="student-head" rowspan="2">اسم الطالب الكامل</th>${lectureHeads}</tr><tr>${dateHeads}</tr></thead><tbody>${rows}</tbody></table>`;
+        }
+
+        function buildAttendanceRosterPageHtml(data, students, pageNo, pageCount) {
+            return `<section class="attendance-export-page">
+                <div class="attendance-export-header">
+                    <div>${attendanceRosterLogoHtml(data)}</div>
+                    <div class="attendance-export-heading">
+                        <div class="univ">جامعة العين العراقية</div>
+                        <div class="college">كلية التربية</div>
+                        <div class="dept">قسم الفيزياء</div>
+                        <div class="title">سجل حضور الطلبة للمحاضرات</div>
+                    </div>
+                    <div style="text-align:center;font-size:6pt;font-weight:800;line-height:1.5;">العام الدراسي<br>20____ / 20____</div>
+                </div>
+                <div class="attendance-export-meta">
+                    <span><strong>المرحلة:</strong> ${escapeHtml(data.levelLabel)}</span>
+                    <span><strong>المادة:</strong> ${escapeHtml(data.subjectName)}</span>
+                    <span><strong>نوع المادة:</strong> ${escapeHtml(data.subjectType||'-')}</span>
+                    <span><strong>الأستاذ:</strong> ${escapeHtml(data.professorName)}</span>
+                    <span><strong>الشعبة النظرية:</strong> ${escapeHtml(data.theoryLabel)}</span>
+                    <span><strong>المجموعة العملية:</strong> ${escapeHtml(data.practicalLabel)}</span>
+                    <span><strong>عدد الطلبة:</strong> ${data.students.length}</span>
+                    <span><strong>عدد المحاضرات:</strong> 30</span>
+                </div>
+                ${buildAttendanceRosterTableHtml(students)}
+                <div class="attendance-export-footer"><span>ملاحظة: يُكتب تاريخ كل محاضرة يدوياً في الخانة المخصصة أعلى العمود.</span><span>صفحة ${pageNo} من ${pageCount}</span></div>
+            </section>`;
+        }
+
+        function buildAttendanceRosterPagesHtml(data) {
+            const pages = [];
+            const count = Math.max(1, Math.ceil(data.students.length / ATTENDANCE_ROSTER_STUDENTS_PER_PAGE));
+            for (let p=0; p<count; p++) {
+                const slice = data.students.slice(p*ATTENDANCE_ROSTER_STUDENTS_PER_PAGE,(p+1)*ATTENDANCE_ROSTER_STUDENTS_PER_PAGE);
+                pages.push(buildAttendanceRosterPageHtml(data,slice,p+1,count));
+            }
+            return pages.join('');
+        }
+
+        function attendanceRosterStandaloneStyles() {
+            return `
+                *{box-sizing:border-box} body{margin:0;background:#fff;font-family:Tahoma,'Segoe UI',Arial,sans-serif;direction:rtl;color:#111827}
+                .attendance-export-page{width:297mm;height:210mm;padding:4mm;background:#fff;overflow:hidden;page-break-after:always;break-after:page}
+                .attendance-export-page:last-child{page-break-after:auto;break-after:auto}
+                .attendance-export-header{display:grid;grid-template-columns:26mm 1fr 26mm;align-items:center;gap:3mm;margin-bottom:2mm;min-height:23mm}
+                .attendance-export-logo{width:22mm;height:22mm;object-fit:contain;margin:auto;display:block}.attendance-export-logo-fallback{width:20mm;height:20mm;border:1.2mm solid #173a68;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8pt;font-weight:900;color:#173a68;margin:auto}
+                .attendance-export-heading{text-align:center;line-height:1.25}.attendance-export-heading .univ{font-size:11pt;font-weight:900}.attendance-export-heading .college,.attendance-export-heading .dept{font-size:9pt;font-weight:800}.attendance-export-heading .title{font-size:9pt;font-weight:900;margin-top:1mm;text-decoration:underline}
+                .attendance-export-meta{display:grid;grid-template-columns:repeat(4,1fr);gap:1mm 3mm;font-size:6.4pt;border:.3mm solid #64748b;border-radius:1.5mm;padding:1.5mm;margin-bottom:2mm}.attendance-export-meta span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+                .attendance-roster-table{width:100%;border-collapse:collapse;table-layout:fixed;direction:rtl}.attendance-roster-table col.student-col{width:44mm}.attendance-roster-table col.lecture-col{width:8mm}.attendance-roster-table th,.attendance-roster-table td{border:.22mm solid #111827;text-align:center;vertical-align:middle;padding:.3mm;overflow:hidden}.attendance-roster-table thead th{background:#f1f5f9;font-weight:900}.attendance-roster-table .student-head{font-size:7pt}.attendance-roster-table .lecture-head{font-size:4.6pt;line-height:1.05;height:10mm}.attendance-roster-table .date-head{font-size:4.5pt;height:7mm}.attendance-roster-table tbody td{height:6.2mm;font-size:5.6pt}.attendance-roster-table tbody td.student-name-cell{text-align:right;padding-right:1.2mm;font-size:6.5pt;font-weight:700;white-space:nowrap;text-overflow:ellipsis}.attendance-export-footer{display:flex;justify-content:space-between;align-items:center;margin-top:1.5mm;font-size:5.5pt;color:#475569}
+                @page{size:A4 landscape;margin:0}
+            `;
+        }
+
+        function previewAttendanceRoster() {
+            const data = getAttendanceRosterExportData();
+            if (!data.ok) { alert(data.reason); return; }
+            if (!data.students.length) { alert('لا يوجد طلبة مطابقون للمرحلة/الشعبة/المجموعة/المادة المحددة.'); return; }
+            const win = window.open('', '_blank');
+            if (!win) { alert('اسمح للنوافذ المنبثقة لفتح المعاينة.'); return; }
+            win.document.open();
+            win.document.write(`<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>سجل حضور ${escapeHtml(data.subjectName)}</title><style>${attendanceRosterStandaloneStyles()}</style></head><body>${buildAttendanceRosterPagesHtml(data)}<script>window.onload=function(){setTimeout(function(){window.print()},350)}<\/script></body></html>`);
+            win.document.close();
+        }
+
+        async function exportAttendanceRosterPDF() {
+            if (!requireOptionalLibrary(() => typeof html2canvas === 'function' && !!window.jspdf?.jsPDF, 'PDF')) return;
+            const data = getAttendanceRosterExportData();
+            if (!data.ok) { alert(data.reason); return; }
+            if (!data.students.length) { alert('لا يوجد طلبة مطابقون للاختيار الحالي.'); return; }
+            const stage = document.createElement('div');
+            stage.className = 'attendance-export-stage';
+            stage.innerHTML = buildAttendanceRosterPagesHtml(data);
+            document.body.appendChild(stage);
+            try {
+                const pages = [...stage.querySelectorAll('.attendance-export-page')];
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF({orientation:'landscape',unit:'mm',format:'a4',compress:true});
+                for (let i=0; i<pages.length; i++) {
+                    if (i>0) pdf.addPage('a4','landscape');
+                    const canvas = await html2canvas(pages[i], {scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false,windowWidth:pages[i].scrollWidth,windowHeight:pages[i].scrollHeight});
+                    const img = canvas.toDataURL('image/jpeg',0.95);
+                    pdf.addImage(img,'JPEG',0,0,297,210,undefined,'FAST');
+                }
+                const filename = `سجل_حضور_${attendanceRosterSafeFilePart(data.subjectName)}_${attendanceRosterSafeFilePart(data.theoryLabel)}_${attendanceRosterSafeFilePart(data.practicalLabel)}.pdf`;
+                pdf.save(filename);
+                recordAudit('تصدير سجل حضور PDF',{level:data.level,subjectId:data.subject.id,subject:data.subjectName,theory:data.theoryLabel,practical:data.practicalLabel,students:data.students.length,lectures:30});
+            } catch (err) { console.error(err); alert('تعذر إنشاء ملف PDF: ' + err.message); }
+            finally { stage.remove(); }
+        }
+
+        function exportAttendanceRosterWord() {
+            const data = getAttendanceRosterExportData();
+            if (!data.ok) { alert(data.reason); return; }
+            if (!data.students.length) { alert('لا يوجد طلبة مطابقون للاختيار الحالي.'); return; }
+            try {
+                const html = `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><meta name="ProgId" content="Word.Document"><meta name="Generator" content="Microsoft Word"><title>سجل حضور</title><style>${attendanceRosterStandaloneStyles()} @page Section1{size:29.7cm 21cm;margin:.4cm;mso-page-orientation:landscape} div.Section1{page:Section1}</style></head><body><div class="Section1">${buildAttendanceRosterPagesHtml(data)}</div></body></html>`;
+                const blob = new Blob(['\ufeff',html],{type:'application/msword;charset=utf-8'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `سجل_حضور_${attendanceRosterSafeFilePart(data.subjectName)}_${attendanceRosterSafeFilePart(data.theoryLabel)}_${attendanceRosterSafeFilePart(data.practicalLabel)}.doc`;
+                document.body.appendChild(a); a.click(); a.remove();
+                setTimeout(()=>URL.revokeObjectURL(url),1500);
+                recordAudit('تصدير سجل حضور Word',{level:data.level,subjectId:data.subject.id,subject:data.subjectName,theory:data.theoryLabel,practical:data.practicalLabel,students:data.students.length,lectures:30});
+            } catch (err) { console.error(err); alert('تعذر إنشاء ملف Word: ' + err.message); }
+        }
+
         // ==============================================================
         //  INITIALIZATION
         // ==============================================================
-        console.log('🏛️ نظام الغيابات V33 - أوامر حضور/غياب جماعية موثقة ومتحقق منها');
+        console.log('🏛️ نظام الغيابات V37 - إضافة تصدير سجل حضور PDF وWord');
 
         document.addEventListener('change', function(e) {
             if (e.target.id === 'reportDateFrom' || e.target.id === 'reportDateTo') {
