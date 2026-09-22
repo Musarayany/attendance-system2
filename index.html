@@ -836,7 +836,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '30.0';
+        const APP_VERSION = '36.0';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -944,6 +944,7 @@
             submissions: [],
             scheduleLinks: [],
             subjectHourOverrides: [],
+            deletedStudents: [],
             appSettings: [],
             officerStatusFilter: 'الكل',
             currentProfessorSubjectId: null,
@@ -994,7 +995,7 @@
         // ==============================================================
         //  أدوات السلامة والتزامن
         // ==============================================================
-        const SYNC_COLLECTIONS = ['professors', 'professorProfiles', 'subjects', 'students', 'attendances', 'notifications', 'auditLogs', 'submissions', 'scheduleLinks', 'subjectHourOverrides', 'appSettings'];
+        const SYNC_COLLECTIONS = ['professors', 'professorProfiles', 'subjects', 'deletedStudents', 'students', 'attendances', 'notifications', 'auditLogs', 'submissions', 'scheduleLinks', 'subjectHourOverrides', 'appSettings'];
         let lastSyncedCollections = {};
         let saveQueue = Promise.resolve();
         let localCacheWasLoaded = false;
@@ -1562,7 +1563,8 @@
             SYNC_COLLECTIONS.forEach(name => {
                 state[name] = normalizeCollection(state[name], name);
             });
-            // أي علامة حذف رسمية تبقى صاحبة الأولوية حتى بعد إعادة فتح البرنامج أو استعادة لقطة قديمة.
+            // V36: ترحيل علامات الحذف القديمة إلى سجل مستقل ثم تطبيقها قبل أي مزامنة أو تقرير.
+            migrateLegacyDeletedStudentTombstones();
             purgeOfficiallyDeletedStudentsFromState();
         }
 
@@ -1651,6 +1653,22 @@
                 };
                 purgeDeletedStudentRecords(remote);
                 purgeDeletedStudentRecords(local);
+            }
+
+            // V36: سجل الحذف النهائي append-only. لا يسمح لأي جهاز قديم بحذف علامة حذف قائمة.
+            if (name === 'deletedStudents') {
+                const ids=new Set([...remote.keys(),...local.keys(),...base.keys()]);
+                ids.forEach(id=>{
+                    const candidates=[remote.get(id),local.get(id),base.get(id)].filter(x=>x&&x.active!==false);
+                    if(!candidates.length){remote.delete(id);return;}
+                    candidates.sort((a,b)=>(Number(b.deletedAt)||0)-(Number(a.deletedAt)||0));
+                    remote.set(id,candidates[0]);
+                });
+                const changed=local.size!==remote.size||[...remote.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
+                state[name]=Array.from(remote.values());
+                lastSyncedCollections[name]=remoteArr;
+                purgeOfficiallyDeletedStudentsFromState();
+                return changed;
             }
 
             // ساعات المواد مستقلة عن الإعدادات العامة، والأحدث زمنياً يفوز دائماً.
@@ -1904,6 +1922,9 @@
                     loadedNames.forEach(name => { lastSyncedCollections[name] = []; });
                 }
 
+                // V36: يجب تطبيق الحذف الرسمي قبل أي إصلاح روابط أو بناء تقارير، حتى على جهاز جديد بلا cache محلي.
+                migrateLegacyDeletedStudentTombstones();
+                const deletedPurgeOnLoad = purgeOfficiallyDeletedStudentsFromState();
                 state.initialLoadDone = true;
                 const repairedEnrollmentAttendances = repairEnrollmentAttendanceRecords();
                 const recalculatedSubjectHours = refreshAutomaticSubjectHours();
@@ -1912,9 +1933,9 @@
                 const linkRepair = ensureActiveSubjectLinks();
                 const professorProfilesMigrated=ensureProfessorProfilesFromLegacy();
                 const professorRefsCanonicalized=canonicalizeProfessorReferences();
-                const automaticRepairChanged=professorProfilesMigrated || professorRefsCanonicalized || repairedEnrollmentAttendances || recalculatedSubjectHours || subjectHourOverridesMigrated || officerContactMigrated || linkRepair.added || linkRepair.removed;
+                const automaticRepairChanged=professorProfilesMigrated || professorRefsCanonicalized || repairedEnrollmentAttendances || recalculatedSubjectHours || subjectHourOverridesMigrated || officerContactMigrated || linkRepair.added || linkRepair.removed || deletedPurgeOnLoad.students || deletedPurgeOnLoad.attendances;
                 if(automaticRepairChanged){
-                    recordAudit('ترحيل وإصلاح تلقائي للبيانات',{profiles:(state.professorProfiles||[]).length,repairedEnrollmentAttendances,recalculatedSubjectHours,subjectHourOverridesMigrated,officerContactMigrated,linksAdded:linkRepair.added,linksRemoved:linkRepair.removed});
+                    recordAudit('ترحيل وإصلاح تلقائي للبيانات',{profiles:(state.professorProfiles||[]).length,repairedEnrollmentAttendances,recalculatedSubjectHours,subjectHourOverridesMigrated,officerContactMigrated,deletedStudentsPurged:deletedPurgeOnLoad.students,deletedAttendancePurged:deletedPurgeOnLoad.attendances,linksAdded:linkRepair.added,linksRemoved:linkRepair.removed});
                 }
                 cloudConnected = true;
                 lastCloudSyncAt = Date.now();
@@ -2060,6 +2081,7 @@
                     setStartupStatus('⏳ النسخة المحلية جاهزة — جارٍ فحص التحديثات السحابية...');
                     await initializeFirebaseRuntime();
                     const loaded = await loadFromFirebase();
+                    await enforceDeletedStudentsCloudCleanup();
                     listenToFirebase();
                     listenAcademicCatalogFromTimetable();
                     listenWeeklyTimetableCloud();
@@ -2198,6 +2220,7 @@
             state.submissions = [];
             state.scheduleLinks = [];
             state.subjectHourOverrides = Array.isArray(state.subjectHourOverrides) ? state.subjectHourOverrides : [];
+            state.deletedStudents = Array.isArray(state.deletedStudents) ? state.deletedStudents : [];
             state.appSettings = Array.isArray(state.appSettings) ? state.appSettings : [];
         }
 
@@ -2216,6 +2239,7 @@
                 submissions: state.submissions,
                 scheduleLinks: state.scheduleLinks,
                 subjectHourOverrides: state.subjectHourOverrides,
+                deletedStudents: state.deletedStudents,
                 appSettings: state.appSettings,
                 schemaVersion: SCHEMA_VERSION,
                 backupDate: new Date().toISOString(),
@@ -2270,7 +2294,10 @@
                     state.submissions = normalizeCollection(data.submissions || [], 'submissions');
                     state.scheduleLinks = normalizeCollection(data.scheduleLinks || [], 'scheduleLinks');
                     state.subjectHourOverrides = normalizeCollection(data.subjectHourOverrides || [], 'subjectHourOverrides');
+                    state.deletedStudents = normalizeCollection(data.deletedStudents || [], 'deletedStudents');
                     state.appSettings = normalizeCollection(data.appSettings || [], 'appSettings');
+                    migrateLegacyDeletedStudentTombstones();
+                    purgeOfficiallyDeletedStudentsFromState();
                     const repairedEnrollmentAttendances = repairEnrollmentAttendanceRecords();
                     const recalculatedSubjectHours = refreshAutomaticSubjectHours();
                     const subjectHourOverridesMigrated = migrateLegacySubjectHourOverrides();
@@ -2616,6 +2643,10 @@
                         if (!Number.isInteger(level) || level < 1 || level > 10) { errors.push(`الصف ${excelRow}: المرحلة غير صحيحة`); return; }
                         if (barcode && seenBarcodes.has(barcode)) { errors.push(`الصف ${excelRow}: الباركود ${barcode} مكرر داخل الملف`); return; }
                         if (barcode) seenBarcodes.add(barcode);
+                        if (barcode && isStudentOfficiallyDeleted('',barcode)) {
+                            errors.push(`الصف ${excelRow}: الطالب ذو الباركود ${barcode} محذوف نهائياً إدارياً؛ لم تتم إعادته.`);
+                            return;
+                        }
 
                         let student = null;
                         if (barcode) student = state.students.find(s => String(s.barcode || '') === barcode || String(s.id || '') === barcode);
@@ -3286,7 +3317,9 @@
         function getLogicalAttendanceRecords(records=state.attendances) {
             const passthrough=[];
             const sessions=new Map();
+            const deletedStudentIds=getOfficiallyDeletedStudentIds();
             (records||[]).forEach(att=>{
+                if(deletedStudentIds.has(String(att?.studentId||''))) return;
                 if(isEnrollmentRecord(att) || att?.superseded===true) return;
                 const sessionKey=attendanceRecordSessionKey(att);
                 if(sessionKey==='legacy') { passthrough.push(att); return; }
@@ -3547,21 +3580,77 @@
             return `deletedStudent__${String(studentId || '')}`;
         }
 
-        function getOfficiallyDeletedStudentIds() {
-            const ids = new Set();
+        function firebaseSafeKey(value) {
+            return String(value || '').replace(/[.#$\[\]\/]/g, '_');
+        }
+
+        function getOfficiallyDeletedStudentRecords() {
+            const byId = new Map();
+            // V36: المصدر الرئيسي المستقل.
+            (state.deletedStudents || []).forEach(rec => {
+                if (!rec || rec.active === false) return;
+                const sid = String(rec.studentId || rec.id || '');
+                if (!sid) return;
+                const prev = byId.get(sid);
+                if (!prev || Number(rec.deletedAt || 0) >= Number(prev.deletedAt || 0)) byId.set(sid, rec);
+            });
+            // توافق مع V34/V35: علامات الحذف القديمة داخل appSettings تبقى نافذة.
             (state.appSettings || []).forEach(rec => {
                 if (!rec || rec.type !== 'deletedStudent' || rec.active === false) return;
                 const sid = String(rec.studentId || '');
-                if (sid) ids.add(sid);
+                if (!sid) return;
+                const prev = byId.get(sid);
+                if (!prev || Number(rec.deletedAt || 0) >= Number(prev.deletedAt || 0)) byId.set(sid, rec);
             });
-            return ids;
+            return [...byId.values()];
+        }
+
+        function getOfficiallyDeletedStudentIds() {
+            return new Set(getOfficiallyDeletedStudentRecords().map(rec => String(rec.studentId || rec.id || '')).filter(Boolean));
+        }
+
+        function isStudentOfficiallyDeleted(studentId, barcode='') {
+            const sid=String(studentId || '');
+            const bc=String(barcode || '');
+            return getOfficiallyDeletedStudentRecords().some(rec =>
+                (sid && String(rec.studentId || rec.id || '') === sid) ||
+                (bc && String(rec.barcode || '') === bc)
+            );
+        }
+
+        function getActiveStudents() {
+            const deleted = getOfficiallyDeletedStudentIds();
+            return (state.students || []).filter(st => !deleted.has(String(st.id || '')));
+        }
+
+        function migrateLegacyDeletedStudentTombstones() {
+            if (!Array.isArray(state.deletedStudents)) state.deletedStudents = [];
+            const map = mapsById(state.deletedStudents);
+            let migrated=0;
+            (state.appSettings || []).forEach(rec => {
+                if (!rec || rec.type !== 'deletedStudent' || rec.active === false) return;
+                const sid=String(rec.studentId || '');
+                if(!sid) return;
+                const current=map.get(sid);
+                const candidate={
+                    id:sid, type:'deletedStudent', active:true, studentId:sid,
+                    studentName:sanitizeText(rec.studentName || '',180),
+                    barcode:sanitizeText(rec.barcode || '',120), level:Number(rec.level)||0,
+                    deletedAt:Number(rec.deletedAt)||Date.now(),
+                    deletedById:String(rec.deletedById || 'admin'),
+                    deletedByName:sanitizeText(rec.deletedByName || 'رئيس القسم',120)
+                };
+                if(!current || Number(candidate.deletedAt)>=Number(current.deletedAt||0)){map.set(sid,candidate);migrated++;}
+            });
+            state.deletedStudents=Array.from(map.values());
+            return migrated;
         }
 
         function purgeOfficiallyDeletedStudentsFromState() {
             const ids = getOfficiallyDeletedStudentIds();
             if (!ids.size) return { students:0, attendances:0 };
-            const beforeStudents = state.students.length;
-            const beforeAttendances = state.attendances.length;
+            const beforeStudents = (state.students || []).length;
+            const beforeAttendances = (state.attendances || []).length;
             const stamp = Date.now();
             (state.attendances || []).forEach(att => {
                 if (ids.has(String(att.studentId || ''))) attendanceDeletionGuards.set(String(att.id || ''), stamp);
@@ -3574,16 +3663,13 @@
         }
 
         function markStudentOfficiallyDeleted(student) {
+            if (!Array.isArray(state.deletedStudents)) state.deletedStudents = [];
             if (!Array.isArray(state.appSettings)) state.appSettings = [];
             const sid = String(student?.id || '');
             if (!sid) return null;
-            const id = deletedStudentSettingId(sid);
-            let rec = state.appSettings.find(x => x && String(x.id) === id);
             const payload = {
-                id,
-                type:'deletedStudent',
-                active:true,
-                studentId:sid,
+                id:sid,
+                type:'deletedStudent', active:true, studentId:sid,
                 studentName:sanitizeText(student?.name || '', 180),
                 barcode:sanitizeText(student?.barcode || '', 120),
                 level:Number(student?.level) || 0,
@@ -3591,9 +3677,72 @@
                 deletedById:String(state.currentUser?.id || 'admin'),
                 deletedByName:sanitizeText(state.currentUser?.name || 'رئيس القسم', 120)
             };
-            if (rec) Object.assign(rec, payload);
-            else { rec = payload; state.appSettings.push(rec); }
-            return rec;
+            const idx=state.deletedStudents.findIndex(x=>String(x?.studentId||x?.id||'')===sid);
+            if(idx>=0) state.deletedStudents[idx]={...state.deletedStudents[idx],...payload};
+            else state.deletedStudents.push(payload);
+            // احتفاظ بعلامة توافق قديمة كي تفهمها نسخ V34/V35 إن بقيت مفتوحة مؤقتاً.
+            const legacyId=deletedStudentSettingId(sid);
+            const legacyIdx=state.appSettings.findIndex(x=>String(x?.id||'')===legacyId);
+            const legacy={...payload,id:legacyId};
+            if(legacyIdx>=0) state.appSettings[legacyIdx]={...state.appSettings[legacyIdx],...legacy};
+            else state.appSettings.push(legacy);
+            return payload;
+        }
+
+        async function hardDeleteStudentFromFirebase(student, localLinkedRecords, tombstone) {
+            if (!database) return { ok:false, reason:'offline', remoteAttendanceCount:0 };
+            const sid=String(student.id);
+            const updates={};
+            updates[`deletedStudents/${firebaseSafeKey(sid)}`]=tombstone;
+            updates[`students/${firebaseSafeKey(sid)}`]=null;
+            (localLinkedRecords || []).forEach(att=>{ if(att?.id) updates[`attendances/${firebaseSafeKey(att.id)}`]=null; });
+
+            // اقرأ السحابة نفسها حتى نحذف أي سجل قديم للطالب غير موجود في ذاكرة هذا الجهاز.
+            const [studentSnap, attendanceSnap] = await Promise.all([
+                withTimeout(database.ref('/students').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة فحص سجل الطالب'),
+                withTimeout(database.ref('/attendances').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة فحص غيابات الطالب')
+            ]);
+            const remoteStudents=studentSnap.val() || {};
+            Object.entries(remoteStudents).forEach(([key,rec])=>{
+                if(rec && String(rec.id || key)===sid) updates[`students/${key}`]=null;
+            });
+            const remoteAttendances=attendanceSnap.val() || {};
+            let remoteAttendanceCount=0;
+            Object.entries(remoteAttendances).forEach(([key,rec])=>{
+                if(rec && String(rec.studentId || '')===sid){updates[`attendances/${key}`]=null;remoteAttendanceCount++;}
+            });
+            updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;
+            updates.schemaVersion=SCHEMA_VERSION;
+            await withTimeout(database.ref('/').update(updates), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة الحذف النهائي');
+
+            // تحقق من السحابة بعد العملية: لا طالب ولا سجل غياب بهذا المعرف.
+            const [verifyStudentSnap, verifyAttendanceSnap] = await Promise.all([
+                withTimeout(database.ref('/students').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة التحقق من حذف الطالب'),
+                withTimeout(database.ref('/attendances').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة التحقق من حذف الغيابات')
+            ]);
+            const studentStillExists=Object.values(verifyStudentSnap.val()||{}).some(rec=>rec&&String(rec.id||'')===sid);
+            const attendanceStillExists=Object.values(verifyAttendanceSnap.val()||{}).some(rec=>rec&&String(rec.studentId||'')===sid);
+            if(studentStillExists || attendanceStillExists) throw new Error('فشل التحقق السحابي: بقي سجل للطالب بعد الحذف.');
+            return {ok:true,remoteAttendanceCount};
+        }
+
+        async function enforceDeletedStudentsCloudCleanup() {
+            if (!database) return false;
+            const deletedRecords=getOfficiallyDeletedStudentRecords();
+            if(!deletedRecords.length) return true;
+            const deletedIds=new Set(deletedRecords.map(r=>String(r.studentId||r.id||'')).filter(Boolean));
+            try {
+                const [studentSnap,attendanceSnap]=await Promise.all([
+                    withTimeout(database.ref('/students').once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فحص الطلاب المحذوفين'),
+                    withTimeout(database.ref('/attendances').once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فحص غيابات المحذوفين')
+                ]);
+                const updates={};
+                deletedRecords.forEach(rec=>{const sid=String(rec.studentId||rec.id||'');if(sid)updates[`deletedStudents/${firebaseSafeKey(sid)}`]={...rec,id:sid,studentId:sid,active:true};});
+                Object.entries(studentSnap.val()||{}).forEach(([key,rec])=>{if(rec&&deletedIds.has(String(rec.id||key)))updates[`students/${key}`]=null;});
+                Object.entries(attendanceSnap.val()||{}).forEach(([key,rec])=>{if(rec&&deletedIds.has(String(rec.studentId||'')))updates[`attendances/${key}`]=null;});
+                if(Object.keys(updates).length){updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;await withTimeout(database.ref('/').update(updates),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تنظيف سجلات الطلاب المحذوفين');}
+                return true;
+            } catch(err){console.warn('تعذر تنظيف السجلات السحابية للطلاب المحذوفين:',err);return false;}
         }
 
         async function deleteStudentOfficial(studentId) {
@@ -3603,34 +3752,26 @@
             }
             const sid = String(studentId || '');
             const student = state.students.find(st => String(st.id) === sid);
-            if (!student) { alert('الطالب غير موجود أو تم حذفه مسبقاً.'); return; }
+            if (!student) {
+                if(isStudentOfficiallyDeleted(sid)) alert('✅ هذا الطالب محذوف نهائياً بالفعل، والتقارير ستستبعده.');
+                else alert('الطالب غير موجود.');
+                return;
+            }
 
             const linkedRecords = state.attendances.filter(att => String(att.studentId) === sid);
             const absenceRecords = linkedRecords.filter(att => !isEnrollmentRecord(att));
             const enrollmentLinks = linkedRecords.filter(att => isEnrollmentRecord(att));
             const absentLogical = getLogicalAttendanceRecords(linkedRecords).filter(att => !isEnrollmentRecord(att) && Number(att.hours || 0) > 0).length;
 
-            const warning = `⚠️ حذف رسمي ونهائي للطالب
-
-الطالب: ${student.name}
-المرحلة: ${getLevelName(Number(student.level) || 0)}
-سجلات الغياب/الحضور: ${absenceRecords.length}
-روابط المواد: ${enrollmentLinks.length}
-محاضرات غياب فعلية حالياً: ${absentLogical}
-
-سيتم حذف الطالب وجميع سجلاته المرتبطة به فقط من النظام والسحابة. لن تتأثر سجلات أي طالب آخر.
-
-هل تريد المتابعة؟`;
+            const warning = `⚠️ حذف نهائي من النظام والسحابة\n\nالطالب: ${student.name}\nالمرحلة: ${getLevelName(Number(student.level) || 0)}\nسجلات الغياب/الحضور الموجودة على هذا الجهاز: ${absenceRecords.length}\nروابط المواد: ${enrollmentLinks.length}\nمحاضرات غياب فعلية حالياً: ${absentLogical}\n\nسيتم أيضاً فحص Firebase وحذف أي سجل قديم إضافي يحمل معرف هذا الطالب.\nلن يتم حذف أو تعديل أي سجل يحمل معرف طالب آخر.\n\nهل تريد المتابعة؟`;
             if (!confirm(warning)) return;
-            const typed = prompt(`للتأكيد النهائي اكتب كلمة: حذف
-
-الطالب: ${student.name}`);
+            const typed = prompt(`للتأكيد النهائي اكتب كلمة: حذف\n\nالطالب: ${student.name}`);
             if (String(typed || '').trim() !== 'حذف') {
                 alert('تم إلغاء العملية؛ لم تُحذف أي بيانات.');
                 return;
             }
 
-            // بصمة حماية لبقية الطلبة قبل التنفيذ.
+            // بصمة حماية لبقية الطلبة قبل التنفيذ المحلي.
             const otherAttendanceBefore = state.attendances
                 .filter(att => String(att.studentId) !== sid)
                 .map(att => `${String(att.id)}|${String(att.studentId)}|${String(att.subjectId)}|${String(att.date)}|${attendanceRecordSessionKey(att)}|${Number(att.hours)||0}|${Number(att.excused)||0}|${Number(att.updatedAt)||0}`)
@@ -3642,14 +3783,12 @@
 
             const deletionStamp = Date.now();
             linkedRecords.forEach(att => attendanceDeletionGuards.set(String(att.id), deletionStamp));
-            markStudentOfficiallyDeleted(student);
-
+            const tombstone=markStudentOfficiallyDeleted(student);
             state.students = state.students.filter(st => String(st.id) !== sid);
             state.attendances = state.attendances.filter(att => String(att.studentId) !== sid);
             state.selectedStudents = (state.selectedStudents || []).filter(id => String(id) !== sid);
             state.selectedStudentsForAttendance = (state.selectedStudentsForAttendance || []).filter(id => String(id) !== sid);
 
-            // تحقق صارم: لا طالب آخر ولا سجل لطالب آخر تغيّر بسبب الحذف.
             const otherAttendanceAfter = state.attendances
                 .map(att => `${String(att.id)}|${String(att.studentId)}|${String(att.subjectId)}|${String(att.date)}|${attendanceRecordSessionKey(att)}|${Number(att.hours)||0}|${Number(att.excused)||0}|${Number(att.updatedAt)||0}`)
                 .sort().join('\n');
@@ -3657,33 +3796,45 @@
                 .map(st => `${String(st.id)}|${String(st.name)}|${Number(st.level)||0}|${studentTheoreticalGroup(st)}|${studentPracticalGroup(st)}`)
                 .sort().join('\n');
             if (otherAttendanceAfter !== otherAttendanceBefore || otherStudentsAfter !== otherStudentsBefore) {
-                alert('⛔ أوقف النظام الحذف لأن فحص السلامة اكتشف تغيراً غير متوقع في بيانات طالب آخر. لم يتم الحفظ السحابي.');
-                // استعادة الطالب وسجلاته محلياً قبل أي حفظ.
                 state.students.push(student);
                 state.attendances.push(...linkedRecords);
+                state.deletedStudents = (state.deletedStudents||[]).filter(x=>String(x?.studentId||x?.id||'')!==sid);
                 state.appSettings = (state.appSettings || []).filter(x => String(x?.id || '') !== deletedStudentSettingId(sid));
                 linkedRecords.forEach(att => attendanceDeletionGuards.delete(String(att.id)));
                 renderAll();
+                alert('⛔ أوقف النظام الحذف لأن فحص السلامة اكتشف تغيراً غير متوقع في بيانات طالب آخر. لم يتم الحفظ السحابي.');
                 return;
             }
 
             recordAudit('حذف طالب نهائيا', {
-                studentId:sid,
-                student:student.name,
-                level:Number(student.level)||0,
-                attendanceRecordsDeleted:absenceRecords.length,
-                enrollmentLinksDeleted:enrollmentLinks.length,
-                totalRelatedRecordsDeleted:linkedRecords.length,
-                otherStudentsAffected:0
+                studentId:sid, student:student.name, level:Number(student.level)||0,
+                attendanceRecordsDeleted:absenceRecords.length, enrollmentLinksDeleted:enrollmentLinks.length,
+                totalRelatedRecordsDeleted:linkedRecords.length, otherStudentsAffected:0, deletionMode:'atomic-hard-delete-v36'
             });
 
-            const ok = await saveAll();
+            // احفظ محلياً أولاً كي تختفي التقارير فوراً حتى لو كان الإنترنت ضعيفاً.
+            await persistLocalState('hard-delete-student-v36', true);
             renderAll();
-            alert(ok
-                ? `✅ تم حذف الطالب «${student.name}» رسمياً.
-حُذف ${absenceRecords.length} سجل غياب/حضور و${enrollmentLinks.length} رابط مادة خاص به فقط.
-لم تتأثر سجلات بقية الطلبة.`
-                : `⚠️ تم الحذف محلياً وتسجيل علامة الحذف الرسمية، لكن تعذر إكمال المزامنة السحابية الآن. سيعيد النظام المحاولة عند عودة الاتصال.`);
+
+            let cloudResult={ok:false,reason:'offline',remoteAttendanceCount:0};
+            try {
+                cloudResult=await hardDeleteStudentFromFirebase(student,linkedRecords,tombstone);
+                // حدّث خط الأساس المحلي للمجموعات التي حُذفت ذرّياً كي لا يعيد طابور الحفظ إنشاءها.
+                lastSyncedCollections.students=normalizeCollection(lastSyncedCollections.students||[],'students').filter(st=>String(st.id)!==sid);
+                lastSyncedCollections.attendances=normalizeCollection(lastSyncedCollections.attendances||[],'attendances').filter(att=>String(att.studentId)!==sid);
+                const dsMap=mapsById(normalizeCollection(lastSyncedCollections.deletedStudents||[],'deletedStudents'));
+                dsMap.set(sid,tombstone); lastSyncedCollections.deletedStudents=Array.from(dsMap.values());
+                await persistLocalState('hard-delete-student-cloud-confirmed-v36', true);
+                pushToFirebase({silent:true}).catch(console.error); // مزامنة سجل التدقيق فقط وما تبقى من تغييرات آمنة.
+            } catch(err) {
+                console.error('تعذر إكمال الحذف الذري سحابياً:',err);
+                scheduleCloudRetry();
+            }
+
+            renderAll();
+            alert(cloudResult.ok
+                ? `✅ تم حذف الطالب «${student.name}» نهائياً من الجهاز والسحابة.\nحُذفت جميع سجلاته المرتبطة به فقط، بما فيها ${cloudResult.remoteAttendanceCount} سجل غياب/حضور عُثر عليه في Firebase.\nلم تتأثر سجلات بقية الطلبة.`
+                : `🟠 تم حذف الطالب «${student.name}» نهائياً من هذه النسخة واستبعاده من كل التقارير، وثُبتت علامة الحذف الدائمة.\nتعذر الوصول الكامل إلى Firebase الآن؛ سيبقى محجوباً ولن يظهر في التقارير، وستعاد محاولة التنظيف السحابي عند توفر الاتصال.`);
         }
 
         // ==============================================================
@@ -4756,7 +4907,7 @@
                     <div class="students-grid">`;
             students.slice(0,12).forEach(st => {
                 const pg = studentPracticalGroup(st);
-                html += `<div class="student-item"><span class="student-name">👨‍🎓 ${escapeHtml(st.name)}</span><div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">${pg?`<span class="practical-badge">🔬 ${escapeHtml(pg)}</span>`:`<span class="unassigned-badge">غير موزع</span>`}<button onclick="event.stopPropagation(); moveStudentGroup('${st.id}','${groupName}','نظري',${level})" class="btn-sm btn-warning" style="min-width:24px;padding:2px 5px;font-size:9px;" title="نقل إلى شعبة نظرية أخرى">↕</button><button onclick="event.stopPropagation(); deleteStudentOfficial('${st.id}')" class="btn-sm btn-danger" style="min-width:24px;padding:2px 5px;font-size:9px;" title="حذف الطالب نهائياً مع جميع سجلاته">🗑️</button></div></div>`;
+                html += `<div class="student-item"><span class="student-name">👨‍🎓 ${escapeHtml(st.name)}</span><div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">${pg?`<span class="practical-badge">🔬 ${escapeHtml(pg)}</span>`:`<span class="unassigned-badge">غير موزع</span>`}<button onclick="event.stopPropagation(); moveStudentGroup('${st.id}','${groupName}','نظري',${level})" class="btn-sm btn-warning" style="min-width:24px;padding:2px 5px;font-size:9px;" title="نقل إلى شعبة نظرية أخرى">↕</button><button onclick="event.stopPropagation(); deleteStudentOfficial('${st.id}')" class="btn-sm btn-danger" style="min-width:24px;padding:2px 5px;font-size:9px;" title="حذف الطالب نهائياً من النظام والسحابة مع جميع سجلات غيابه وحضوره فقط">🗑️</button></div></div>`;
             });
             if (students.length>12) html += `<div style="font-size:10px;color:#64748b;text-align:center;padding:5px;">+ ${students.length-12} طالب آخر</div>`;
             html += `</div></div>`;
@@ -4870,7 +5021,7 @@
             if (!students.length) html += `<p style="padding:15px;text-align:center;color:#94a3b8;">لا يوجد طلاب في هذه الشعبة.</p>`;
             students.forEach(st => {
                 const pg = studentPracticalGroup(st);
-                html += `<div class="practical-student-row"><input class="theory-student-check" type="checkbox" value="${st.id}"><div><strong>${escapeHtml(st.name)}</strong><small>باركود: ${escapeHtml(st.barcode||st.id)}</small></div><select onchange="changeStudentPracticalGroupFromSelect('${st.id}', this.value, ${level}, '${theoreticalGroup}')">${practicalGroupOptionsHtml(pg, practicalNames.concat(pg?[pg]:[]))}</select><div style="display:flex;gap:4px;"><button onclick="moveStudentGroup('${st.id}','${theoreticalGroup}','نظري',${level})" class="btn-warning btn-sm" style="min-width:28px;" title="نقل شعبة نظرية">↕</button><button onclick="deleteStudentOfficial('${st.id}')" class="btn-danger btn-sm" style="min-width:28px;" title="حذف الطالب نهائياً مع جميع سجلاته">🗑️</button></div></div>`;
+                html += `<div class="practical-student-row"><input class="theory-student-check" type="checkbox" value="${st.id}"><div><strong>${escapeHtml(st.name)}</strong><small>باركود: ${escapeHtml(st.barcode||st.id)}</small></div><select onchange="changeStudentPracticalGroupFromSelect('${st.id}', this.value, ${level}, '${theoreticalGroup}')">${practicalGroupOptionsHtml(pg, practicalNames.concat(pg?[pg]:[]))}</select><div style="display:flex;gap:4px;"><button onclick="moveStudentGroup('${st.id}','${theoreticalGroup}','نظري',${level})" class="btn-warning btn-sm" style="min-width:28px;" title="نقل شعبة نظرية">↕</button><button onclick="deleteStudentOfficial('${st.id}')" class="btn-danger btn-sm" style="min-width:28px;" title="حذف الطالب نهائياً من النظام والسحابة مع جميع سجلات غيابه وحضوره فقط">🗑️</button></div></div>`;
             });
             html += `</div></div><h4 style="margin-top:10px;">🔬 المجاميع العملية داخل الشعبة</h4><div class="practical-group-cards">`;
             practicalNames.forEach(pg => {
@@ -4974,12 +5125,12 @@
         function showLevelStudents(level, stats) {
             ensureStudentGroupingModel();
             const container = document.getElementById('levelDetailContent');
-            const students = state.students.filter(st => Number(st.level) === Number(level))
+            const students = getActiveStudents().filter(st => Number(st.level) === Number(level))
                 .sort((a,b)=>studentTheoreticalGroup(a).localeCompare(studentTheoreticalGroup(b),'ar') || studentPracticalGroup(a).localeCompare(studentPracticalGroup(b),'ar') || String(a.name||'').localeCompare(String(b.name||''),'ar'));
             if (!students.length) { container.innerHTML = `<div class="card"><p style="color:#a0aec0;text-align:center;padding:12px;">👨‍🎓 لا يوجد طلاب مسجلين</p></div>`; return; }
             let html = `<div class="card"><h4>👨‍🎓 طلاب ${getLevelName(level)}</h4><div class="table-wrapper"><table>
                 <tr><th>#</th><th>الاسم</th><th>الشعبة النظرية</th><th>المجموعة العملية</th><th>الهاتف</th><th>ولي الأمر</th><th>إجراء إداري</th></tr>`;
-            students.forEach((st,idx)=> { html += `<tr><td>${idx+1}</td><td>${escapeHtml(st.name)}</td><td>${escapeHtml(studentTheoreticalGroup(st))}</td><td>${studentPracticalGroup(st)?escapeHtml(studentPracticalGroup(st)):'<span style="color:#dc2626">غير موزع</span>'}</td><td>${escapeHtml(st.phone||'-')}</td><td>${escapeHtml(st.guardianPhone||'-')}</td><td><button class="btn-danger btn-sm" onclick="deleteStudentOfficial('${st.id}')" title="حذف نهائي للطالب وكل سجلاته فقط">🗑️ حذف نهائي</button></td></tr>`; });
+            students.forEach((st,idx)=> { html += `<tr><td>${idx+1}</td><td>${escapeHtml(st.name)}</td><td>${escapeHtml(studentTheoreticalGroup(st))}</td><td>${studentPracticalGroup(st)?escapeHtml(studentPracticalGroup(st)):'<span style="color:#dc2626">غير موزع</span>'}</td><td>${escapeHtml(st.phone||'-')}</td><td>${escapeHtml(st.guardianPhone||'-')}</td><td><button class="btn-danger btn-sm" onclick="deleteStudentOfficial('${st.id}')" title="حذف نهائي للطالب وكل سجلاته فقط">🗑️ حذف نهائي + السجلات</button></td></tr>`; });
             html += `</table></div></div>`; container.innerHTML = html;
         }
 
@@ -5767,12 +5918,13 @@
         //  فرز الحالات ومتابعة تسليم الأساتذة
         // ==============================================================
         function studentRelevantToSubject(student, subject) {
+            if (!student || isStudentOfficiallyDeleted(student.id,student.barcode)) return false;
             if (studentMatchesSubject(student, subject)) return true;
             return getLogicalAttendanceRecords(state.attendances).some(a => String(a.studentId)===String(student.id) && String(a.subjectId)===String(subject.id) && Number(a.hours)>0);
         }
 
         function getStatusRowsForLevel(level) {
-            const students = state.students.filter(st=>Number(st.level)===Number(level));
+            const students = getActiveStudents().filter(st=>Number(st.level)===Number(level));
             const subjects = state.subjects.filter(sub=>Number(sub.level)===Number(level) && sub.timetableActive!==false);
             const rows=[];
             students.forEach(st=>subjects.forEach(sub=>{
@@ -5801,7 +5953,7 @@
         }
 
         function getStudentsMatchingStatus(level, filter=state.officerStatusFilter) {
-            const students=state.students.filter(st=>Number(st.level)===Number(level));
+            const students=getActiveStudents().filter(st=>Number(st.level)===Number(level));
             if (!filter || filter==='الكل') return new Set(students.map(st=>st.id));
             return new Set(students.filter(st=>{
                 const worst=getStudentWorstStatusForLevel(st.id,level);
@@ -5819,7 +5971,7 @@
             const el=document.getElementById('officerStatusFilterPanel');
             if (!el || !level) return;
             if(state.officerStatusFilter==='أي إنذار') state.officerStatusFilter='أي حالة';
-            const students=state.students.filter(st=>Number(st.level)===Number(level));
+            const students=getActiveStudents().filter(st=>Number(st.level)===Number(level));
             const counts=countStudentStatuses(students,level);
             const filters=['الكل','جيد','تنبيه','إنذار أولي','إنذار نهائي','راسب','أي حالة'];
             const styles={
@@ -6398,7 +6550,7 @@
         }
 
         function calculateAnnualAbsence(studentId, subject) {
-            if (!subject) return { totalAbsentHours: 0, absencePercentage: 0, status: 'جيد' };
+            if (!subject || isStudentOfficiallyDeleted(studentId)) return { totalAbsentHours: 0, unexcusedHours:0, excusedHours:0, absencePercentage: 0, unexcusedPercentage:0, annualCourseHours: subject?getSubjectCourseHours(subject):0, status: 'جيد' };
             const records = getLogicalAttendanceRecords(state.attendances).filter(a =>
                 String(a.studentId) === String(studentId) && String(a.subjectId) === String(subject.id) && Number(a.hours) > 0
             );
@@ -6437,7 +6589,7 @@
 
             const container = document.getElementById('officerReportContent');
             if (!container) return;
-            const studentsInLevel = state.students.filter(st => st.level === level);
+            const studentsInLevel = getActiveStudents().filter(st => st.level === level);
             if (studentsInLevel.length === 0) {
                 container.innerHTML = '<p>لا يوجد طلاب في هذه المرحلة</p>';
                 return;
@@ -6598,7 +6750,7 @@
             const level = state.currentLevel;
             if (!level) { alert('الرجاء اختيار مرحلة أولاً'); return; }
             const matchingStudentIds = getStudentsMatchingStatus(level, state.officerStatusFilter);
-            const studentsInLevel = state.students.filter(st => st.level === level && matchingStudentIds.has(st.id));
+            const studentsInLevel = getActiveStudents().filter(st => st.level === level && matchingStudentIds.has(st.id));
             if (studentsInLevel.length === 0) { alert('لا يوجد طلاب مطابقون للفلتر الحالي'); return; }
             const finalSubjects = getReportSubjects(level);
             const data = [];
@@ -7951,7 +8103,7 @@
             const container = document.getElementById('studentSelectionContainer');
             const level = state.currentLevel;
             if (!level) { container.innerHTML = '<p style="color:#a0aec0;">الرجاء اختيار مرحلة</p>'; return; }
-            const studentsInLevel = state.students.filter(st => st.level === level);
+            const studentsInLevel = getActiveStudents().filter(st => st.level === level);
             if (studentsInLevel.length === 0) { container.innerHTML = '<p style="color:#a0aec0;">لا يوجد طلاب</p>'; return; }
             if (state.selectedStudents.length === 0) {
                 state.selectedStudents = studentsInLevel.filter(st => getLogicalAttendanceRecords(state.attendances).some(a => String(a.studentId) === String(st.id) && Number(a.hours) > 0)).map(st => st.id);
