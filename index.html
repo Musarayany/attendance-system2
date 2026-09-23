@@ -426,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V42.3</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V43</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -916,7 +916,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '42.3-incremental-sync';
+        const APP_VERSION = '43.0-release-candidate';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -2205,6 +2205,15 @@
         }
 
         // استماع للتغييرات في الوقت الفعلي مع دمجها مع التغييرات المحلية غير المحفوظة.
+        const incrementalRenderTimers = Object.create(null);
+        function scheduleIncrementalUiRefresh(name, delay=120) {
+            clearTimeout(incrementalRenderTimers[name]);
+            incrementalRenderTimers[name]=setTimeout(()=>{
+                delete incrementalRenderTimers[name];
+                scheduleRenderRefresh(name);
+            }, Math.max(40,Number(delay)||120));
+        }
+
         function listenToFirebase() {
             if (!database || cloudListenersStarted) return;
             cloudListenersStarted = true;
@@ -2234,7 +2243,7 @@
                 delete syncConflicts[syncConflictKey(name,id)];
 
                 scheduleLocalPersistence(name==='attendances' ? 700 : 350);
-                scheduleRenderRefresh(name);
+                scheduleIncrementalUiRefresh(name, name==='attendances' ? 180 : 90);
                 updateSyncConflictButton();
             };
 
@@ -2251,7 +2260,7 @@
                 lastSyncedCollections[name]=Array.from(base.values());
                 delete syncConflicts[syncConflictKey(name,id)];
                 scheduleLocalPersistence(500);
-                scheduleRenderRefresh(name);
+                scheduleIncrementalUiRefresh(name, name==='attendances' ? 180 : 90);
                 updateSyncConflictButton();
             };
 
@@ -2370,7 +2379,7 @@
         setInterval(() => {
             // لا نعيد تسلسل الحالة كاملة كل 30 ثانية؛ الحفظ الحدثي موجود أصلاً بعد كل تعديل.
             if (state.initialLoadDone && document.visibilityState==='visible' && !state.isSyncing) persistLocalState('interval-light');
-            if (!cloudConnected && !cloudSyncPromise) connectAndSyncCloud();
+            if (document.visibilityState==='visible' && !cloudConnected && !cloudSyncPromise) connectAndSyncCloud();
         }, 120000);
 
         // ==============================================================
