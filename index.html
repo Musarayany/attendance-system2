@@ -426,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V43.1</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V43.2</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -916,7 +916,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '43.1-save-loop-fix';
+        const APP_VERSION = '43.2-initial-replay-fix';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -2273,8 +2273,26 @@
 
             CLOUD_SYNC_COLLECTIONS.forEach(name => {
                 const ref=database.ref('/'+name);
-                ref.on('child_added', snap => upsertRemoteChild(name,snap.val(),snap.key),
-                    err=>console.error('خطأ child_added في '+name+':',err));
+
+                // Firebase يعيد إطلاق child_added لكل السجلات الموجودة عند تركيب المستمع.
+                // هذه السجلات حُمّلت مسبقاً في القراءة الأولية، لذا نتجاوزها بزمن O(1)
+                // بدلاً من البحث الخطي داخل آلاف سجلات الغياب لكل حدث.
+                const initialIds=new Set(
+                    (lastSyncedCollections[name]||[])
+                    .map(x=>String(x?.id||''))
+                    .filter(Boolean)
+                );
+
+                ref.on('child_added', snap => {
+                    const raw=snap.val();
+                    const id=String(raw?.id || snap.key || '');
+                    if(id && initialIds.has(id)){
+                        initialIds.delete(id);
+                        return;
+                    }
+                    upsertRemoteChild(name,raw,snap.key);
+                }, err=>console.error('خطأ child_added في '+name+':',err));
+
                 ref.on('child_changed', snap => upsertRemoteChild(name,snap.val(),snap.key),
                     err=>console.error('خطأ child_changed في '+name+':',err));
                 ref.on('child_removed', snap => removeRemoteChild(name,snap.key),
