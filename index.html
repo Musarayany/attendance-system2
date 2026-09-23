@@ -426,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V43.2</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V43.3</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -916,7 +916,8 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '43.2-initial-replay-fix';
+        let attendanceReadScope = null;
+        const APP_VERSION = '43.3-report-performance-fix';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -2164,14 +2165,16 @@
                     // commitFirebaseChanges يتحقق من السجل المستهدف، والمستمعات child_* تستقبل أي تغيير خارجي.
                     // نحدّث خط الأساس محلياً فقط للتغييرات التي لم تتعارض.
                     const conflictKeys=new Set(conflicts.map(c=>`${c.name}::${c.id}`));
+                    const committedBases = new Map();
                     for(const change of changes){
                         if(conflictKeys.has(`${change.name}::${change.id}`)) continue;
-                        const base=mapsById(lastSyncedCollections[change.name]||[]);
+                        if (!committedBases.has(change.name)) committedBases.set(change.name, mapsById(lastSyncedCollections[change.name]||[]));
+                        const base=committedBases.get(change.name);
                         if(change.after) base.set(String(change.id), sanitizeRecord(change.after));
                         else base.delete(String(change.id));
-                        lastSyncedCollections[change.name]=Array.from(base.values());
                         delete syncConflicts[syncConflictKey(change.name,change.id)];
                     }
+                    committedBases.forEach((base, name) => { lastSyncedCollections[name] = Array.from(base.values()); });
                     if (conflicts.length) {
                         // لا نفقد نسخة هذا الجهاز: نعيد التعديلات المتعارضة كمسودة محلية معلقة.
                         conflicts.forEach(change => {
@@ -3681,6 +3684,7 @@
 
         // يعرض/يحسب كل محاضرة مرة واحدة فقط. السجلات القديمة التي بلا وقت تبقى منفصلة حفاظاً على التاريخ.
         function getLogicalAttendanceRecords(records=state.attendances) {
+            if (attendanceReadScope && records === state.attendances && attendanceReadScope.logical) return attendanceReadScope.logical;
             const passthrough=[];
             const sessions=new Map();
             const deletedStudentIds=getOfficiallyDeletedStudentIds();
@@ -3693,13 +3697,28 @@
                 const current=sessions.get(key);
                 if(!current || attendanceRecordRevision(att)>=attendanceRecordRevision(current)) sessions.set(key,att);
             });
-            return [...passthrough,...sessions.values()];
+            const result = [...passthrough,...sessions.values()];
+            if (attendanceReadScope && records === state.attendances) attendanceReadScope.logical = result;
+            return result;
         }
 
         function getLogicalAttendanceForStudentSubject(studentId,subjectId) {
-            return getLogicalAttendanceRecords(state.attendances).filter(att=>
-                String(att.studentId)===String(studentId) && String(att.subjectId)===String(subjectId)
-            );
+            if (attendanceReadScope) {
+                if (!attendanceReadScope.pairs) {
+                    const pairs = new Map();
+                    getLogicalAttendanceRecords(state.attendances).forEach(att => {
+                        const key = JSON.stringify([String(att.studentId), String(att.subjectId)]);
+                        if (!pairs.has(key)) pairs.set(key, []);
+                        pairs.get(key).push(att);
+                    });
+                    attendanceReadScope.pairs = pairs;
+                }
+                return (attendanceReadScope.pairs.get(JSON.stringify([String(studentId), String(subjectId)])) || []).slice();
+            }
+            // Restrict candidates before resolving duplicate sessions; identity includes both IDs.
+            return getLogicalAttendanceRecords(state.attendances.filter(att =>
+                String(att.studentId) === String(studentId) && String(att.subjectId) === String(subjectId)
+            ));
         }
 
         function findAttendanceForSession(studentId, subjectId, date, sessionTime) {
@@ -6397,7 +6416,7 @@
         function studentRelevantToSubject(student, subject) {
             if (!student || isStudentOfficiallyDeleted(student.id,student.barcode)) return false;
             if (studentMatchesSubject(student, subject)) return true;
-            return getLogicalAttendanceRecords(state.attendances).some(a => String(a.studentId)===String(student.id) && String(a.subjectId)===String(subject.id) && Number(a.hours)>0);
+            return getLogicalAttendanceForStudentSubject(student.id, subject.id).some(a => Number(a.hours)>0);
         }
 
         function getStatusRowsForLevel(level) {
@@ -7340,9 +7359,7 @@
 
         function calculateAnnualAbsence(studentId, subject) {
             if (!subject || isStudentOfficiallyDeleted(studentId)) return { totalAbsentHours: 0, unexcusedHours:0, excusedHours:0, absencePercentage: 0, unexcusedPercentage:0, annualCourseHours: subject?getSubjectCourseHours(subject):0, status: 'جيد' };
-            const records = getLogicalAttendanceRecords(state.attendances).filter(a =>
-                String(a.studentId) === String(studentId) && String(a.subjectId) === String(subject.id) && Number(a.hours) > 0
-            );
+            const records = getLogicalAttendanceForStudentSubject(studentId, subject.id).filter(a => Number(a.hours) > 0);
             const totalAbsentHours = records.reduce((sum, a) => sum + getAttendanceEffectiveHours(a, subject), 0);
             const unexcusedHours = records
                 .filter(a => Number(a.excused) === 0)
@@ -9831,6 +9848,30 @@
         });
 
         // يبدأ من النسخة المحلية فوراً؛ الاتصال السحابي لا يعطل الدخول أو فتح الجدول.
+        function withAttendanceReadScope(fn, receiver, args) {
+            if (attendanceReadScope) return fn.apply(receiver, args);
+            attendanceReadScope = {pairs:null, logical:null};
+            try { return fn.apply(receiver, args); }
+            finally { attendanceReadScope = null; }
+        }
+        countStudentStatuses = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(countStudentStatuses);
+        getStatusRowsForLevel = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(getStatusRowsForLevel);
+        getSelectedStudentsWithData = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(getSelectedStudentsWithData);
+        getStudentAttendanceSummary = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(getStudentAttendanceSummary);
+        renderAll = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderAll);
+        renderAdmin = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderAdmin);
+        renderOfficer = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderOfficer);
+        renderProfessor = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderProfessor);
+        renderLevels = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderLevels);
+        renderOfficerLevels = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderOfficerLevels);
+        renderStatisticsDashboard = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderStatisticsDashboard);
+        renderOfficerReport = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderOfficerReport);
+        renderFilteredStatusDetails = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderFilteredStatusDetails);
+        renderProfessorGroups = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderProfessorGroups);
+        renderProfessorAttendance = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderProfessorAttendance);
+        refreshProfessorAttendanceSummariesOnly = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(refreshProfessorAttendanceSummariesOnly);
+
+        renderStudentSelection = ((original) => function(...args) { return withAttendanceReadScope(original, this, args); })(renderStudentSelection);
         applicationBootstrapPromise = bootstrapApplication();
 
     </script>
