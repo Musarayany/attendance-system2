@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
     <title>نظام إدارة الغيابات - قسم الفيزياء</title>
     <!-- المكتبات المساعدة غير الحرجة: defer يمنعها من تعطيل شاشة الدخول عند بطء CDN -->
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script defer src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js" integrity="sha384-qovJwSBbRDPP5cEjCp8S0UP66wrvnjaa60XMOGzTNanrThcrGfXfnZkvgY8N1KT3" crossorigin="anonymous"></script>
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script defer src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -905,7 +905,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '36.0';
+        const APP_VERSION = '38.0-audited';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -1031,6 +1031,8 @@
 
         let html5QrCode = null;
         let isScanning = false;
+        let scannerStartPromise=null;
+        let scannerStopPromise=null;
         let liveWeeklyTimetable = null;
         let weeklyTimetableListenerStarted = false;
         let academicCatalogListenerStarted = false;
@@ -1067,6 +1069,13 @@
         const SYNC_COLLECTIONS = ['professors', 'professorProfiles', 'subjects', 'deletedStudents', 'students', 'attendances', 'notifications', 'auditLogs', 'submissions', 'scheduleLinks', 'subjectHourOverrides', 'appSettings'];
         let lastSyncedCollections = {};
         let saveQueue = Promise.resolve();
+        let localPersistenceQueue = Promise.resolve();
+        let syncConflicts = Object.create(null);
+        let cloudInitialReadComplete = false;
+        let submissionMutationBusy = false;
+        const pendingRenderSources = new Set();
+        const legacyCloudCollections = new Set();
+        let syncConflictHistory = [];
         let localCacheWasLoaded = false;
         let localDatabasePromise = null;
         let localDatabaseDisabled = false;
@@ -1169,8 +1178,8 @@
                 database.ref('.info/connected').on('value', snap => {
                     cloudConnected = snap.val() === true;
                     if (cloudConnected) {
-                        setStartupStatus('✅ متصل بالسحابة — آخر البيانات محفوظة محليا أيضا', 'online');
-                        if (state.initialLoadDone) pushToFirebase({ silent:true });
+                        setStartupStatus('✅ متصل بالسحابة', 'online');
+                        if (state.initialLoadDone && cloudInitialReadComplete) pushToFirebase({ silent:true });
                     } else if (state.initialLoadDone) {
                         setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
                     }
@@ -1194,7 +1203,11 @@
                     const db = request.result;
                     if (!db.objectStoreNames.contains(LOCAL_DB_STORE)) db.createObjectStore(LOCAL_DB_STORE);
                 };
-                request.onsuccess = () => resolve(request.result);
+                request.onsuccess = () => {
+                    const db = request.result;
+                    db.onversionchange = () => { db.close(); localDatabasePromise = null; };
+                    resolve(db);
+                };
                 request.onerror = () => reject(request.error || new Error('تعذر فتح التخزين المحلي'));
                 request.onblocked = () => reject(new Error('التخزين المحلي محجوب من نافذة أخرى'));
             }).catch(err => {
@@ -1245,12 +1258,14 @@
                 schemaVersion: SCHEMA_VERSION,
                 savedAt: Date.now(),
                 collections,
-                syncBase
+                syncBase,
+                syncConflicts: JSON.parse(JSON.stringify(syncConflicts)),
+                syncConflictHistory:JSON.parse(JSON.stringify(syncConflictHistory))
             };
         }
 
         function localSnapshotSignature(payload) {
-            const json = JSON.stringify({ collections:payload.collections, syncBase:payload.syncBase });
+            const json = JSON.stringify({ collections:payload.collections, syncBase:payload.syncBase, syncConflicts:payload.syncConflicts || {}, syncConflictHistory:payload.syncConflictHistory || [] });
             let hash = 2166136261;
             for (let i = 0; i < json.length; i++) {
                 hash ^= json.charCodeAt(i);
@@ -1264,30 +1279,34 @@
                 const json = JSON.stringify(payload);
                 if (json.length <= 4200000) localStorage.setItem(LOCAL_CACHE_FALLBACK_KEY, json);
                 else {
-                    localStorage.setItem(LOCAL_CACHE_FALLBACK_KEY, JSON.stringify({ oversize:true, savedAt:payload.savedAt }));
+                    // Keep the previous recoverable snapshot if this one exceeds the quota.
                     return false;
                 }
                 return true;
             } catch (err) { console.warn('تعذر حفظ النسخة الاحتياطية في localStorage:', err); return false; }
         }
 
-        async function persistLocalState(reason = 'auto', force = false) {
-            if (!state.initialLoadDone && reason !== 'bootstrap') return false;
-            try {
-                const payload = buildLocalSnapshot();
-                const signature = localSnapshotSignature(payload);
+        function persistLocalState(reason = 'auto', force = false) {
+            if (!state.initialLoadDone && reason !== 'bootstrap') return Promise.resolve(false);
+            const payload = buildLocalSnapshot();
+            const signature = localSnapshotSignature(payload);
+            localPersistenceQueue = localPersistenceQueue.catch(() => false).then(async () => {
                 if (!force && signature === lastLocalSnapshotSignature) return true;
-                const fallbackSaved = writeLocalStorageFallback(payload);
-                const indexedSaved = await writeIndexedSnapshot(payload);
-                lastLocalSnapshotSignature = signature;
-                return indexedSaved || fallbackSaved;
-            } catch (err) {
-                console.error('خطأ حفظ النسخة المحلية:', err);
-                setSyncStatus('⚠️ تعذر تحديث النسخة المحلية؛ صدّر نسخة احتياطية الآن', '#b45309');
-                return false;
-            }
+                try {
+                    const fallbackSaved = writeLocalStorageFallback(payload);
+                    const indexedSaved = await writeIndexedSnapshot(payload);
+                    if (!indexedSaved && !fallbackSaved) throw new Error('لم ينجح أي مخزن محلي');
+                    lastLocalSnapshotSignature = signature;
+                    return true;
+                } catch (err) {
+                    console.error('خطأ حفظ النسخة المحلية:', err);
+                    setSyncStatus('⚠️ تعذر الحفظ المحلي؛ أبق الصفحة مفتوحة وصدّر نسخة احتياطية', '#b91c1c');
+                    showAttendanceToast('تعذر الحفظ على الجهاز. أبق الصفحة مفتوحة وخذ نسخة احتياطية.', 'error');
+                    return false;
+                }
+            });
+            return localPersistenceQueue;
         }
-
         function scheduleLocalPersistence(delay = 120) {
             clearTimeout(localSaveTimer);
             localSaveTimer = setTimeout(() => persistLocalState('scheduled'), delay);
@@ -1308,6 +1327,11 @@
                 state[name] = normalizeCollection(payload.collections[name], name);
                 lastSyncedCollections[name] = normalizeCollection(payload.syncBase?.[name] ?? payload.collections[name], name);
             });
+            syncConflicts = Object.create(null);
+            syncConflictHistory=Array.isArray(payload.syncConflictHistory)?payload.syncConflictHistory.slice(-50):[];
+            Object.entries(payload.syncConflicts || {}).forEach(([key, value]) => {
+                if (value && SYNC_COLLECTIONS.includes(value.name) && key === syncConflictKey(value.name,value.id)) syncConflicts[key] = value;
+            });
             localCacheWasLoaded = true;
             lastLocalSnapshotSignature = localSnapshotSignature(payload);
             return true;
@@ -1320,6 +1344,7 @@
                     currentOfficerTab: state.currentOfficerTab || 'reports',
                     currentLevel: state.currentLevel || null,
                     currentLevelKey: state.currentLevelKey || null,
+                    currentLevelTab:state.currentLevelTab||'groups',
                     scrollY: Math.max(0, Number(window.scrollY) || 0),
                     savedAt: Date.now()
                 }));
@@ -1332,12 +1357,15 @@
                 if (!saved) return;
                 state.currentProfessorSubjectId = saved.currentProfessorSubjectId || state.currentProfessorSubjectId;
                 state.currentOfficerTab = saved.currentOfficerTab || state.currentOfficerTab;
+                state.currentLevel=Number(saved.currentLevel)||null;
+                state.currentLevelKey=saved.currentLevelKey||null;
+                state.currentLevelTab=saved.currentLevelTab||'groups';
                 requestAnimationFrame(() => window.scrollTo({ top:Math.max(0, Number(saved.scrollY) || 0), behavior:'auto' }));
             } catch (err) { console.warn('تعذر استعادة موضع الواجهة:', err); }
         }
 
         function saveAuthenticatedSession(user, persistent) {
-            const record = { role:user.role, id:user.id, name:user.name, persistent:!!persistent, savedAt:Date.now() };
+            const record = { role:user.role, id:user.id, name:user.name, persistent:!!persistent, savedAt:Date.now(), credentialSignature:accountCredentialSignature(user) };
             if (user.role === 'professor') {
                 const prof = (state.professors || []).find(p => String(p.id) === String(user.id));
                 record.credentialSignature = prof ? String(getProfessorUnifiedPassword(prof).hash || '') : '';
@@ -1373,6 +1401,8 @@
         function restoreSavedSession() {
             const saved = readSavedSession();
             if (!saved || !['admin','officer','professor'].includes(saved.role)) return false;
+            const age=Date.now()-Number(saved.savedAt||0);
+            if (age<0 || age>(saved.persistent?30*24*60*60*1000:SESSION_TIMEOUT_MS) || !saved.credentialSignature || saved.credentialSignature!==accountCredentialSignature(saved)) {clearAuthenticatedSession();return false;}
             let restored = { role:saved.role, id:String(saved.id || ''), name:sanitizeText(saved.name || '', 120), persistent:!!saved.persistent };
             if (saved.role === 'professor') {
                 const direct = (state.professors || []).find(p => String(p.id) === String(saved.id));
@@ -1396,25 +1426,25 @@
         }
 
         function scheduleRenderRefresh(sourceName='') {
-            const preservedProfessorView = state.currentUser?.role==='professor' ? captureProfessorViewState() : null;
+            pendingRenderSources.add(sourceName);
             clearTimeout(renderRefreshTimer);
-            renderRefreshTimer = setTimeout(() => {
+            renderRefreshTimer=setTimeout(()=>{
+                const sources=[...pendingRenderSources];pendingRenderSources.clear();
+                const view=state.currentUser?.role==='professor'?captureProfessorViewState():null;
+                const inputs=[...document.querySelectorAll('input[id],select[id],textarea[id]')].filter(el=>!el.readOnly && el.type!=='file'&&el.type!=='password'&&(el.tagName==='SELECT'||el===document.activeElement||el.dataset.v38Dirty==='true')).map(el=>({id:el.id,value:el.value,checked:el.checked}));
+                const focused=document.activeElement?.id;
                 try {
-                    // تغييرات الغياب اللحظية لا تحتاج إعادة بناء التطبيق كله؛ تحديث لوحة المادة فقط يمنع قفز قائمة الطلبة.
-                    if(state.currentUser?.role==='professor' && sourceName==='attendances') {
-                        // لا نعيد بناء قائمة الطلبة عند كل نبضة Firebase؛ نحدّث الحالات في مكانها فقط.
-                        refreshProfessorAttendanceSummariesOnly();
-                    } else if(state.currentUser?.role==='professor' && sourceName==='submissions') {
-                        renderProfessorSubmissionStatus(getProfessorSubject());
-                    } else {
+                    if(state.currentUser?.role==='professor'&&sources.every(x=>['attendances','submissions','auditLogs','notifications'].includes(x)))refreshProfessorAttendanceSummariesOnly();
+                    else {
                         renderAll();
-                        if(preservedProfessorView) restoreProfessorViewState(preservedProfessorView,'');
+                        inputs.forEach(saved=>{const el=document.getElementById(saved.id);if(el && (el.tagName!=='SELECT'||[...el.options].some(o=>o.value===saved.value))){el.value=saved.value;el.checked=saved.checked;}});
+                        if(focused)document.getElementById(focused)?.focus({preventScroll:true});
+                        if(view)restoreProfessorViewState(view,'');
                     }
-                }
-                catch (err) { console.error('خطأ غير حرج أثناء تحديث الواجهة:', err); }
-            }, 120);
+                    updateSyncConflictButton();
+                } catch(err){console.error('تعذر تحديث الواجهة:',err);}
+            },120);
         }
-
         function scheduleCredentialValidation() {
             clearTimeout(credentialValidationTimer);
             credentialValidationTimer = setTimeout(() => {
@@ -1461,8 +1491,8 @@
         function arabicDayNameForDateISO(dateISO) {
             const match=String(dateISO||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
             if(!match)return '';
-            const d=new Date(`${match[1]}-${match[2]}-${match[3]}T12:00:00+03:00`);
-            return ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'][d.getDay()]||'';
+            const d=new Date(`${match[1]}-${match[2]}-${match[3]}T12:00:00Z`);
+            return ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'][d.getUTCDay()]||'';
         }
 
         function showAttendanceToast(message, type='success') {
@@ -1547,7 +1577,9 @@
         }
 
         function sanitizeNestedValue(value, key = '', depth = 0) {
-            if (value === null || value === undefined || typeof value === 'number' || typeof value === 'boolean') return value;
+            if (value === undefined) return null;
+            if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+            if (value === null || typeof value === 'boolean') return value;
             if (typeof value === 'string') {
                 const secretKeys = new Set(['password','passwordHash','adminPasswordHash','officerPasswordHash','hash']);
                 if (secretKeys.has(key)) return value.slice(0, 4096);
@@ -1558,7 +1590,7 @@
             if (depth >= 12) return null;
             if (Array.isArray(value)) return value.map(item => sanitizeNestedValue(item, key, depth + 1));
             if (typeof value === 'object') {
-                const out = {};
+                const out = Object.create(null);
                 Object.entries(value).forEach(([childKey, childValue]) => {
                     if (childKey === '__proto__' || childKey === 'prototype' || childKey === 'constructor') return;
                     out[childKey] = sanitizeNestedValue(childValue, childKey, depth + 1);
@@ -1578,19 +1610,21 @@
         }
 
         function normalizeCollection(value, collectionName) {
-            let arr = [];
-            if (Array.isArray(value)) arr = value.filter(Boolean);
-            else if (value && typeof value === 'object') arr = Object.values(value).filter(Boolean);
-            return arr.map((record, index) => {
-                if (!record || typeof record !== 'object') return record;
-                let out = sanitizeRecord(record);
-                if (!out.id) out = { ...out, id: `legacy_${collectionName}_${index}` };
+            const entries = Array.isArray(value) ? value.map((record,index)=>[null,record,index]) :
+                value && typeof value === 'object' ? Object.entries(value).map(([key,record],index)=>[key,record,index]) : [];
+            return entries.filter(([,record])=>record && typeof record==='object' && !Array.isArray(record)).map(([key,record,index])=>{
+                const out=sanitizeRecord(record);
+                out.id=String(out.id ?? key ?? `legacy_${collectionName}_${index}`);
+                if (out.level !== undefined && Number.isFinite(Number(out.level))) out.level=Number(out.level);
+                if (collectionName==='attendances') {
+                    out.excused=Number(out.excused)===1?1:0;
+                    if (out.hours !== undefined) out.hours=Math.max(0,Number(out.hours)||0);
+                }
                 return out;
-            }).filter(Boolean);
+            });
         }
-
         function collectionToMap(arr, collectionName) {
-            const out = {};
+            const out = Object.create(null);
             normalizeCollection(arr, collectionName).forEach((record, index) => {
                 const id = record.id || `legacy_${collectionName}_${index}`;
                 const key = String(id).replace(/[.#$\[\]\/]/g, '_');
@@ -1616,8 +1650,8 @@
         function stableComparable(value) {
             if (Array.isArray(value)) return value.map(stableComparable);
             if (value && typeof value === 'object') {
-                const out = {};
-                Object.keys(value).sort().forEach(k => { out[k] = stableComparable(value[k]); });
+                const out = Object.create(null);
+                Object.keys(value).sort().forEach(k => { if (value[k] !== null && value[k] !== undefined) out[k] = stableComparable(value[k]); });
                 return out;
             }
             return value;
@@ -1665,7 +1699,10 @@
                 ids.forEach(id => {
                     const before = base.get(id);
                     const after = current.get(id);
-                    if (!sameRecord(before, after)) changes.push({ name, id, before, after });
+                    if (!sameRecord(before, after) && !syncConflicts[syncConflictKey(name,id)]) changes.push({
+                        name, id, before: before === undefined ? undefined : JSON.parse(JSON.stringify(before)),
+                        after: after === undefined ? undefined : JSON.parse(JSON.stringify(after))
+                    });
                 });
             });
             return changes;
@@ -1681,22 +1718,49 @@
 
         async function commitFirebaseChanges(changes) {
             if (!database) throw new Error('الاتصال السحابي غير جاهز');
-            const conflicts = [];
-            for (const change of changes) {
-                const key = String(change.id).replace(/[.#$\[\]\/]/g, '_');
-                let conflict = false;
-                const result = await withTimeout(database.ref(`/${change.name}/${key}`).transaction(remoteValue => {
-                    const remote = remoteValue === null ? undefined : remoteValue;
-                    conflict = !sameRecord(remote, change.before) && !sameRecord(remote, change.after);
-                    if (conflict) return;
-                    return change.after === undefined ? null : change.after;
-                }, undefined, false), CLOUD_OPERATION_TIMEOUT_MS, `انتهت مهلة حفظ ${change.name}`);
-                if (!result.committed && conflict) conflicts.push(change);
+            const conflicts=[], errors=[];
+            const blockedAttendanceSubjects=new Set(Object.values(syncConflicts).filter(c=>c.name==='attendances').map(c=>String((c.after||c.before||c.remote)?.subjectId||'')));
+            const blockRelatedSubject=change=>{if(change.name==='attendances')blockedAttendanceSubjects.add(String((change.after||change.before)?.subjectId||''));};
+            // Bound concurrency while keeping collection order (deletion markers precede students).
+            for (const name of SYNC_COLLECTIONS) {
+                const list=changes.filter(change=>change.name===name);
+                for (let start=0; start<list.length; start+=8) {
+                    await Promise.all(list.slice(start,start+8).map(async change=>{
+                        if (change.after && (change.name==='submissions'||(change.name==='appSettings'&&change.after.kind==='attendanceWorkflow')) && blockedAttendanceSubjects.has(String(change.after.subjectId||''))) return;
+                        if (change.after && ['students','attendances'].includes(change.name)) {
+                            const sid=change.name==='students'?change.id:change.after.studentId;
+                            if (isStudentOfficiallyDeleted(sid)) return;
+                        }
+                        const ref=database.ref(`/${change.name}/${firebaseRecordKey(change.id)}`);
+                        try {
+                            // Warm the exact path; an uncached transaction can otherwise initially receive null.
+                            await withTimeout(ref.once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق قبل الحفظ');
+                            const result=await withTimeout(ref.transaction(remoteValue=>{
+                                const remote=remoteValue===null?undefined:remoteValue;
+                                if (!sameRecord(remote,change.before) && !sameRecord(remote,change.after)) return;
+                                return change.after===undefined?null:change.after;
+                            },undefined,false),CLOUD_OPERATION_TIMEOUT_MS,`انتهت مهلة حفظ ${change.name}`);
+                            if (!result.committed) {
+                                const conflict={...change,before:change.before??null,after:change.after??null,remote:result.snapshot.val(),detectedAt:Date.now()};
+                                syncConflicts[syncConflictKey(change.name,change.id)]=conflict;
+                                conflicts.push(change);
+                                blockRelatedSubject(change);
+                            } else {
+                                const base=mapsById(lastSyncedCollections[change.name]||[]);
+                                const saved=result.snapshot.val();
+                                if (saved===null) base.delete(String(change.id));
+                                else base.set(String(change.id),sanitizeRecord(saved));
+                                lastSyncedCollections[change.name]=Array.from(base.values());
+                            }
+                        } catch (err) { errors.push(err); blockRelatedSubject(change); }
+                    }));
+                }
             }
-            await withTimeout(database.ref('/').update({ lastUpdate: firebase.database.ServerValue.TIMESTAMP, schemaVersion: SCHEMA_VERSION }), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة تثبيت وقت الحفظ');
+            updateSyncConflictButton();
+            if (errors.length) throw errors[0];
+            await withTimeout(database.ref('/').update({lastUpdate:firebase.database.ServerValue.TIMESTAMP,schemaVersion:SCHEMA_VERSION}),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تثبيت وقت الحفظ');
             return conflicts;
         }
-
         function applyRemoteCollection(name, value) {
             const remoteArr = normalizeCollection(value, name);
             const localArr = normalizeCollection(state[name], name);
@@ -1899,19 +1963,18 @@
         }
 
         async function migrateLegacyCollectionsIfNeeded(data) {
-            if (!data || !database) return;
-            const updates = {};
-            SYNC_COLLECTIONS.forEach(name => {
-                if (Array.isArray(data[name])) {
-                    updates[name] = collectionToMap(normalizeCollection(data[name], name), name);
-                }
-            });
-            if (Object.keys(updates).length > 0) {
-                updates.schemaVersion = SCHEMA_VERSION;
-                await withTimeout(database.ref('/').update(updates), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة ترحيل البيانات القديمة');
+            if (!data || !database || !state.currentUser) return;
+            for (const name of SYNC_COLLECTIONS) {
+                if (!Array.isArray(data[name])) continue;
+                const ref=database.ref('/'+name);
+                await withTimeout(ref.once('value'));
+                await withTimeout(ref.transaction(current=>{
+                    if (!Array.isArray(current)) return;
+                    return collectionToMap(normalizeCollection(current,name),name);
+                },undefined,false),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة ترحيل البيانات القديمة');
+                legacyCloudCollections.delete(name);
             }
         }
-
         function recordAudit(action, details = {}) {
             if (!Array.isArray(state.auditLogs)) state.auditLogs = [];
             let auditDetails='';
@@ -1950,6 +2013,7 @@
             settled.forEach((result, index) => {
                 if (result.status === 'fulfilled') {
                     data[result.value.name] = result.value.value;
+                    if(Array.isArray(result.value.value))legacyCloudCollections.add(result.value.name);
                     loadedNames.push(result.value.name);
                 } else failures.push({ name:SYNC_COLLECTIONS[index], error:result.reason });
             });
@@ -1972,24 +2036,12 @@
 
             try {
                 const { data, loadedNames, failures } = await readCloudCollections();
-                const remoteHasData = hasAnyCollectionData(data, loadedNames);
-                if (remoteHasData) {
-                    if (localCacheWasLoaded) applyRemoteData(data, loadedNames);
-                    else {
-                        loadedNames.forEach(name => { state[name] = normalizeCollection(data[name], name); });
-                        loadedNames.forEach(name => { lastSyncedCollections[name] = JSON.parse(JSON.stringify(state[name])); });
-                    }
-                    try { await migrateLegacyCollectionsIfNeeded(data); }
-                    catch (migrationError) { console.warn('تعذر ترحيل تنسيق قديم الآن وسيعاد لاحقا:', migrationError); }
-                } else if (!localCacheWasLoaded) {
-                    await initializeDefaultData();
-                    state.auditLogs = [];
-                    recordAudit('تهيئة النظام', 'إنشاء البيانات الافتراضية لأول تشغيل');
-                    lastSyncedCollections = {};
-                } else {
-                    // السحابة فارغة والنسخة المحلية موجودة: اجعل كل السجلات المحلية تغييرات معلقة للرفع.
-                    loadedNames.forEach(name => { lastSyncedCollections[name] = []; });
-                }
+                if (failures.length) throw new Error('لم تكتمل قراءة جميع الأقسام؛ أُجّل الدمج والحفظ لحماية البيانات');
+                cloudInitialReadComplete = true;
+                // Always merge. New local edits made while the first cloud read is pending must survive.
+                applyRemoteData(data, loadedNames);
+                try { await migrateLegacyCollectionsIfNeeded(data); }
+                catch (migrationError) { throw migrationError; }
 
                 // V36: يجب تطبيق الحذف الرسمي قبل أي إصلاح روابط أو بناء تقارير، حتى على جهاز جديد بلا cache محلي.
                 migrateLegacyDeletedStudentTombstones();
@@ -2008,10 +2060,10 @@
                 }
                 cloudConnected = true;
                 lastCloudSyncAt = Date.now();
-                await persistLocalState('cloud-load', true);
+                const localCopySaved=await persistLocalState('cloud-load', true);
                 const partialNote = failures.length ? ` — تعذر تحديث ${failures.length} قسم وسيعاد تلقائيا` : '';
-                setSyncStatus(`✅ تم تحميل أحدث البيانات${partialNote}`, failures.length ? '#b45309' : '#2f855a');
-                setStartupStatus('✅ متصل بالسحابة — آخر البيانات محفوظة محليا أيضا', 'online');
+                setSyncStatus(localCopySaved?`✅ تم تحميل أحدث البيانات${partialNote}`:'⚠️ تم التحميل من السحابة؛ تعذر حفظ نسخة على الجهاز', localCopySaved ? '#2f855a' : '#b45309');
+                setStartupStatus('✅ متصل بالسحابة', 'online');
                 scheduleRenderRefresh();
                 if(liveAcademicCatalog) setTimeout(()=>applyAcademicCatalogFromTimetable(liveAcademicCatalog),0);
                 state.isSyncing = false;
@@ -2033,8 +2085,8 @@
         function pushToFirebase(options = {}) {
             if (!state.initialLoadDone) return Promise.resolve(false);
             scheduleLocalPersistence(0);
-            if (!database) {
-                if (!options.silent) setSyncStatus('🟠 حُفظ التعديل في هذا المتصفح وسيُرفع تلقائيا عند عودة الاتصال', '#b45309');
+            if (!database || !cloudInitialReadComplete || !state.currentUser) {
+                if (!options.silent) setSyncStatus('🟠 التعديل ينتظر المزامنة؛ تحقق من اكتمال الحفظ المحلي', '#b45309');
                 scheduleCloudRetry();
                 return Promise.resolve(false);
             }
@@ -2046,15 +2098,18 @@
                 const changes = buildFirebaseChanges();
                 if (changes.length === 0) {
                     await persistLocalState('cloud-noop');
-                    return true;
+                    updateSyncConflictButton();
+                    return Object.keys(syncConflicts).length === 0;
                 }
 
                 state.isSyncing = true;
                 setSyncStatus(`⏳ جاري رفع ${changes.length} تغيير...`, '#1e4f7a');
 
                 try {
+                    if(legacyCloudCollections.size)await migrateLegacyCollectionsIfNeeded(Object.fromEntries([...legacyCloudCollections].map(name=>[name,[]])));
                     const conflicts = await commitFirebaseChanges(changes);
-                    const { data:freshData, loadedNames } = await readCloudCollections();
+                    const { data:freshData, loadedNames, failures } = await readCloudCollections();
+                    if (failures.length) throw new Error('تعذر التحقق الكامل من البيانات بعد الحفظ');
                     // ادمج القراءة اللاحقة للحفظ مع أي نقرات/تعديلات حدثت أثناء انتظار الشبكة.
                     // الاستبدال المباشر هنا كان يستطيع إسقاط سجلات غياب أضيفت بينما كانت دفعة سابقة قيد الرفع.
                     loadedNames.forEach(name => applyRemoteCollection(name, freshData[name]));
@@ -2077,15 +2132,16 @@
                     }
                     cloudConnected = true;
                     lastCloudSyncAt = Date.now();
-                    await persistLocalState('cloud-save', true);
-                    setSyncStatus('✅ تم الحفظ محليا وسحابيا', '#2f855a');
-                    setStartupStatus('✅ متصل بالسحابة — آخر البيانات محفوظة محليا أيضا', 'online');
-                    return true;
+                    const localCopySaved=await persistLocalState('cloud-save', true);
+                    setSyncStatus(localCopySaved?'✅ تم الحفظ محليا وسحابيا':'⚠️ تم الحفظ سحابياً فقط؛ تعذر الحفظ على الجهاز',localCopySaved?'#2f855a':'#b45309');
+                    setStartupStatus('✅ متصل بالسحابة', 'online');
+                    updateSyncConflictButton();
+                    return Object.keys(syncConflicts).length === 0 && buildFirebaseChanges().length === 0;
                 } catch (err) {
                     console.error('خطأ في الحفظ:', err);
                     cloudConnected = false;
-                    await persistLocalState('cloud-failed', true);
-                    setSyncStatus('🟠 حُفظ التعديل في هذا المتصفح؛ الرفع السحابي سيعاد تلقائيا', '#b45309');
+                    const localCopySaved=await persistLocalState('cloud-failed', true);
+                    setSyncStatus(localCopySaved?'🟠 محفوظ على هذا الجهاز؛ ستعاد المزامنة':'⛔ لم ينجح الحفظ محلياً أو سحابياً؛ أبق الصفحة مفتوحة وخذ نسخة احتياطية',localCopySaved?'#b45309':'#b91c1c');
                     setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
                     scheduleCloudRetry();
                     return false;
@@ -2103,9 +2159,9 @@
             SYNC_COLLECTIONS.forEach(name => {
                 database.ref('/'+name).on('value', async snapshot => {
                     if (!state.initialLoadDone) return;
-                    const value=snapshot.val();
+                    let value=snapshot.val();
                     if (Array.isArray(value)) {
-                        try { await database.ref('/'+name).set(collectionToMap(normalizeCollection(value,name),name)); }
+                        try { await migrateLegacyCollectionsIfNeeded({[name]:value}); value=(await database.ref('/'+name).once('value')).val(); }
                         catch(err){ console.error('تعذر ترحيل '+name+':',err); }
                     }
                     const collectionChanged=applyRemoteCollection(name,value);
@@ -2126,7 +2182,9 @@
         async function saveAll(options = {}) {
             const localSaved = await persistLocalState('explicit', true);
             const cloudSaved = await pushToFirebase(options);
-            return !!(localSaved && cloudSaved);
+            state.lastSaveOutcome={localSaved,cloudSaved,at:Date.now()};
+            if(!localSaved)throw new Error(cloudSaved?'تم الحفظ سحابياً لكن تعذر الحفظ على هذا الجهاز. لا تعتمد على العمل دون اتصال حتى تعالج التخزين.':'لم ينجح الحفظ محلياً أو سحابياً. أبق الصفحة مفتوحة وصدّر نسخة احتياطية.');
+            return !!cloudSaved;
         }
 
         function scheduleCloudRetry(delay = 15000) {
@@ -2150,6 +2208,7 @@
                     setStartupStatus('⏳ النسخة المحلية جاهزة — جارٍ فحص التحديثات السحابية...');
                     await initializeFirebaseRuntime();
                     const loaded = await loadFromFirebase();
+                    if (!loaded) return false;
                     await enforceDeletedStudentsCloudCleanup();
                     listenToFirebase();
                     listenAcademicCatalogFromTimetable();
@@ -2178,6 +2237,7 @@
                 migrateLegacyOfficerContact();
                 ensureProfessorProfilesFromLegacy();
                 canonicalizeProfessorReferences();
+                if (!loaded) lastSyncedCollections = cloneCollections();
                 await persistLocalState('bootstrap', true);
                 const restored = restoreSavedSession();
                 if (!restored) {
@@ -2207,14 +2267,15 @@
                 scheduleLocalPersistence(0);
             } else if (Date.now() - lastCloudSyncAt > 30000) connectAndSyncCloud();
         });
-        window.addEventListener('pagehide', () => { saveUiState(); writeLocalStorageFallback(buildLocalSnapshot()); });
-        window.addEventListener('beforeunload', () => { saveUiState(); writeLocalStorageFallback(buildLocalSnapshot()); });
+        window.addEventListener('pagehide', () => { if (state.initialLoadDone) { saveUiState(); writeLocalStorageFallback(buildLocalSnapshot()); } });
+        window.addEventListener('beforeunload', () => { if (state.initialLoadDone) { saveUiState(); writeLocalStorageFallback(buildLocalSnapshot()); } });
         window.addEventListener('error', event => {
             console.error('خطأ واجهة غير معالج:', event.error || event.message);
             scheduleLocalPersistence(0);
         });
         window.addEventListener('unhandledrejection', event => {
             console.error('Promise غير معالج:', event.reason);
+            showAttendanceToast(event.reason?.message||'تعذرت العملية. تحقق من حالة الحفظ قبل إغلاق الصفحة.','error');
             scheduleLocalPersistence(0);
         });
         setInterval(() => {
@@ -2297,6 +2358,7 @@
         //  EXPORT / IMPORT BACKUP (للحفظ المحلي الاحتياطي)
         // ==============================================================
         function exportBackup() {
+            if (!requireAppRole('admin')) return false;
             const data = {
                 professors: state.professors,
                 professorProfiles: state.professorProfiles,
@@ -2311,6 +2373,7 @@
                 deletedStudents: state.deletedStudents,
                 appSettings: state.appSettings,
                 schemaVersion: SCHEMA_VERSION,
+                syncConflicts, syncConflictHistory,
                 backupDate: new Date().toISOString(),
                 version: `${APP_VERSION}-strict-sync-review`
             };
@@ -2326,21 +2389,31 @@
         }
 
         function validateBackupData(data) {
-            if (!data || typeof data !== 'object') return 'الملف لا يحتوي كائناً صالحاً.';
-            for (const key of ['professors', 'subjects', 'students']) {
-                if (!Array.isArray(data[key]) && !(data[key] && typeof data[key] === 'object')) {
-                    return `الحقل ${key} غير صالح.`;
+            if (!data || typeof data!=='object' || Array.isArray(data)) return 'الملف لا يحتوي كائناً صالحاً.';
+            for (const name of SYNC_COLLECTIONS) {
+                const value=data[name];
+                if (value===undefined && !['professors','subjects','students'].includes(name)) continue;
+                if (!value || typeof value!=='object') return `الحقل ${name} غير صالح.`;
+                const entries=Array.isArray(value)?value.map((r,i)=>[null,r,i]):Object.entries(value).map(([k,r],i)=>[k,r,i]);
+                const ids=new Set(), keys=new Set();
+                for (const [key,record,index] of entries) {
+                    if (record===null && Array.isArray(value)) continue;
+                    if (!record || typeof record!=='object' || Array.isArray(record)) return `سجل غير صالح في ${name}.`;
+                    const id=String(record.id??key??`legacy_${name}_${index}`),safe=firebaseRecordKey(id);
+                    if (!id || /[\u0000-\u001f\u007f]/.test(id) || new TextEncoder().encode(safe).length>768 || ['__proto__','constructor','prototype'].includes(id)) return `معرف غير صالح في ${name}.`;
+                    if (ids.has(id)||keys.has(safe)) return `معرف مكرر أو متداخل في ${name}: ${id}`;
+                    ids.add(id); keys.add(safe);
+                    if (name==='students' && (!String(record.name||'').trim() || !Number.isInteger(Number(record.level)) || Number(record.level)<1 || Number(record.level)>10)) return 'بيانات اسم الطالب أو مرحلته غير صالحة.';
+                    if (name==='attendances' && (!record.studentId || !record.subjectId || !isValidAttendanceDate(record.date) || !Number.isFinite(Number(record.hours)) || Number(record.hours)<0 || (record.sessionTime && !normalizeSessionTime(record.sessionTime)))) return 'سجل حضور أو غياب غير صالح.';
                 }
-            }
-            if (data.attendances !== undefined && !Array.isArray(data.attendances) && typeof data.attendances !== 'object') {
-                return 'حقل attendances غير صالح.';
             }
             return '';
         }
-
         async function restoreBackup(event) {
+            if (!requireAppRole('admin')) return false;
             const file = event.target.files[0];
             if (!file) return;
+            if (file.size>20*1024*1024) { alert('حجم النسخة الاحتياطية يتجاوز 20 MB.'); event.target.value=''; return; }
             const reader = new FileReader();
             reader.onload = async function(e) {
                 try {
@@ -2365,6 +2438,9 @@
                     state.subjectHourOverrides = normalizeCollection(data.subjectHourOverrides || [], 'subjectHourOverrides');
                     state.deletedStudents = normalizeCollection(data.deletedStudents || [], 'deletedStudents');
                     state.appSettings = normalizeCollection(data.appSettings || [], 'appSettings');
+                    syncConflicts=Object.create(null);
+                    Object.entries(data.syncConflicts||{}).forEach(([key,c])=>{if(c && SYNC_COLLECTIONS.includes(c.name) && key===syncConflictKey(c.name,c.id))syncConflicts[key]=c;});
+                    syncConflictHistory=Array.isArray(data.syncConflictHistory)?data.syncConflictHistory.slice(-50):[];
                     migrateLegacyDeletedStudentTombstones();
                     purgeOfficiallyDeletedStudentsFromState();
                     const repairedEnrollmentAttendances = repairEnrollmentAttendanceRecords();
@@ -2385,6 +2461,7 @@
                     event.target.value = '';
                 }
             };
+            reader.onerror=()=>{alert('تعذر قراءة الملف؛ لم تتغير البيانات.');event.target.value='';};
             reader.readAsText(file);
         }
 
@@ -2478,6 +2555,7 @@
             const passwordField = document.getElementById('loginPassword');
             if (passwordField) passwordField.value = '';
             enterApp(false);
+            pushToFirebase({silent:true});
         }
 
         async function upgradePasswordWithoutBlocking(account, password, kind = 'professor') {
@@ -2494,6 +2572,7 @@
                     const settings = getGlobalAppSettings();
                     settings[kind === 'admin' ? 'adminPasswordHash' : 'officerPasswordHash'] = upgradedHash;
                     settings.securityUpdatedAt = Date.now();
+                    if(state.currentUser?.role===kind) saveAuthenticatedSession(state.currentUser,false);
                     recordAudit(kind === 'admin' ? 'ترقية حماية حساب رئيس القسم' : 'ترقية حماية حساب مسؤول الغيابات');
                 }
                 await persistLocalState('password-upgrade', true);
@@ -2521,6 +2600,10 @@
                     return;
                 }
 
+                if (['admin','officer'].includes(username.toLowerCase()) && !accountCredentialSignature({role:username.toLowerCase()}) && !cloudInitialReadComplete) {
+                    await withTimeout(cloudSyncPromise||connectAndSyncCloud(),CLOUD_OPERATION_TIMEOUT_MS,'تعذر التحقق من بيانات الحساب السحابية');
+                    if (!cloudInitialReadComplete) { errorEl.innerText='يلزم أول اتصال ناجح بالسحابة قبل دخول هذا الحساب على جهاز جديد.'; return; }
+                }
                 const adminHash = '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9';
                 const officerHash = '118b8d35a17bcf2c7d2d790509e12308dc6332c5d234f0098d2d6be6700bebb1';
                 const securitySettings = getGlobalAppSettings();
@@ -2620,20 +2703,16 @@
             document.getElementById('loginPassword').value = '';
             if (state.chartInstance) { state.chartInstance.destroy();
                 state.chartInstance = null; }
-            if (html5QrCode) {
-                try { html5QrCode.stop();
-                    html5QrCode.clear(); } catch (e) {}
-                html5QrCode = null;
-            }
+            if (html5QrCode) stopScanner();
             if (timedOut) alert('انتهت الجلسة بعد 30 دقيقة من عدم النشاط. سجل الدخول مرة أخرى.');
         }
 
         ['click','keydown','touchstart'].forEach(eventName => document.addEventListener(eventName, () => {
             if (state.currentUser) {
                 lastSessionActivity = Date.now();
-                if (state.currentUser.persistent && Date.now() - lastSessionPersistAt > 60000) {
+                if (Date.now() - lastSessionPersistAt > 60000) {
                     lastSessionPersistAt = Date.now();
-                    saveAuthenticatedSession(state.currentUser, true);
+                    saveAuthenticatedSession(state.currentUser, !!state.currentUser.persistent);
                 }
             }
         }, { passive:true }));
@@ -2662,8 +2741,10 @@
         }
 
         function importStudentsFromExcel(event) {
+            if (!requireAppRole('admin')) return false;
             const file = event.target.files[0];
             if (!file) return;
+            if(file.size>10*1024*1024){alert('ملف Excel أكبر من 10 MB.');event.target.value='';return;}
             if (!requireOptionalLibrary(() => typeof XLSX !== 'undefined', 'Excel')) { event.target.value=''; return; }
             const statusDiv = document.getElementById('excelImportStatus');
             statusDiv.textContent = '⏳ جاري قراءة ملف Excel الموحد...';
@@ -2672,9 +2753,13 @@
             reader.onload = async function(e) {
                 try {
                     const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, { type: 'array' });
+                    const workbook = XLSX.read(data, { type: 'array', sheetRows:10002 });
                     const sheetName = workbook.SheetNames.includes('الطلاب') ? 'الطلاب' : workbook.SheetNames[0];
-                    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+                    const sheet=workbook.Sheets[sheetName];
+                    if(!sheet)throw new Error('ورقة الطلاب غير موجودة.');
+                    const range=XLSX.utils.decode_range(sheet['!fullref']||sheet['!ref']||'A1');
+                    if(range.e.r>10000||range.e.c>99)throw new Error('ملف الاستيراد يجب ألا يتجاوز 10000 طالب و100 عمود.');
+                    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
                     if (!rows.length) { statusDiv.textContent = '❌ ملف الطلاب فارغ.'; return; }
 
                     ensureStudentGroupingModel();
@@ -2707,7 +2792,7 @@
                         theoreticalGroup = normalizeGroupName(theoreticalGroup);
                         practicalGroup = normalizeGroupName(practicalGroup, '');
 
-                        const level = parseInt(String(levelRaw).replace(/[^0-9]/g, ''), 10);
+                        const level = Number(normalizeDigits(levelRaw).trim());
                         if (!name) { errors.push(`الصف ${excelRow}: اسم الطالب فارغ`); return; }
                         if (!Number.isInteger(level) || level < 1 || level > 10) { errors.push(`الصف ${excelRow}: المرحلة غير صحيحة`); return; }
                         if (barcode && seenBarcodes.has(barcode)) { errors.push(`الصف ${excelRow}: الباركود ${barcode} مكرر داخل الملف`); return; }
@@ -2772,6 +2857,7 @@
                     alert('❌ حدث خطأ أثناء قراءة ملف Excel: ' + err.message);
                 }
             };
+            reader.onerror=()=>{statusDiv.textContent='تعذر قراءة ملف Excel؛ لم تتغير البيانات.';};
             reader.readAsArrayBuffer(file);
             event.target.value = '';
         }
@@ -2855,6 +2941,7 @@
             ensureStudentGroupingModel();
             if (!state.currentUser) return;
             renderTabs();
+            updateSyncConflictButton();
             if (state.currentUser.role === 'admin') renderAdmin();
             else if (state.currentUser.role === 'professor') renderProfessor();
             else if (state.currentUser.role === 'officer') renderOfficer();
@@ -3064,24 +3151,11 @@
 
         async function persistSubjectHoursOverrideCritical(record) {
             if (!record) return false;
-            await persistLocalState('subject-hours-critical-local',true);
-            if (!database) return false;
-            const key=String(record.id).replace(/[.#$\[\]\/]/g,'_');
-            try {
-                await withTimeout(database.ref(`/subjectHourOverrides/${key}`).set(record),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة حفظ ساعات المادة');
-                const snap=await withTimeout(database.ref(`/subjectHourOverrides/${key}`).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق من ساعات المادة');
-                const saved=snap.val();
-                if(!saved||Number(saved.hours)!==Number(record.hours)||Number(saved.updatedAt||0)!==Number(record.updatedAt||0)) throw new Error('لم تتطابق الساعات بعد الحفظ السحابي');
-                const base=mapsById(lastSyncedCollections.subjectHourOverrides||[]);
-                base.set(String(record.id),saved);
-                lastSyncedCollections.subjectHourOverrides=Array.from(base.values());
-                return true;
-            } catch(err) {
-                console.error('تعذر تثبيت ساعات المادة في المجموعة المستقلة:',err);
-                return false;
-            }
+            const localSaved=await persistLocalState('subject-hours-critical-local',true);
+            const cloudSaved=await pushToFirebase({silent:true});
+            if (!localSaved && !cloudSaved) throw new Error('تعذر حفظ الساعات محلياً وسحابياً');
+            return cloudSaved && sameRecord(mapsById(lastSyncedCollections.subjectHourOverrides||[]).get(String(record.id)),record);
         }
-
         function subjectMatchesHoursIdentity(candidate, subject) {
             if (!candidate || !subject) return false;
             if (String(candidate.id || '') === String(subject.id || '')) return true;
@@ -3100,7 +3174,7 @@
         // الساعات الأسبوعية الحالية للمادة التي اعتمدها رئيس القسم. نُبقي
         // القيمة التاريخية الخام داخل السجل للحفاظ على البيانات والتدقيق.
         function getAttendanceEffectiveHours(attendance, subject=null) {
-            if (!attendance || isEnrollmentRecord(attendance) || Number(attendance.hours) <= 0) return 0;
+            if (!attendance || isEnrollmentRecord(attendance) || attendance.superseded===true || attendance.cancelled===true || !Number.isFinite(Number(attendance.hours)) || Number(attendance.hours)<=0) return 0;
             const sub = subject || state.subjects.find(s => String(s.id) === String(attendance.subjectId));
             return sub ? getSubjectWeeklyHours(sub) : Math.max(0, Number(attendance.hours) || 0);
         }
@@ -3200,7 +3274,7 @@
 
         function getPracticalGroupsForTheory(level, theoreticalGroup) {
             ensureStudentGroupingModel();
-            const groups = {};
+            const groups = Object.create(null);
             state.students
                 .filter(st => Number(st.level) === Number(level) && studentTheoreticalGroup(st) === theoreticalGroup)
                 .forEach(st => {
@@ -3240,7 +3314,7 @@
         }
 
         function normalizeSessionTime(value) {
-            const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})/);
+            const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})$/);
             if (!match) return '';
             const hour = Number(match[1]);
             const minute = Number(match[2]);
@@ -3302,7 +3376,7 @@
             if(subjectType==='عملي'&&!lecturePractical)return false;
             if(subjectType==='نظري'&&lecturePractical)return false;
             const ids=new Set([String(subject.id||''),String(subject.timetableSourceId||'')].filter(Boolean));
-            if(lecture.subjectId&&ids.has(String(lecture.subjectId)))return true;
+            if(lecture.subjectId)return ids.has(String(lecture.subjectId));
             const matched=matchSubjectForStructuredLecture(lecture,professor);
             if(matched&&(String(matched.id)===String(subject.id)||(subject.timetableSourceId&&String(matched.timetableSourceId||'')===String(subject.timetableSourceId))))return true;
             return normalizeMatchText(lecture.subjectName||'')===normalizeMatchText(subject.name||'');
@@ -3450,9 +3524,18 @@
         }
 
         function upsertAttendanceState(studentId, subject, context, hours, excused, source='professor-panel') {
+            const canonicalTarget=attendanceCanonicalId(studentId,subject.id,context.date,context.sessionTime);
+            const misplaced=state.attendances.find(r=>String(r.id)===canonicalTarget &&
+                (String(r.studentId)!==String(studentId)||String(r.subjectId)!==String(subject.id)||String(r.date)!==String(context.date)||attendanceRecordSessionKey(r)!==attendanceSessionKey(context.sessionTime)));
+            if(misplaced){
+                const preserved={...misplaced,id:makeId('recovered_session'),recoveredFromId:canonicalTarget};
+                state.attendances.push(preserved);
+                state.attendances=state.attendances.filter(r=>r!==misplaced);
+                recordAudit('حماية سجل قديم تغير وقته',{originalId:canonicalTarget,recoveredId:preserved.id});
+            }
             const records=findAttendanceRecordsForSession(studentId,subject.id,context.date,context.sessionTime);
             const ordered=[...records].sort((a,b)=>attendanceRecordRevision(b)-attendanceRecordRevision(a) || String(b.id||'').localeCompare(String(a.id||'')));
-            const previous=ordered[0]||null;
+            const previous=chooseLatestAttendanceRecord(records);
             const canonicalId=attendanceCanonicalId(studentId,subject.id,context.date,context.sessionTime);
             const duplicateIds=new Set(ordered.filter(r=>String(r.id)!==String(canonicalId)).map(r=>String(r.id)));
             const nextHours=Math.max(0,Number(hours)||0),nextExcused=nextHours>0&&Number(excused)===1?1:0;
@@ -3484,13 +3567,14 @@
             record.subjectId=subject.id;
             record.date=context.date;
             record.hours=nextHours;
+            if(nextHours>0){delete record.cancelled;delete record.cancelledAt;delete record.movedToAttendanceId;}
             record.excused=nextExcused;
-            record.sessionTime=context.sessionTime;
+            record.sessionTime=normalizeSessionTime(context.sessionTime);
             record.sessionKey=attendanceSessionKey(context.sessionTime);
             record.createdAt=Number(record.createdAt)||Number(previous?.createdAt)||now;
             delete record.superseded; delete record.supersededBy; delete record.supersededAt;
             Object.assign(record,attendanceProvenance(meta),{
-                updatedAt:now,
+                updatedAt:Math.max(now,attendanceRecordRevision(previous)+1),
                 lastUpdatedById:String(state.currentUser?.id||''),
                 lastUpdatedByName:sanitizeText(state.currentUser?.name||'',120),
                 explicitState:nextHours>0?'absent':'present'
@@ -3503,6 +3587,7 @@
             if(!subjectBelongsToCurrentProfessor(subject))return {ok:false,reason:'غير مسموح لهذا الحساب بتعديل غيابات هذه المادة.'};
             if(!studentMatchesSubject(student,subject))return {ok:false,reason:'الطالب ليس ضمن الشعب أو المجاميع المرتبطة بهذه المادة.'};
             const today=getLocalDateISO();
+            if(!isValidAttendanceDate(date)) return {ok:false,reason:'تاريخ المحاضرة غير صالح.'};
             if(String(date)>today)return {ok:false,reason:'لا يمكن تسجيل غياب بتاريخ مستقبلي.'};
             const normalized=normalizeSessionTime(sessionTime);
             if(!normalized)return {ok:false,reason:'حدد وقت المحاضرة بصيغة صحيحة.'};
@@ -3529,18 +3614,19 @@
         }
 
         function persistAttendanceMutation(reason='attendance') {
-            // لا نسقط أي ضغطة عند التسجيل السريع. نحفظ كل تعديلات الغياب بالترتيب نفسه
-            // حتى لو ضغط الأستاذ على عدة طلاب متتالين بسرعة.
-            attendancePersistenceQueue = attendancePersistenceQueue
-                .catch(err => { console.warn('تم تجاوز خطأ سابق في طابور حفظ الغياب:', err); return false; })
-                .then(async () => {
-                    const localSaved = await persistLocalState(reason, true);
-                    pushToFirebase({silent:true}).catch(err=>console.warn('تعذر رفع تعديل الغياب الآن وسيعاد تلقائيا:',err));
-                    return localSaved;
-                });
+            // Synchronous emergency snapshot protects rapid clicks followed by immediate tab closure.
+            writeLocalStorageFallback(buildLocalSnapshot());
+            attendancePersistenceQueue=attendancePersistenceQueue.catch(()=>false).then(async()=>{
+                const localSaved=await persistLocalState(reason,true);
+                const upload=pushToFirebase({silent:true});
+                if (!localSaved) {
+                    const cloudSaved=await upload;
+                    if (!cloudSaved) throw new Error('تعذر حفظ التعديل محلياً وسحابياً؛ أبق الصفحة مفتوحة وخذ نسخة احتياطية');
+                } else upload.catch(console.error);
+                return true;
+            });
             return attendancePersistenceQueue;
         }
-
         function repairEnrollmentAttendanceRecords() {
             if (!Array.isArray(state.attendances)) return 0;
             let repaired = 0;
@@ -3796,7 +3882,7 @@
         }
 
         async function enforceDeletedStudentsCloudCleanup() {
-            if (!database) return false;
+            if (!database || !cloudInitialReadComplete || !state.currentUser) return false;
             const deletedRecords=getOfficiallyDeletedStudentRecords();
             if(!deletedRecords.length) return true;
             const deletedIds=new Set(deletedRecords.map(r=>String(r.studentId||r.id||'')).filter(Boolean));
@@ -3997,6 +4083,7 @@
         }
 
         async function saveAbsencePolicySettings() {
+            if (!requireAppRole('admin')) return false;
             const basis = document.getElementById('absenceStatusBasis')?.value === 'all' ? 'all' : 'unexcused';
             const bolognaWeeks = Number(document.getElementById('bolognaTeachingWeeks')?.value);
             const annualWeeks = Number(document.getElementById('annualTeachingWeeks')?.value);
@@ -4019,6 +4106,7 @@
         }
 
         async function editSubjectWeeks(subjectId) {
+            if (!requireAppRole('admin')) return false;
             const subject = state.subjects.find(s => String(s.id) === String(subjectId));
             if (!subject) return;
             const current = getSubjectTeachingWeeks(subject);
@@ -4095,7 +4183,7 @@
         }
 
         function normalizeWhatsAppNumber(value) {
-            let digits = String(value || '').replace(/\D/g, '');
+            let digits = normalizeDigits(value).replace(/\D/g, '');
             if (digits.startsWith('00')) digits = digits.slice(2);
             // العراق: 07xxxxxxxxx -> 9647xxxxxxxxx
             if (/^0?7\d{9}$/.test(digits)) {
@@ -4137,6 +4225,7 @@
         }
 
         async function saveOfficerWhatsAppSettings() {
+            if (!requireAppRole('admin')) return false;
             if(state.currentUser?.role!=='admin'){alert('هذه الصلاحية لرئيس القسم فقط.');return;}
             const input = document.getElementById('officerWhatsAppNumber');
             const status = document.getElementById('officerWhatsAppStatus');
@@ -4167,25 +4256,7 @@
             renderOfficerWhatsAppSettings();
             if (status) status.textContent = `✅ الرقم محفوظ محلياً: +${normalized} — جارٍ التثبيت السحابي المستقل...`;
 
-            let cloudSaved = false;
-            if (database) {
-                try {
-                    await withTimeout(database.ref('/appSettings/officerWhatsAppContact').set({...contact}), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ رقم واتساب');
-                    const snap=await withTimeout(database.ref('/appSettings/officerWhatsAppContact').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة التحقق من رقم واتساب');
-                    const verified=normalizeWhatsAppNumber(snap.val()?.whatsappNormalized||snap.val()?.whatsappNumber||'');
-                    if(verified!==normalized) throw new Error('القيمة السحابية بعد الحفظ لا تطابق الرقم الجديد');
-                    cloudSaved = true;
-                    const base = mapsById(lastSyncedCollections.appSettings || []);
-                    base.set('officerWhatsAppContact', {...contact});
-                    lastSyncedCollections.appSettings = Array.from(base.values());
-                    // تحديث توافق للنسخ القديمة، لكن فشله لا يمس الرقم المعتمد.
-                    database.ref('/appSettings/global').update({officerWhatsApp:normalized,officerWhatsAppNormalized:normalized,officerWhatsAppUpdatedAt:now}).catch(()=>{});
-                    await persistLocalState('officer-whatsapp-cloud-v30', true);
-                } catch (err) {
-                    console.warn('تعذر تثبيت رقم واتساب سحابياً الآن:', err);
-                    scheduleCloudRetry();
-                }
-            }
+            const cloudSaved = await pushToFirebase({silent:true});
 
             renderOfficerWhatsAppSettings();
             if (cloudSaved) {
@@ -4282,6 +4353,7 @@
         }
 
         async function saveLectureReminderSettings() {
+            if (!requireAppRole('admin')) return false;
             const from=document.getElementById('lectureReminderActiveFrom')?.value||'';
             const to=document.getElementById('lectureReminderActiveTo')?.value||'';
             const enabled=!!document.getElementById('lectureRemindersEnabled')?.checked;
@@ -4327,31 +4399,27 @@
         }
 
         function matchProfessorForStructuredLecture(lecture) {
-            if (lecture.professorId) {
-                const exact=state.professors.find(p=>String(p.id||'')===String(lecture.professorId) || String(p.timetableSourceId||'')===String(lecture.professorId));
-                if(exact) return exact;
-            }
-            return state.professors.find(p=>normalizeMatchText(p.name)===normalizeMatchText(lecture.teacherName)) || null;
+            if(!lecture)return null;
+            if(lecture.professorId)return getCanonicalProfessorRecords().find(p=>professorIdentityIdSet(p).has(String(lecture.professorId)))||null;
+            const matches=getCanonicalProfessorRecords().filter(p=>professorLoginAliases(p).some(name=>normalizeMatchText(name)===normalizeMatchText(lecture.teacherName)));
+            return matches.length===1?matches[0]:null;
         }
-
         function matchSubjectForStructuredLecture(lecture, professor=null) {
-            if (lecture.subjectId) {
-                const exact=state.subjects.find(s=>String(s.id||'')===String(lecture.subjectId) || String(s.timetableSourceId||'')===String(lecture.subjectId));
-                if(exact) return exact;
-            }
+            if(!lecture)return null;
+            const ids=professor?professorIdentityIdSet(professor):null;
             const lvl=scheduleStageLevel(lecture.stageName,Number(lecture.stageIndex)||0);
-            const q=normalizeMatchText(lecture.subjectName);
-            let candidates=state.subjects.filter(s=>Number(s.level)===Number(lvl));
-            if(professor) {
-                const exactProf=candidates.filter(s=>s.professorId===professor.id);
-                if(exactProf.length) candidates=exactProf;
+            let candidates=state.subjects.filter(s=>s.timetableActive!==false && Number(s.level)===Number(lvl) && (!ids||ids.has(String(s.professorId))));
+            if(lecture.subjectId){
+                const exact=candidates.filter(s=>String(s.id)===String(lecture.subjectId)||String(s.timetableSourceId||'')===String(lecture.subjectId));
+                return exact.length===1?exact[0]:null;
             }
-            return candidates.find(s=>{
-                const n=normalizeMatchText(s.name);
-                return n===q || n.includes(q) || q.includes(n);
-            }) || null;
+            const q=normalizeMatchText(lecture.subjectName);
+            if(!q)return null;
+            const practical=String(lecture.type||'').includes('عملي');
+            candidates=candidates.filter(s=>normalizeMatchText(s.name)===q && (s.groupType==='نظري+عملي'||(s.groupType==='عملي')===practical));
+            candidates=candidates.filter(s=>{const target=normalizeGroupName(s.group||s.targetGroup||s.section||'','');return !target||target==='الكل'||target==='*'||target===lectureAttendanceGroup(lecture,s);});
+            return candidates.length===1?candidates[0]:null;
         }
-
         function buildReminderSchedulePayload() {
             const link=getScheduleLink();
             const structured=link?.snapshot?.structuredSchedule;
@@ -4387,6 +4455,7 @@
         }
 
         async function publishLectureReminderSchedule(showAlert=false) {
+            if(state.currentUser?.role!=='admin'){if(showAlert)alert('نشر التذكيرات متاح لرئيس القسم فقط.');return false;}
             const link=getScheduleLink();
             if(!link?.snapshot?.structuredSchedule?.lectures) {
                 renderLectureReminderStatus();
@@ -4464,6 +4533,9 @@
             if(asrc && (asrc===bid || asrc===bsrc)) return true;
             if(bsrc && (bsrc===aid || bsrc===asrc)) return true;
             if(aAliases.has(bid) || bAliases.has(aid) || (asrc && bAliases.has(asrc)) || (bsrc && aAliases.has(bsrc))) return true;
+            if (asrc && bsrc && asrc!==bsrc) return false;
+            if (a.username && b.username && normalizeLoginIdentifier(a.username)!==normalizeLoginIdentifier(b.username)) return false;
+            if (isPasswordHash(a.password) && isPasswordHash(b.password) && a.password!==b.password) return false;
             const an=normalizeProfessorIdentityName(a.name||''), bn=normalizeProfessorIdentityName(b.name||'');
             return !!an && an===bn;
         }
@@ -4503,6 +4575,9 @@
             if(!profile || !prof) return false;
             const ids=new Set([...(profile.professorIds||[]),...(profile.sourceIds||[])].map(String));
             if(ids.has(String(prof.id||'')) || ids.has(String(prof.timetableSourceId||''))) return true;
+            if ((profile.sourceIds||[]).length && prof.timetableSourceId && !(profile.sourceIds||[]).map(String).includes(String(prof.timetableSourceId))) return false;
+            const known=(state.professors||[]).filter(p=>ids.has(String(p.id)));
+            if (known.length && !known.some(p=>professorIdentityMatches(p,prof))) return false;
             const norm=normalizeProfessorIdentityName(prof.name||'');
             if(!norm) return false;
             const profileNames=[profile.canonicalName,...(profile.nameAliases||[])].filter(Boolean).map(normalizeProfessorIdentityName);
@@ -4703,42 +4778,17 @@
         function firebaseRecordKey(id){ return String(id||'').replace(/[.#$\[\]\/]/g,'_'); }
 
         async function persistProfessorIdentityCritical(prof) {
-            if(!prof) throw new Error('الأستاذ غير موجود');
+            if (!prof) throw new Error('الأستاذ غير موجود');
             const profile=getProfessorProfile(prof,true);
             mergeLegacyProfessorDataIntoProfile(prof,profile);
             canonicalizeProfessorReferences();
-            await persistLocalState('professor-identity',true);
-            if(!database){
-                scheduleCloudRetry();
-                return {...profile,_cloudSaved:false,_localSaved:true};
-            }
-            const cluster=getProfessorIdentityCluster(prof);
-            const profileBase=mapsById(lastSyncedCollections.professorProfiles||[]).get(String(profile.id));
-            const professorBase=mapsById(lastSyncedCollections.professors||[]);
-            const changes=[{name:'professorProfiles',id:String(profile.id),before:profileBase,after:{...profile,id:profile.id}}];
-            (cluster.length?cluster:[prof]).forEach(p=>changes.push({name:'professors',id:String(p.id),before:professorBase.get(String(p.id)),after:{...p,id:p.id}}));
-            try{
-                const conflicts=await commitFirebaseChanges(changes);
-                if(conflicts.length) return {...profile,_cloudSaved:false,_localSaved:true,_conflict:true};
-                const [profileSnap, profsSnap, profilesSnap]=await Promise.all([
-                    withTimeout(database.ref(`/professorProfiles/${firebaseRecordKey(profile.id)}`).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق من ملف الأستاذ'),
-                    withTimeout(database.ref('/professors').once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تحديث الأساتذة'),
-                    withTimeout(database.ref('/professorProfiles').once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تحديث ملفات الأساتذة')
-                ]);
-                if(!profileSnap.exists()) throw new Error('فشل التحقق من ملف الأستاذ بعد الحفظ');
-                state.professors=normalizeCollection(profsSnap.val(),'professors');
-                state.professorProfiles=normalizeCollection(profilesSnap.val(),'professorProfiles');
-                lastSyncedCollections.professors=JSON.parse(JSON.stringify(state.professors));
-                lastSyncedCollections.professorProfiles=JSON.parse(JSON.stringify(state.professorProfiles));
-                await persistLocalState('professor-identity-cloud',true);
-                return {...profileSnap.val(),_cloudSaved:true,_localSaved:true};
-            }catch(err){
-                console.error('تعذر الرفع الفوري لملف الأستاذ:',err);
-                scheduleCloudRetry();
-                return {...profile,_cloudSaved:false,_localSaved:true,_error:String(err.message||err)};
-            }
+            const expected=JSON.parse(JSON.stringify(profile));
+            const localSaved=await persistLocalState('professor-identity',true);
+            const cloudSaved=await pushToFirebase({silent:true});
+            if (!localSaved && !cloudSaved) throw new Error('تعذر حفظ بيانات الأستاذ محلياً وسحابياً');
+            const confirmed=mapsById(lastSyncedCollections.professorProfiles||[]).get(String(profile.id));
+            return {...expected,_localSaved:localSaved,_cloudSaved:cloudSaved&&sameRecord(expected,confirmed)};
         }
-
         function refreshProfessorIdentityViews(levelHint=null){
             renderProfessorProfileHealth();
             const lvl=Number(levelHint||state.currentLevel||currentManagementLevel||0);
@@ -4753,6 +4803,7 @@
         }
 
         async function saveProfessorIdentityFromUI(professorId, phoneFieldId='', optFieldId='', levelHint=null) {
+            if (!requireAppRole('admin')) return false;
             const p=(state.professors||[]).find(x=>String(x.id)===String(professorId));
             if(!p){alert('الأستاذ غير موجود.');return false;}
             const phoneInput=getPreferredProfessorField(professorId,'phone',phoneFieldId);
@@ -4779,6 +4830,7 @@
         }
 
         async function updateProfessorReminderSettings(professorId) {
+            if (!requireAppRole('admin')) return false;
             return saveProfessorIdentityFromUI(professorId,'','',state.currentLevel||currentManagementLevel||null);
         }
 
@@ -4879,6 +4931,7 @@
         }
 
         function selectLevel(level) {
+            if(Number(state.currentLevel)!==Number(level))state.currentLevelTab='groups';
             state.currentLevel = level;
             state.currentLevelKey = 'level' + level;
             document.getElementById('levelView').classList.add('hidden');
@@ -4892,12 +4945,12 @@
             const systemLabel = system === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي';
             document.getElementById('levelDetailTitle').innerHTML =
                 `${getLevelIcon(level)} ${getLevelName(level)} - ${systemLabel} <span style="font-size:0.7rem;font-weight:normal;">(${stats.subjectCount} مواد | ${stats.studentCount} طلاب | ${stats.professorCount} أساتذة)</span>`;
-            showLevelGroups(level);
-            document.querySelectorAll('.level-detail-tabs button').forEach(btn => btn.classList.remove('active-tab'));
-            document.getElementById('tab-groups').classList.add('active-tab');
+            switchLevelTab(state.currentLevelTab || 'groups');
         }
 
         function switchLevelTab(tab) {
+            if(!['groups','subjects','students','professors','reports','statistics'].includes(tab))tab='groups';
+            state.currentLevelTab=tab;
             document.querySelectorAll('.level-detail-tabs button').forEach(btn => btn.classList.remove('active-tab'));
             document.getElementById('tab-' + tab).classList.add('active-tab');
             const level = state.currentLevel;
@@ -4945,7 +4998,7 @@
 
         function getGroupsForLevel(level, groupType = 'نظري') {
             ensureStudentGroupingModel();
-            const groups = {};
+            const groups = Object.create(null);
             state.students.filter(st => Number(st.level) === Number(level)).forEach(st => {
                 const groupName = groupType === 'عملي' ? (studentPracticalGroup(st) || 'غير موزع عملياً') : studentTheoreticalGroup(st);
                 if (!groups[groupName]) groups[groupName] = [];
@@ -4986,6 +5039,7 @@
         }
 
         async function addStudentToGroup(level, groupName, groupType) {
+            if (!requireAppRole('admin')) return false;
             const studentName = sanitizeText(prompt(`إضافة طالب جديد إلى الشعبة النظرية ${groupName}:`) || '');
             if (!studentName) return;
             const id = makeId('st');
@@ -4999,6 +5053,7 @@
         }
 
         async function removeStudentFromGroup(studentId) {
+            if (!requireAppRole('admin')) return false;
             if (!confirm('⚠️ هل تريد إزالة الطالب من شعبته النظرية؟\nسيزال أيضاً من مجموعته العملية، لكن جميع الغيابات التاريخية ستبقى محفوظة.')) return;
             const student = state.students.find(s => s.id === studentId);
             if (!student) { alert('الطالب غير موجود'); return; }
@@ -5013,6 +5068,7 @@
         }
 
         async function moveStudentGroup(studentId, currentGroup, groupType, level) {
+            if (!requireAppRole('admin')) return false;
             const student = state.students.find(s => s.id === studentId);
             if (!student) { alert('الطالب غير موجود'); return; }
             ensureStudentGroupingModel();
@@ -5033,6 +5089,7 @@
         }
 
         function createTheoreticalGroup(level) {
+            if (!requireAppRole('admin')) return false;
             const name = normalizeGroupName(prompt('اسم الشعبة النظرية الجديدة (مثال A أو B):') || '', '');
             if (!name) return;
             if (state.students.some(st => Number(st.level)===Number(level) && studentTheoreticalGroup(st)===name)) {
@@ -5110,6 +5167,7 @@
         }
 
         async function setStudentPracticalGroup(studentId, practicalGroup, level, theoreticalGroup, rerender = true) {
+            if (!requireAppRole('admin')) return false;
             const student = state.students.find(st=>st.id===studentId); if(!student) return false;
             const before = studentPracticalGroup(student);
             const next = normalizeGroupName(practicalGroup, '');
@@ -5128,6 +5186,7 @@
         }
 
         async function assignSelectedToPracticalGroup(level, theoreticalGroup) {
+            if (!requireAppRole('admin')) return false;
             const ids=[...document.querySelectorAll('.theory-student-check:checked')].map(cb=>cb.value);
             if(!ids.length){alert('اختر طالباً واحداً على الأقل.');return;}
             const group=normalizeGroupName(document.getElementById('bulkPracticalGroupName').value,'');
@@ -5137,6 +5196,7 @@
         }
 
         async function clearSelectedPracticalGroups(level, theoreticalGroup) {
+            if (!requireAppRole('admin')) return false;
             const ids=[...document.querySelectorAll('.theory-student-check:checked')].map(cb=>cb.value);
             if(!ids.length){alert('اختر طالباً واحداً على الأقل.');return;}
             if(!confirm(`إلغاء التوزيع العملي لـ ${ids.length} طالب؟ ستبقى شعبهم النظرية وغياباتهم السابقة محفوظة.`)) return;
@@ -5145,6 +5205,7 @@
         }
 
         async function autoDistributePracticalGroups(level, theoreticalGroup, redistributeAll) {
+            if (!requireAppRole('admin')) return false;
             const count=Math.max(1,Math.min(20,parseInt(document.getElementById('autoPracticalCount').value)||2));
             const prefix=normalizeGroupName(document.getElementById('autoPracticalPrefix').value,theoreticalGroup==='غير محدد'?'G':theoreticalGroup);
             let students=state.students.filter(st=>Number(st.level)===Number(level)&&studentTheoreticalGroup(st)===theoreticalGroup);
@@ -5374,6 +5435,7 @@
         }
 
         async function setProfessorPassword(professorId, levelHint=null) {
+            if (!requireAppRole('admin')) return false;
             const prof = state.professors.find(p => String(p.id) === String(professorId));
             if (!prof) { alert('الأستاذ غير موجود.'); return false; }
             const pass = prompt(`أدخل كلمة مرور جديدة للأستاذ ${prof.name}:`);
@@ -5397,6 +5459,7 @@
         }
 
         async function addProfessor() {
+            if (!requireAppRole('admin')) return false;
             const name = sanitizeText(document.getElementById('newProfName').value);
             const pass = document.getElementById('newProfPass').value.trim();
             const phone = sanitizeText(document.getElementById('newProfPhone')?.value || '', 40);
@@ -5427,6 +5490,7 @@
         }
 
         async function addSubject() {
+            if (!requireAppRole('admin')) return false;
             const name = sanitizeText(document.getElementById('newSubjectName').value);
             const hours = parseFloat(document.getElementById('newSubjectHours').value);
             const level = parseInt(document.getElementById('newSubjectLevel').value);
@@ -5531,6 +5595,7 @@
         }
 
         function deleteProfessorFull(professorId) {
+            if (!requireAppRole('admin')) return false;
             if (!confirm('⚠️ هل أنت متأكد من حذف هذا الأستاذ؟')) return;
             const professor = state.professors.find(p => p.id === professorId);
             const hasSubjects = state.subjects.some(s => s.professorId === professorId);
@@ -5548,6 +5613,7 @@
         }
 
         function deleteSubjectFull(subjectId) {
+            if (!requireAppRole('admin')) return false;
             if (!confirm('⚠️ هل أنت متأكد من حذف هذه المادة؟ سيتم حذف جميع غياباتها أيضاً.')) return;
             const subject = state.subjects.find(s => String(s.id) === String(subjectId));
             const removedAttendances = state.attendances.filter(a => a.subjectId === subjectId).length;
@@ -5563,6 +5629,7 @@
         }
 
         async function addProfessorToLevel() {
+            if (!requireAppRole('admin')) return false;
             if (!currentManagementLevel) { alert('الرجاء اختيار مرحلة أولاً'); return; }
             const name = sanitizeText(document.getElementById('newProfNameLevel').value);
             const pass = document.getElementById('newProfPassLevel').value.trim();
@@ -5595,6 +5662,7 @@
         }
 
         function deleteProfessorFromLevel(professorId) {
+            if (!requireAppRole('admin')) return false;
             if (!confirm('⚠️ هل أنت متأكد من حذف هذا الأستاذ؟')) return;
             const professor = state.professors.find(p => p.id === professorId);
             const hasSubjects = state.subjects.some(s => s.professorId === professorId);
@@ -5614,6 +5682,7 @@
         }
 
         async function addSubjectToLevel() {
+            if (!requireAppRole('admin')) return false;
             if (!currentManagementLevel) { alert('الرجاء اختيار مرحلة أولاً'); return; }
             const subjectSelect = document.getElementById('levelSubjectSelect');
             const professorSelect = document.getElementById('levelSubjectProfessor');
@@ -5661,6 +5730,7 @@
         }
 
         function deleteSubjectFromLevel(subjectId) {
+            if (!requireAppRole('admin')) return false;
             if (!confirm('⚠️ هل أنت متأكد من حذف هذه المادة؟ سيتم حذف جميع غياباتها أيضاً.')) return;
             const subject = state.subjects.find(s => s.id === subjectId);
             const removedAttendances = state.attendances.filter(a => a.subjectId === subjectId).length;
@@ -5678,6 +5748,7 @@
         }
 
         function editSubjectProfessor(subjectId) {
+            if (!requireAppRole('admin')) return false;
             const subject = state.subjects.find(s => s.id === subjectId);
             if (!subject) { alert('المادة غير موجودة'); return; }
             const professors = getCanonicalProfessorRecords().filter(p => Number(p.level) === Number(currentManagementLevel) || (Array.isArray(p.levels)&&p.levels.map(Number).includes(Number(currentManagementLevel))) || !p.level);
@@ -5745,6 +5816,7 @@
         }
 
         async function linkStudentsToSubjects(showMessage = true) {
+            if (!requireAppRole('admin')) return false;
             const result = ensureActiveSubjectLinks();
             if (result.added || result.removed) {
                 recordAudit('مزامنة ربط الطلاب بالمواد', { added: result.added, staleRemoved: result.removed });
@@ -5761,6 +5833,7 @@
         }
 
         async function resetAllData() {
+            if (!requireAppRole('admin')) return false;
             if (!confirm('⚠️ تحذير: سيتم استبدال البيانات الحالية بالبيانات الافتراضية. هل أنت متأكد؟')) return;
             if (!confirm('تأكيد نهائي: سيتم تنزيل نسخة احتياطية أولاً ثم إعادة التهيئة. متابعة؟')) return;
             exportBackup();
@@ -6138,6 +6211,7 @@
             getProfessorIdentityCluster(professor).forEach(p=>{
                 if(p?.id) ids.add(String(p.id));
                 if(p?.timetableSourceId) ids.add(String(p.timetableSourceId));
+                [...(p.aliasProfessorIds||[]),...(p.legacyProfessorIds||[])].forEach(id=>ids.add(String(id)));
             });
             if(professor.id) ids.add(String(professor.id));
             if(professor.timetableSourceId) ids.add(String(professor.timetableSourceId));
@@ -6145,16 +6219,12 @@
         }
 
         function lectureBelongsToProfessor(lecture, professor) {
-            if(!lecture || !professor) return false;
+            if(!lecture||!professor)return false;
             const ids=professorIdentityIdSet(professor);
-            if(lecture.professorId && ids.has(String(lecture.professorId))) return true;
+            if(lecture.professorId)return ids.has(String(lecture.professorId));
             const matched=matchProfessorForStructuredLecture(lecture);
-            if(matched && ids.has(String(matched.id))) return true;
-            const a=normalizeMatchText(lecture.teacherName||'');
-            const aliases=getProfessorIdentityCluster(professor).map(p=>normalizeMatchText(p.name||'')).filter(Boolean);
-            return !!a && aliases.includes(a);
+            return !!matched&&ids.has(String(matched.id));
         }
-
         function lectureStageLevel(lecture) {
             const idx=Number.isFinite(Number(lecture?.stageIndex)) ? Number(lecture.stageIndex) : 0;
             return scheduleStageLevel(lecture?.stageName||'',idx);
@@ -6367,7 +6437,7 @@
 
         function academicCatalogSignature(data) {
             const profs=academicCatalogValues(data?.professors).map(p=>({id:String(p.id||''),name:String(p.name||''),levels:Array.isArray(p.levels)?p.levels.map(Number).sort((a,b)=>a-b):[]})).sort((a,b)=>a.id.localeCompare(b.id));
-            const subs=academicCatalogValues(data?.subjects).map(x=>({id:String(x.id||''),name:String(x.name||''),professorId:String(x.professorId||''),level:Number(x.level)||Number(x.stageIndex)+1||0,stageIndex:Number(x.stageIndex)||0,groupType:String(x.groupType||'نظري'),hoursPerWeek:Number(x.hoursPerWeek)||1,theoreticalGroup:String(x.theoreticalGroup||''),practicalGroup:String(x.practicalGroup||'')})).sort((a,b)=>a.id.localeCompare(b.id));
+            const subs=academicCatalogValues(data?.subjects).map(x=>({id:String(x.id||''),name:String(x.name||''),professorId:String(x.professorId||''),level:Number(x.level)||Number(x.stageIndex)+1||0,stageIndex:Number(x.stageIndex)||0,groupType:String(x.groupType||'نظري'),hoursPerWeek:Number(x.hoursPerWeek)||1,theoreticalGroup:String(x.theoreticalGroup||''),practicalGroup:String(x.practicalGroup||''),targetGroup:catalogTargetGroup(x)})).sort((a,b)=>a.id.localeCompare(b.id));
             const stageCount=Number(data?.stageCount)||0;
             const stageNames=Array.isArray(data?.stageNames)?data.stageNames.map(x=>String(x||'')):[];
             return JSON.stringify({profs,subs,stageCount,stageNames});
@@ -6431,10 +6501,10 @@
                             prof=state.professors.find(p=>ids.has(String(p.id||'')))||null;
                         }
                     }
-                    if(!prof) prof=state.professors.find(p=>normalizeProfessorIdentityName(p.name)===normalizeProfessorIdentityName(item.name));
+                    if(!prof) { const candidates=state.professors.filter(p=>!p.timetableSourceId && !seenProfessorIds.has(String(p.id)) && normalizeProfessorIdentityName(p.name)===normalizeProfessorIdentityName(item.name)); if(candidates.length===1)prof=candidates[0]; }
                     const levels=(Array.isArray(item.levels)?item.levels:[]).map(Number).filter(n=>n>0);
                     if(!prof){
-                        const sameNameExisting=state.professors.find(p=>normalizeProfessorIdentityName(p.name)===normalizeProfessorIdentityName(item.name) && normalizeWhatsAppNumber(p.phone||p.phoneNormalized||''));
+                        const sameNameExisting=null; // Distinct timetable identities never inherit another account's contacts.
                         const inherited=sameNameExisting?getProfessorUnifiedContact(sameNameExisting):{phone:'',phoneNormalized:'',whatsappOptIn:false};
                         prof={id:sourceId,name:sanitizeText(item.name,120),password:'',level:levels[0]||1,phone:inherited.phone||'',phoneNormalized:inherited.phoneNormalized||'',whatsappOptIn:!!inherited.whatsappOptIn,needsPasswordSetup:true};
                         state.professors.push(prof);
@@ -6460,7 +6530,12 @@
                     const level=Math.max(1, Number(item.level) || (stageIndex >= 0 ? stageIndex + 1 : scheduleStageLevel(item.stage||'',0)) || 1);
                     let sub=state.subjects.find(x=>String(x.id||'')===sourceId || String(x.timetableSourceId||'')===sourceId);
                     if(!sub){
-                        sub=state.subjects.find(x=>Number(x.level)===level && normalizeMatchText(x.name)===normalizeMatchText(item.name));
+                        const candidates=state.subjects.filter(x=>!x.timetableSourceId && !seenSubjectIds.has(String(x.id)) &&
+                            Number(x.level)===level && normalizeMatchText(x.name)===normalizeMatchText(item.name) &&
+                            String(x.groupType||'نظري')===String(item.groupType||'نظري') &&
+                            normalizeGroupName(x.group||x.targetGroup||x.section||'','')===normalizeGroupName(catalogTargetGroup(item),'') &&
+                            (!x.professorId || String(x.professorId)===String(profMap.get(String(item.professorId))||item.professorId||'')));
+                        if(candidates.length===1) sub=candidates[0];
                     }
                     const resolvedProfessorId=profMap.get(String(item.professorId||'')) || state.professors.find(p=>String(p.id||'')===String(item.professorId||'') || String(p.timetableSourceId||'')===String(item.professorId||''))?.id || null;
                     const hours=Math.max(0.5,Number(item.hoursPerWeek)||1);
@@ -6544,6 +6619,7 @@
         }
 
         async function saveWeeklyScheduleLink(data,source) {
+            if (!requireAppRole('admin')) return false;
             const snapshot=compactWeeklyScheduleData(data); const analysis=analyzeWeeklyScheduleLink(snapshot);
             state.scheduleLinks=(state.scheduleLinks||[]).filter(x=>x.id!=='weekly_timetable');
             state.scheduleLinks.push({id:'weekly_timetable',source:sanitizeText(source,160),linkedAt:new Date().toISOString(),createdAt:Date.now(),snapshot,analysis});
@@ -6554,6 +6630,7 @@
         }
 
         function linkWeeklyScheduleFromBrowser() {
+            if (!requireAppRole('admin')) return false;
             try {
                 const raw=localStorage.getItem('physics_schedule_builder_persistent');
                 if (!raw) { document.getElementById('weeklyScheduleImportInput')?.click(); alert('لم أجد بيانات الجدول في التخزين المحلي لهذا الموقع. اختر ملف النسخة الاحتياطية JSON الذي يصدره برنامج الجدول الأسبوعي.'); return; }
@@ -6562,8 +6639,10 @@
         }
 
         function importWeeklyScheduleJSON(event) {
+            if (!requireAppRole('admin')) return false;
             const file=event.target.files?.[0]; if(!file)return; const reader=new FileReader();
             reader.onload=()=>{try{saveWeeklyScheduleLink(JSON.parse(reader.result),`ملف JSON: ${file.name}`);}catch(err){alert('تعذر ربط الملف: '+err.message);}finally{event.target.value='';}};
+            reader.onerror=()=>{alert('تعذر قراءة الملف؛ لم تتغير البيانات.');event.target.value='';};
             reader.readAsText(file);
         }
 
@@ -6853,6 +6932,7 @@
         //  PROFESSOR PANEL
         // ==============================================================
         function getProfessorSubjects() {
+            if(state.currentUser?.role!=='professor')return [];
             const profId = state.currentUser?.id;
             return state.subjects.filter(s => String(s.professorId || '') === String(profId || '') && s.timetableActive !== false).sort((a,b) => String(a.name||'').localeCompare(String(b.name||''),'ar'));
         }
@@ -6989,7 +7069,7 @@
         }
 
         function canProfessorEditAttendanceForSubject(subject,showMessage=true) {
-            if(state.currentUser?.role!=='professor')return true;
+            if(!subjectBelongsToCurrentProfessor(subject)){if(showMessage)alert('هذه المادة ليست مرتبطة بحساب الأستاذ الحالي.');return false;}
             if(!isProfessorSubjectLockedAfterSubmission(subject))return true;
             if(showMessage){
                 const used=hasSubmissionUndoEverUsed(subject.id,state.currentUser.id);
@@ -7031,8 +7111,8 @@
             const locked=isProfessorSubjectLockedAfterSubmission(subject);
             if(button){
                 const needsNewSubmission=(st.code==='reopened'||st.code==='dirty'||st.code==='pending');
-                button.style.display=(!locked&&needsNewSubmission)?'block':'none';
-                button.disabled=locked||!needsNewSubmission;
+                button.style.display=(needsNewSubmission&&(!locked||st.code==='dirty'))?'block':'none';
+                button.disabled=!needsNewSubmission||(locked&&st.code!=='dirty');
                 button.textContent=(st.code==='reopened'||st.code==='dirty')?(whatsappConfigured?'🔄 إعادة إرسال الغيابات بعد التعديل':'🔄 إعادة تأكيد الغيابات بعد التعديل'):(whatsappConfigured?'✅ تأكيد الإكمال وفتح واتساب':'✅ تأكيد الإكمال داخل النظام');
             }
             if(resendButton){
@@ -7078,6 +7158,9 @@
         }
 
         async function undoLastSubmissionOnce() {
+            if (!requireAppRole('professor') || submissionMutationBusy) return false;
+            submissionMutationBusy=true;
+            try {
             const sub=getProfessorSubject();
             if(!sub||state.currentUser?.role!=='professor'){alert('هذه العملية متاحة للأستاذ صاحب المادة فقط.');return;}
             const workflow=getAttendanceWorkflowState(sub.id,state.currentUser.id,false);
@@ -7130,6 +7213,8 @@
             renderProfessorSubmissionStatus(getProfessorSubject());
             if(localSaved&&cloudSaved) alert('✅ تم فتح الغيابات للتعديل. ستظل مفتوحة مهما أجريت من تعديلات، ولن تُقفل إلا بعد ضغط «إعادة إرسال الغيابات بعد التعديل».');
             else alert('🟠 تم فتح الغيابات وحفظ حالة الفتح على هذا الجهاز. ستبقى مفتوحة هنا وستُزامن تلقائياً عند استقرار الاتصال.');
+
+            } finally {submissionMutationBusy=false;}
         }
 
         function getStudentsForProfessor() {
@@ -7152,6 +7237,7 @@
         }
 
         function startScanner() {
+            if(!requireAppRole('professor')||scannerStartPromise||scannerStopPromise)return;
             if (typeof Html5Qrcode === 'undefined') {
                 alert('❌ مكتبة الباركود غير محملة. تأكد من اتصال الإنترنت.');
                 return;
@@ -7166,46 +7252,31 @@
             }
             html5QrCode = new Html5Qrcode("reader");
             const config = { fps: 15, qrbox: { width: 280, height: 160 } };
-            html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, onScanError)
+            scannerStartPromise=html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, onScanError)
                 .then(() => {
                     document.getElementById('scanToggleBtn').textContent = '📷 إيقاف الماسح';
                     document.getElementById('scanToggleBtn').disabled = false;
                     isScanning = true;
                 }).catch(err => {
                     alert('❌ تعذر تشغيل الكاميرا: ' + err);
-                    stopScanner();
-                });
+                    setTimeout(()=>stopScanner(),0);
+                }).finally(()=>{scannerStartPromise=null;});
         }
 
         function stopScanner() {
-            return new Promise((resolve) => {
-                if (html5QrCode) {
-                    html5QrCode.stop().then(() => {
-                        html5QrCode.clear();
-                        html5QrCode = null;
-                        document.getElementById('scannerContainer').style.display = 'none';
-                        document.getElementById('scanToggleBtn').textContent = '📷 فتح الماسح';
-                        document.getElementById('scanToggleBtn').disabled = false;
-                        isScanning = false;
-                        resolve();
-                    }).catch(err => {
-                        console.error('Error stopping scanner:', err);
-                        document.getElementById('scannerContainer').style.display = 'none';
-                        document.getElementById('scanToggleBtn').textContent = '📷 فتح الماسح';
-                        document.getElementById('scanToggleBtn').disabled = false;
-                        isScanning = false;
-                        resolve();
-                    });
-                } else {
-                    document.getElementById('scannerContainer').style.display = 'none';
-                    document.getElementById('scanToggleBtn').textContent = '📷 فتح الماسح';
-                    document.getElementById('scanToggleBtn').disabled = false;
-                    isScanning = false;
-                    resolve();
-                }
-            });
+            if(scannerStopPromise)return scannerStopPromise;
+            scannerStopPromise=(async()=>{
+                const pending=scannerStartPromise;
+                if(pending)await pending.catch(()=>{});
+                const scanner=html5QrCode;
+                html5QrCode=null;isScanning=false;
+                if(scanner){try{await scanner.stop();}catch(err){console.warn('تعذر إيقاف الماسح:',err);}try{await scanner.clear();}catch(err){console.warn('تعذر تنظيف الماسح:',err);}}
+                document.getElementById('scannerContainer').style.display='none';
+                document.getElementById('scanToggleBtn').textContent='📷 فتح الماسح';
+                document.getElementById('scanToggleBtn').disabled=false;
+            })().finally(()=>{scannerStopPromise=null;});
+            return scannerStopPromise;
         }
-
         async function onScanSuccess(decodedText, decodedResult) {
             if (!isScanning) return;
             const sub = getProfessorSubject();
@@ -7325,8 +7396,8 @@
         function attendanceRecordMatchesGroup(att, subject, groupName) {
             if(!groupName)return true;
             const wanted=normalizeGroupName(groupName,'');
-            const recorded=normalizeGroupName(att?.groupName||'','');
-            if(recorded && recorded===wanted)return true;
+            const recorded=normalizeGroupName(att?.lectureGroup||att?.groupName||'','');
+            if(recorded)return recorded===wanted;
             const student=state.students.find(st=>String(st.id)===String(att?.studentId));
             return !!student && normalizeGroupName(professorGroupNameForStudent(student,subject),'')===wanted;
         }
@@ -7422,7 +7493,7 @@
             const timeInput=document.getElementById('profSessionTime');
             const today=getLocalDateISO();
             let date=String(dateInput?.value||today).trim()||today;
-            if(!/^\d{4}-\d{2}-\d{2}$/.test(date))date=today;
+            if(!isValidAttendanceDate(date))return {ok:false,code:'invalid-date',reason:'تاريخ المحاضرة غير صالح.'};
             if(date>today)return {ok:false,code:'future-date',reason:'لا يمكن تسجيل حضور أو غياب بتاريخ مستقبلي.'};
 
             let sessionTime=normalizeSessionTime(timeInput?.value||'');
@@ -7463,6 +7534,13 @@
         // الأولوية: محاضرة الجدول الحالية -> وقت يدوي صريح -> جلسة مسجلة في التاريخ نفسه ->
         // عند الضغط الفعلي تُنشأ جلسة استثنائية بالتاريخ/الوقت اليدوي أو الوقت الحالي.
         function resolveBulkAttendanceContext(subject, groupName, interactive=false) {
+            const desiredDate=String(document.getElementById('profAbsentDate')?.value||getLocalDateISO());
+            const typedTime=normalizeSessionTime(document.getElementById('profSessionTime')?.value||'');
+            if(desiredDate!==getLocalDateISO() || typedTime){
+                const explicit=buildPanelManualAttendanceContext(subject,groupName,interactive);
+                if(explicit)return explicit;
+                return {ok:false,reason:'حدد وقت المحاضرة للتاريخ الذي اخترته.'};
+            }
             const scheduled=buildQuickAttendanceContext(subject,groupName,true);
             if(scheduled.ok)return {...scheduled,contextSource:'schedule'};
 
@@ -7473,7 +7551,7 @@
             }
 
             const recorded=latestRecordedSessionContext(subject,groupName);
-            const desiredDate=String(document.getElementById('profAbsentDate')?.value||getLocalDateISO());
+
             if(recorded && String(recorded.date)===desiredDate){
                 return {...recorded,contextSource:'recorded',fallbackReason:scheduled.reason||''};
             }
@@ -7496,7 +7574,9 @@
             container.dataset.subjectId=String(sub?.id||'');
             if (!students.length) { container.innerHTML = '<p style="color:#a0aec0;text-align:center;padding:10px;">📭 لا يوجد طلاب مرتبطون بهذه المادة</p>'; return; }
             const totalHours = sub ? getSubjectCourseHours(sub) : 1;
-            const groups = {};
+            const attendanceByStudent=new Map();
+            getLogicalAttendanceRecords(state.attendances).forEach(a=>{if(String(a.subjectId)===String(sub?.id)){const key=String(a.studentId);if(!attendanceByStudent.has(key))attendanceByStudent.set(key,[]);attendanceByStudent.get(key).push(a);}});
+            const groups = Object.create(null);
             students.forEach(st => { const g = professorGroupNameForStudent(st,sub); if(!groups[g]) groups[g]=[]; groups[g].push(st); });
             const groupLabel = sub?.groupType === 'عملي' ? 'المجموعة العملية' : 'الشعبة النظرية';
             const submissionLocked = isProfessorSubjectLockedAfterSubmission(sub);
@@ -7517,7 +7597,7 @@
                 html += `<div class="group-card"><div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length})</span></div>
                     <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button><button data-attendance-control="1" ${cancelAllDisabled} title="${currentAbsentCount?`إزالة غياب ${currentAbsentCount} طالب من ${escapeHtml(bulkCancelContext.displayTime||'آخر محاضرة مسجلة')}`:'اضغط للبحث عن آخر محاضرة مسجلة فيها غياب لهذه المجموعة'}" data-cancel-all-group="${escapeHtml(encodedGroup)}" onclick="removeAllCurrentSessionAbsences(decodeURIComponent('${encodedGroup}'))" class="btn-secondary btn-sm" style="font-size:10px;">🗑️ إزالة غياب الكل${currentAbsentCount?` (${currentAbsentCount})`:''}</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
                 groupStudents.forEach(st => {
-                    const atts = getLogicalAttendanceForStudentSubject(st.id,sub?.id);
+                    const atts = attendanceByStudent.get(String(st.id))||[];
                     const totalAbsent = atts.reduce((s,a)=>s+getAttendanceEffectiveHours(a,sub),0);
                     const unexcusedAbsent = atts.filter(a=>Number(a.excused)===0).reduce((s,a)=>s+getAttendanceEffectiveHours(a,sub),0);
                     const status = getStatus((unexcusedAbsent/totalHours)*100,(totalAbsent/totalHours)*100);
@@ -8060,11 +8140,16 @@
             if(cross.length){alert('يوجد للطالب تسجيل في مادة أخرى في الوقت الجديد نفسه.');return;}
             const newExcused = confirm('هل الغياب بعذر مشروع؟\nموافق = بعذر، إلغاء = بدون عذر');
             const before = { hours: attendance.hours, excused: attendance.excused, sessionTime: attendance.sessionTime || '' };
-            attendance.excused = newExcused ? 1 : 0;
-            attendance.sessionTime = normalizedSessionTime;
-            attendance.sessionKey = attendanceSessionKey(normalizedSessionTime);
-            Object.assign(attendance,attendanceProvenance({professorId:sub.professorId,source:'edit-attendance',lectureId:context.lectureId,groupName:context.groupName,schedulePublishedAt:context.schedulePublishedAt,scheduleVerified:!!context.lectureId,manualOverride:context.manualOverride}),{updatedAt:Date.now(),lastUpdatedById:String(state.currentUser?.id||''),lastUpdatedByName:sanitizeText(state.currentUser?.name||'',120)});
-            recordAudit('تعديل سجل غياب', { attendanceId, before, after: { hours: attendance.hours, excused: attendance.excused, sessionTime: attendance.sessionTime } });
+            const original=JSON.parse(JSON.stringify(attendance));
+            const moved=attendanceRecordSessionKey(original)!==attendanceSessionKey(normalizedSessionTime);
+            if (moved) {
+                attendance.hours=0; attendance.excused=0; attendance.cancelled=true;
+                attendance.explicitState='present'; attendance.updatedAt=Math.max(Date.now(),attendanceRecordRevision(original)+1);
+                attendance.movedToAttendanceId=attendanceCanonicalId(original.studentId,sub.id,original.date,normalizedSessionTime);
+            }
+            const updated=upsertAttendanceState(original.studentId,sub,context,Number(original.hours)>0?effectiveHours:0,newExcused?1:0,'edit-attendance').record;
+            if (moved) updated.movedFromAttendanceId=original.id;
+            recordAudit('تعديل سجل غياب', { attendanceId, before, after: { id:updated.id,hours:updated.hours,excused:updated.excused,sessionTime:updated.sessionTime } });
             const savedView=captureProfessorViewState(attendance.studentId);
             const localPromise=persistAttendanceMutation('edit-attendance');
             updateProfessorStudentAttendanceRow(attendance.studentId);
@@ -8075,8 +8160,12 @@
         }
 
         async function sendToOfficer() {
+            if (!requireAppRole('professor') || submissionMutationBusy) return false;
+            submissionMutationBusy=true;
+            try {
             const sub = getProfessorSubject();
-            if (!sub) { alert('لا توجد مادة'); return; }
+            if (!sub || !subjectBelongsToCurrentProfessor(sub)) { alert('لا توجد مادة مرتبطة بهذا الحساب'); return; }
+            await attendancePersistenceQueue.catch(()=>false);
             const currentState=getSubmissionState(sub);
             if(currentState.code==='ok' && currentState.latest){
                 await resendLastSubmissionWhatsApp();
@@ -8165,6 +8254,8 @@
                 try { await navigator.clipboard.writeText(message); } catch (e) {}
                 alert('✅ تم تثبيت الغيابات داخل النظام.\n⚠️ منع المتصفح فتح واتساب؛ اسمح بالنوافذ المنبثقة ثم استخدم زر «إعادة فتح آخر رسالة واتساب».');
             }
+
+            } finally {submissionMutationBusy=false;}
         }
 
         // ==============================================================
@@ -8245,8 +8336,8 @@
                     summary.push({ subject: sub.name, hours: totalH.toFixed(1), percentage: pctTotal.toFixed(1),
                         status: status });
                     totalAbsent += totalH;
-                    totalHours += courseHours;
                 }
+                totalHours += courseHours;
             });
             return { student, summary, totalAbsent: totalAbsent.toFixed(1), totalPercentage: totalHours > 0 ? ((totalAbsent /
                     totalHours) * 100).toFixed(1) : '0' };
@@ -8468,10 +8559,11 @@
         const ATTENDANCE_ROSTER_STUDENTS_PER_PAGE = 24;
 
         function getAttendanceRosterLogoData() {
-            try { return String(localStorage.getItem(ATTENDANCE_ROSTER_LOGO_KEY) || ''); }
-            catch (e) { return ''; }
+            try {
+                const data=String(localStorage.getItem(ATTENDANCE_ROSTER_LOGO_KEY)||'');
+                return data.length<=6*1024*1024 && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(data) ? data : '';
+            } catch(e) {return '';}
         }
-
         function renderAttendanceRosterLogoPreview() {
             const box = document.getElementById('attendanceRosterLogoPreview');
             if (!box) return;
@@ -8753,10 +8845,114 @@
             } catch (err) { console.error(err); alert('تعذر إنشاء ملف Word: ' + err.message); }
         }
 
+        // V38: these client-side guards supplement, but cannot replace, Firebase Authentication and Rules.
+        document.addEventListener('input',event=>{const el=event.target;if(el?.dataset)el.dataset.v38Dirty='true';});
+        function normalizeDigits(value) {
+            return String(value??'').replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632)).replace(/[۰-۹]/g,c=>String(c.charCodeAt(0)-1776));
+        }
+
+        function requireAppRole(...roles) {
+            if (state.currentUser && roles.includes(state.currentUser.role)) return true;
+            alert('هذه العملية غير متاحة لصلاحيات الحساب الحالي.');
+            return false;
+        }
+
+        function isValidAttendanceDate(value) {
+            const str=String(value||'');
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
+            const date=new Date(str+'T00:00:00Z');
+            return Number.isFinite(date.getTime()) && date.toISOString().slice(0,10)===str;
+        }
+
+        function accountCredentialSignature(user) {
+            if (user?.role==='professor') {
+                const prof=state.professors.find(p=>String(p.id)===String(user.id));
+                return prof ? String(getProfessorUnifiedPassword(prof).hash||'') : '';
+            }
+            const settings=getGlobalAppSettings();
+            return String(user?.role==='admin'?settings.adminPasswordHash||'':user?.role==='officer'?settings.officerPasswordHash||'':'');
+        }
+
+        function syncConflictKey(name,id) {return JSON.stringify([String(name),String(id)]);}
+
+        function canResolveSyncConflict(conflict) {
+            if(state.currentUser?.role==='admin')return true;
+            const rec=conflict?.after||conflict?.remote;
+            if(state.currentUser?.role!=='professor'||!rec)return false;
+            const subject=state.subjects.find(s=>String(s.id)===String(rec.subjectId));
+            return ['attendances','submissions'].includes(conflict.name)&&subjectBelongsToCurrentProfessor(subject);
+        }
+
+        function updateSyncConflictButton() {
+            const count=Object.keys(syncConflicts).length;
+            let btn=document.getElementById('syncConflictReviewButton');
+            if(!btn && state.currentUser) {
+                btn=document.createElement('button');btn.id='syncConflictReviewButton';btn.className='btn-warning btn-sm';
+                btn.onclick=showSyncConflicts;
+                document.getElementById('syncStatus')?.parentElement?.appendChild(btn);
+            }
+            if(btn){btn.hidden=!count||!state.currentUser;btn.textContent=`مراجعة تعارضات الحفظ (${count})`;}
+            if(count)setSyncStatus(`⚠️ ${count} تعارض يحتاج مراجعة؛ لن يستبدل البرنامج النسخة السحابية تلقائياً`,'#92400e');
+        }
+
+        function showSyncConflicts() {
+            if(!state.currentUser)return;
+            let modal=document.getElementById('syncConflictModal');
+            if(modal)modal.remove();
+            modal=document.createElement('div');modal.id='syncConflictModal';modal.className='modal-overlay active';
+            const box=document.createElement('div');box.className='modal-box';
+            const title=document.createElement('h3');title.textContent='مراجعة التعديلات المتعارضة';box.appendChild(title);
+            const note=document.createElement('p');note.textContent='اختر النسخة المعتمدة لكل سجل. التغييرات الأخرى تستمر في الحفظ. يمكن تنزيل نسخة احتياطية من لوحة رئيس القسم قبل المراجعة.';box.appendChild(note);
+            for(const [key,c] of Object.entries(syncConflicts)) {
+                const card=document.createElement('div');card.className='card';
+                const heading=document.createElement('strong');heading.textContent=`${c.name} — ${c.id}`;card.appendChild(heading);
+                const local=mapsById(state[c.name]||[]).get(String(c.id));
+                const summary=r=>r?JSON.stringify(r,(k,v)=>/password|hash|credential/i.test(k)?'[محجوب]':v,2):'حذف السجل';
+                const preview=document.createElement('pre');preview.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;text-align:right';
+                preview.textContent=`على الجهاز:\n${summary(local)}\n\nالسحابة عند اكتشاف التعارض:\n${summary(c.remote)}`;card.appendChild(preview);
+                if(canResolveSyncConflict(c)) {
+                    for(const [choice,label] of [['remote','اعتماد السحابة'],['local','اعتماد تعديل هذا الجهاز']]) {
+                        const b=document.createElement('button');b.className='btn-sm '+(choice==='remote'?'btn-info':'btn-warning');b.textContent=label;
+                        b.onclick=async()=>{b.disabled=true;try{await resolveSyncConflict(key,choice);showSyncConflicts();}catch(err){alert(err.message);}finally{b.disabled=false;}};card.appendChild(b);
+                    }
+                } else {const p=document.createElement('p');p.textContent='يحتاج هذا التعارض إلى مراجعة رئيس القسم.';card.appendChild(p);}
+                box.appendChild(card);
+            }
+            const close=document.createElement('button');close.textContent='إغلاق';close.onclick=()=>modal.remove();box.appendChild(close);modal.appendChild(box);document.body.appendChild(modal);
+        }
+
+        async function resolveSyncConflict(key,choice) {
+            const conflict=syncConflicts[key];
+            if(!conflict||!canResolveSyncConflict(conflict)||!['local','remote'].includes(choice))return false;
+            if(!database||!cloudInitialReadComplete)throw new Error('يلزم الاتصال بالسحابة لقراءة أحدث نسخة قبل الاختيار.');
+            const ref=database.ref(`/${conflict.name}/${firebaseRecordKey(conflict.id)}`);
+            const snapshot=await withTimeout(ref.once('value'));
+            const remote=snapshot.val();
+            const local=mapsById(state[conflict.name]||[]).get(String(conflict.id));
+            if(!confirm(choice==='local'?'اعتماد تعديل هذا الجهاز بدلاً من أحدث نسخة سحابية لهذا السجل؟':'اعتماد أحدث نسخة سحابية وإلغاء تعديل هذا الجهاز لهذا السجل؟'))return false;
+            const base=mapsById(lastSyncedCollections[conflict.name]||[]);
+            if(remote===null)base.delete(String(conflict.id));else base.set(String(conflict.id),remote);
+            lastSyncedCollections[conflict.name]=Array.from(base.values());
+            if(choice==='remote') {
+                const map=mapsById(state[conflict.name]||[]);
+                if(remote===null)map.delete(String(conflict.id));else map.set(String(conflict.id),sanitizeRecord(remote));
+                state[conflict.name]=Array.from(map.values());
+            }
+            // Retain both versions locally for recovery after a deliberate conflict resolution.
+            syncConflictHistory.push({collection:conflict.name,id:conflict.id,local:local??null,remote,choice,resolvedAt:Date.now()});
+            syncConflictHistory=syncConflictHistory.slice(-50);
+            recordAudit('حسم تعارض حفظ',{collection:conflict.name,id:conflict.id,choice});
+            delete syncConflicts[key];
+            await persistLocalState('conflict-resolved',true);
+            const ok=await pushToFirebase({silent:true});
+            updateSyncConflictButton();scheduleRenderRefresh();
+            return ok;
+        }
+
         // ==============================================================
         //  INITIALIZATION
         // ==============================================================
-        console.log('🏛️ نظام الغيابات V37 - إضافة تصدير سجل حضور PDF وWord');
+        console.log('🏛️ نظام الغيابات V38 — مراجعة الحفظ والتعارضات وهوية المحاضرات');
 
         document.addEventListener('change', function(e) {
             if (e.target.id === 'reportDateFrom' || e.target.id === 'reportDateTo') {
