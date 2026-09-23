@@ -426,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V42.2</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V42.3</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -916,7 +916,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '42.2-freeze-hard-fix';
+        const APP_VERSION = '42.3-incremental-sync';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -2208,30 +2208,61 @@
         function listenToFirebase() {
             if (!database || cloudListenersStarted) return;
             cloudListenersStarted = true;
+
+            // V42.3: بعد التحميل الأولي لا نستمع إلى المجموعة كاملة بـ value.
+            // كل تغيير يصل كسجل واحد فقط، وهذا مهم خصوصاً attendances التي تحتوي آلاف السجلات.
+            const upsertRemoteChild = (name, raw, idFromKey) => {
+                if (!state.initialLoadDone) return;
+                const incoming = raw && typeof raw === 'object' ? sanitizeRecord(raw) : raw;
+                const id = String(incoming?.id || idFromKey || '');
+                if (!id) return;
+
+                if (['students','attendances'].includes(name)) {
+                    const sid = name === 'students' ? id : String(incoming?.studentId || '');
+                    if (sid && isStudentOfficiallyDeleted(sid)) return;
+                }
+
+                const list = Array.isArray(state[name]) ? state[name] : (state[name] = []);
+                const idx = list.findIndex(x => String(x?.id || '') === id);
+                if (idx >= 0 && sameRecord(list[idx], incoming)) return;
+                if (idx >= 0) list[idx] = incoming;
+                else list.push(incoming);
+
+                const base = mapsById(lastSyncedCollections[name] || []);
+                base.set(id, incoming);
+                lastSyncedCollections[name] = Array.from(base.values());
+                delete syncConflicts[syncConflictKey(name,id)];
+
+                scheduleLocalPersistence(name==='attendances' ? 700 : 350);
+                scheduleRenderRefresh(name);
+                updateSyncConflictButton();
+            };
+
+            const removeRemoteChild = (name, idFromKey) => {
+                if (!state.initialLoadDone) return;
+                const id=String(idFromKey||'');
+                if(!id)return;
+                const list=Array.isArray(state[name])?state[name]:(state[name]=[]);
+                const idx=list.findIndex(x=>String(x?.id||'')===id);
+                if(idx<0)return;
+                list.splice(idx,1);
+                const base=mapsById(lastSyncedCollections[name]||[]);
+                base.delete(id);
+                lastSyncedCollections[name]=Array.from(base.values());
+                delete syncConflicts[syncConflictKey(name,id)];
+                scheduleLocalPersistence(500);
+                scheduleRenderRefresh(name);
+                updateSyncConflictButton();
+            };
+
             CLOUD_SYNC_COLLECTIONS.forEach(name => {
-                database.ref('/'+name).on('value', async snapshot => {
-                    if (!state.initialLoadDone) return;
-                    let value=snapshot.val();
-                    if (Array.isArray(value)) {
-                        try { await migrateLegacyCollectionsIfNeeded({[name]:value}); value=(await database.ref('/'+name).once('value')).val(); }
-                        catch(err){ console.error('تعذر ترحيل '+name+':',err); }
-                    }
-                    const collectionChanged=applyRemoteCollection(name,value);
-                    lastCloudSyncAt = Date.now();
-                    scheduleLocalPersistence();
-                    if(name==='professors' || name==='professorProfiles') scheduleCredentialValidation();
-                    if(collectionChanged && name==='scheduleLinks'){
-                        scheduleHistoryByteCache.clear();
-                        scheduleScheduleHistoryRender();
-                        renderWeeklyScheduleLinkStatus();
-                    } else if (collectionChanged && (name==='professors' || name==='professorProfiles' || name==='subjects' || name==='students' || name==='attendances' || name==='submissions' || name==='subjectHourOverrides' || name==='appSettings')) scheduleRenderRefresh(name);
-                    if (!state.isSyncing) setSyncStatus('✅ تمت مزامنة أحدث البيانات من السحابة', '#2f855a');
-                }, err => {
-                    console.error(`خطأ مستمع ${name}:`, err);
-                    cloudConnected = false;
-                    setSyncStatus('🟠 انقطع التحديث اللحظي؛ النسخة المحلية مستمرة', '#b45309');
-                    scheduleCloudRetry();
-                });
+                const ref=database.ref('/'+name);
+                ref.on('child_added', snap => upsertRemoteChild(name,snap.val(),snap.key),
+                    err=>console.error('خطأ child_added في '+name+':',err));
+                ref.on('child_changed', snap => upsertRemoteChild(name,snap.val(),snap.key),
+                    err=>console.error('خطأ child_changed في '+name+':',err));
+                ref.on('child_removed', snap => removeRemoteChild(name,snap.key),
+                    err=>console.error('خطأ child_removed في '+name+':',err));
             });
         }
 
