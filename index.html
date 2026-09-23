@@ -916,7 +916,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '42.0-history-memory-manager';
+        const APP_VERSION = '42.1-freeze-fixed';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -1045,6 +1045,11 @@
         let scannerStartPromise=null;
         let scannerStopPromise=null;
         let liveWeeklyTimetable = null;
+        // V43: حراس أداء تمنع إعادة معالجة snapshot نفسه أو إعادة الدخول في الأرشفة.
+        let lastAppliedWeeklyScheduleSignature = '';
+        let scheduleHistoryArchiveBusy = false;
+        let scheduleHistoryRenderTimer = null;
+        const scheduleHistoryByteCache = new Map();
         let weeklyTimetableListenerStarted = false;
         let academicCatalogListenerStarted = false;
         let lastAcademicCatalogSignature = '';
@@ -1855,7 +1860,7 @@
                     const chosen=candidates[0];
                     // ترحيل تلقائي لنسخ V41 القديمة: نحتفظ فقط ببيانات المحاضرات اللازمة تاريخياً.
                     if(chosen?.kind==='scheduleHistory'&&!chosen.compact&&chosen.snapshot?.structuredSchedule){
-                        remote.set(id,{...chosen,compact:true,snapshot:compactScheduleHistorySnapshot(chosen.snapshot),compactedAt:Date.now()});
+                        remote.set(id,{...chosen,compact:true,snapshot:compactScheduleHistorySnapshot(chosen.snapshot),compactedAt:Number(chosen.compactedAt)||Number(chosen.capturedAt)||Number(chosen.createdAt)||1});
                     } else remote.set(id,chosen);
                 });
             }
@@ -2208,7 +2213,11 @@
                     lastCloudSyncAt = Date.now();
                     scheduleLocalPersistence();
                     if(name==='professors' || name==='professorProfiles') scheduleCredentialValidation();
-                    if (collectionChanged && (name==='professors' || name==='professorProfiles' || name==='subjects' || name==='students' || name==='attendances' || name==='submissions' || name==='scheduleLinks' || name==='subjectHourOverrides' || name==='appSettings')) scheduleRenderRefresh(name);
+                    if(collectionChanged && name==='scheduleLinks'){
+                        scheduleHistoryByteCache.clear();
+                        scheduleScheduleHistoryRender();
+                        renderWeeklyScheduleLinkStatus();
+                    } else if (collectionChanged && (name==='professors' || name==='professorProfiles' || name==='subjects' || name==='students' || name==='attendances' || name==='submissions' || name==='subjectHourOverrides' || name==='appSettings')) scheduleRenderRefresh(name);
                     if (!state.isSyncing) setSyncStatus('✅ تمت مزامنة أحدث البيانات من السحابة', '#2f855a');
                 }, err => {
                     console.error(`خطأ مستمع ${name}:`, err);
@@ -6470,7 +6479,21 @@
         }
 
         function scheduleHistoryRecordBytes(record) {
-            try{return new Blob([JSON.stringify(record||{})]).size;}catch(err){return JSON.stringify(record||{}).length*2;}
+            if(!record)return 0;
+            const key=String(record.id||'')+'|'+String(record.signature||'')+'|'+String(record.capturedAt||record.createdAt||'');
+            if(scheduleHistoryByteCache.has(key))return scheduleHistoryByteCache.get(key);
+            let size=0;
+            try{size=new Blob([JSON.stringify(record||{})]).size;}catch(err){try{size=JSON.stringify(record||{}).length*2;}catch(_){size=0;}}
+            scheduleHistoryByteCache.set(key,size);
+            return size;
+        }
+
+        function scheduleScheduleHistoryRender(delay=180) {
+            clearTimeout(scheduleHistoryRenderTimer);
+            scheduleHistoryRenderTimer=setTimeout(()=>{
+                scheduleHistoryRenderTimer=null;
+                try{renderScheduleHistoryStatusNow();}catch(err){console.error('تعذر تحديث واجهة أرشيف الجدول:',err);}
+            },Math.max(50,Number(delay)||180));
         }
 
         function formatStorageBytes(bytes) {
@@ -6536,12 +6559,16 @@
         async function persistScheduleHistoryRecord(record) {
             if(!record?.id)return false;
             if(!(state.scheduleLinks||[]).some(x=>String(x.id)===String(record.id))) state.scheduleLinks.push(record);
-            scheduleLocalPersistence(0);
+            scheduleLocalPersistence(350);
             if(!database||!cloudInitialReadComplete)return false;
             try{
                 const ref=database.ref(`/scheduleLinks/${firebaseRecordKey(record.id)}`);
-                const result=await withTimeout(ref.transaction(current=>current||record,undefined,false),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة حفظ نسخة الجدول التاريخية');
-                const saved=result.snapshot?.val()||record;
+                const snap=await withTimeout(ref.once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فحص نسخة الجدول التاريخية');
+                let saved=snap.val();
+                if(!saved){
+                    await withTimeout(ref.set(record),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة حفظ نسخة الجدول التاريخية');
+                    saved=record;
+                }
                 const base=mapsById(lastSyncedCollections.scheduleLinks||[]);
                 base.set(String(record.id),sanitizeRecord(saved));
                 lastSyncedCollections.scheduleLinks=Array.from(base.values());
@@ -6558,30 +6585,32 @@
             const signature=scheduleSnapshotSignature(link.snapshot);
             const histories=getScheduleHistoryEntries();
             const latest=histories[histories.length-1]||null;
-            // لا نحفظ نسخة جديدة إذا أعيد نشر نفس الجدول دون أي تغيير فعلي.
-            if(latest&&String(latest.signature||'')===String(signature)){
-                link.historyVersionId=latest.id;
-                renderScheduleHistoryStatus();
-                return latest;
-            }
+            if(latest&&String(latest.signature||'')===String(signature)){link.historyVersionId=latest.id;return latest;}
             const publishedAt=Math.max(1,Number(link.createdAt)||Date.now());
             const id=`schedule_history__${publishedAt}_${signature}`;
-            // إذا حذف رئيس القسم هذه النسخة عمداً، لا يعيدها مستمع Firebase الحي تلقائياً.
-            const deletedByGap=getScheduleHistoryGaps().some(g=>String(g.deletedVersionId)===String(id));
-            if(deletedByGap){link.historyVersionId='';renderScheduleHistoryStatus();return null;}
-            let existing=(state.scheduleLinks||[]).find(x=>String(x.id)===id);
+            if(getScheduleHistoryGaps().some(g=>String(g.deletedVersionId)===String(id))){link.historyVersionId='';return null;}
+            const existing=(state.scheduleLinks||[]).find(x=>String(x.id)===id);
             if(existing){link.historyVersionId=existing.id;return existing;}
-            const record={
-                id,kind:'scheduleHistory',immutable:true,compact:true,signature,
-                source:sanitizeText(source||link.source||'الجدول المنشور',160),
-                publishedAt,effectiveFromMs:publishedAt,effectiveFromDate:scheduleEffectiveDateFromMs(publishedAt),
-                capturedAt:Date.now(),createdAt:Date.now(),snapshot:compactScheduleHistorySnapshot(link.snapshot)
-            };
-            state.scheduleLinks.push(record);
-            link.historyVersionId=id;
-            persistScheduleHistoryRecord(record).catch(console.error);
-            renderScheduleHistoryStatus();
-            return record;
+            if(scheduleHistoryArchiveBusy)return null;
+            scheduleHistoryArchiveBusy=true;
+            try{
+                const record={
+                    id,kind:'scheduleHistory',immutable:true,compact:true,signature,
+                    source:sanitizeText(source||link.source||'الجدول المنشور',160),
+                    publishedAt,effectiveFromMs:publishedAt,effectiveFromDate:scheduleEffectiveDateFromMs(publishedAt),
+                    capturedAt:publishedAt,createdAt:publishedAt,snapshot:compactScheduleHistorySnapshot(link.snapshot)
+                };
+                state.scheduleLinks.push(record);
+                link.historyVersionId=id;
+                scheduleHistoryByteCache.clear();
+                persistScheduleHistoryRecord(record).catch(console.error).finally(()=>{scheduleHistoryArchiveBusy=false;});
+                scheduleScheduleHistoryRender();
+                return record;
+            }catch(err){
+                scheduleHistoryArchiveBusy=false;
+                console.error('تعذر أرشفة نسخة الجدول:',err);
+                return null;
+            }
         }
 
         function scheduleHistoryReferenceCount(versionId) {
@@ -6651,6 +6680,7 @@
             }
             state.scheduleLinks=(state.scheduleLinks||[]).filter(x=>String(x.id)!==id&&String(x.id)!==String(gap.id));
             state.scheduleLinks.push(gap);
+            scheduleHistoryByteCache.clear();
             const base=mapsById(lastSyncedCollections.scheduleLinks||[]);base.delete(id);base.set(String(gap.id),sanitizeRecord(gap));lastSyncedCollections.scheduleLinks=Array.from(base.values());
             recordAudit('حذف نسخة تاريخية للجدول لتفريغ الذاكرة',{deletedVersionId:id,effectiveFromDate:entry.effectiveFromDate,approxBytesFreed:bytes,attendanceReferencesPreserved:refs,gapId:gap.id});
             await persistLocalState('delete-schedule-history-v42',true);
@@ -6660,16 +6690,22 @@
             return true;
         }
 
-        function renderScheduleHistoryStatus() {
+        function renderScheduleHistoryStatusNow() {
             const el=document.getElementById('scheduleHistoryStatus');
             if(!el)return;
             const entries=getScheduleHistoryEntries();
             const gaps=getScheduleHistoryGaps();
             const totalBytes=entries.reduce((sum,e)=>sum+scheduleHistoryRecordBytes(e),0);
-            if(!entries.length){el.textContent=`🕘 أرشيف الجدول: لا توجد نسخة تاريخية محفوظة حالياً${gaps.length?' — توجد '+gaps.length+' فترة محذوفة محمية من التخمين الخاطئ.':''}`;renderScheduleHistoryManager();return;}
-            const first=entries[0],last=entries[entries.length-1];
-            el.textContent=`🕘 أرشيف الجدول: ${entries.length} نسخة مضغوطة — الحجم التقريبي ${formatStorageBytes(totalBytes)} — من ${first.effectiveFromDate} إلى ${last.effectiveFromDate}${gaps.length?' — فترات محذوفة محمية: '+gaps.length:''}.`;
-            renderScheduleHistoryManager();
+            if(!entries.length)el.textContent=`🕘 أرشيف الجدول: لا توجد نسخة تاريخية محفوظة حالياً${gaps.length?' — توجد '+gaps.length+' فترة محذوفة محمية من التخمين الخاطئ.':''}`;
+            else {
+                const first=entries[0],last=entries[entries.length-1];
+                el.textContent=`🕘 أرشيف الجدول: ${entries.length} نسخة مضغوطة — الحجم التقريبي ${formatStorageBytes(totalBytes)} — من ${first.effectiveFromDate} إلى ${last.effectiveFromDate}${gaps.length?' — فترات محذوفة محمية: '+gaps.length:''}.`;
+            }
+            if(state.currentUser?.role==='admin')renderScheduleHistoryManager();
+        }
+
+        function renderScheduleHistoryStatus() {
+            scheduleScheduleHistoryRender(120);
         }
 
         function normalizeMatchText(value) {
@@ -6876,22 +6912,21 @@
 
         function applyLiveWeeklyTimetable(data) {
             const link=buildLiveWeeklyTimetable(data);
+            if(!link?.snapshot){liveWeeklyTimetable=link;return;}
+            const signature=scheduleSnapshotSignature(link.snapshot);
+            const sameSchedule=signature===lastAppliedWeeklyScheduleSignature;
             liveWeeklyTimetable=link;
-            if(link?.snapshot){
-                archiveScheduleLinkVersion(link,'Firebase المباشر');
-                const cachedLink={
-                    id:'weekly_timetable',
-                    source:'Firebase المباشر — نسخة محفوظة في المتصفح',
-                    linkedAt:new Date().toISOString(),
-                    createdAt:Number(link.createdAt)||Date.now(),
-                    snapshot:link.snapshot,
-                    analysis:link.analysis,
-                    liveCache:true
-                };
-                state.scheduleLinks=(state.scheduleLinks||[]).filter(x=>x.id!=='weekly_timetable');
-                state.scheduleLinks.push(cachedLink);
-                scheduleLocalPersistence(0);
-            }
+            if(sameSchedule)return;
+            lastAppliedWeeklyScheduleSignature=signature;
+            archiveScheduleLinkVersion(link,'Firebase المباشر');
+            const cachedLink={
+                id:'weekly_timetable',source:'Firebase المباشر — نسخة محفوظة في المتصفح',
+                linkedAt:new Date().toISOString(),createdAt:Number(link.createdAt)||Date.now(),
+                snapshot:link.snapshot,analysis:link.analysis,historyVersionId:link.historyVersionId||'',liveCache:true
+            };
+            state.scheduleLinks=(state.scheduleLinks||[]).filter(x=>x.id!=='weekly_timetable');
+            state.scheduleLinks.push(cachedLink);
+            scheduleLocalPersistence(350);
             renderWeeklyScheduleLinkStatus();
             renderLectureReminderStatus();
             refreshProfessorTimetableViews();
