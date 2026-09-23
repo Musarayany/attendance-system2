@@ -426,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V38</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V39</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -509,6 +509,16 @@
                     </div>
                 </div>
                 <div id="weeklyScheduleLinkStatus" class="integration-status">☁️ في انتظار أول جدول منشور من برنامج الجدول الأسبوعي...</div>
+                <div id="scheduleHistoryStatus" class="integration-status" style="margin-top:6px;background:#f5f3ff;border-color:#c4b5fd;color:#5b21b6;">🕘 أرشيف الجدول: يحفظ نسخاً مضغوطة عند تغير الجدول فقط.</div>
+                <div id="scheduleHistoryManager" style="margin-top:7px;padding:8px;border:1px solid #ddd6fe;border-radius:8px;background:#faf5ff;">
+                    <div style="font-weight:bold;font-size:12px;margin-bottom:5px;">🧹 إدارة ذاكرة أرشيف الجدول</div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                        <select id="scheduleHistoryDeleteSelect" style="min-width:240px;flex:1;" onchange="renderScheduleHistoryDeleteInfo()"></select>
+                        <button onclick="deleteSelectedScheduleHistoryVersion()" class="btn-danger btn-sm">🗑️ حذف النسخة المحددة</button>
+                    </div>
+                    <div id="scheduleHistoryDeleteInfo" style="font-size:10px;color:#5b21b6;margin-top:5px;line-height:1.6;"></div>
+                    <small style="margin-top:4px;color:#7c2d12;">الحذف يفرغ الذاكرة لكنه يلغي مرجع الجدول لتلك الفترة. يحتفظ النظام بعلامة صغيرة تمنع استخدام جدول أقدم بالخطأ، ولا يحذف أي سجل حضور أو غياب.</small>
+                </div>
                 <div id="academicCatalogSyncStatus" class="integration-status" style="margin-top:6px;background:#eefaf3;border-color:#b7dfc7;color:#176b3a;">📚 في انتظار مزامنة الأساتذة والمواد والساعات من برنامج الجدول...</div>
             </div>
 
@@ -766,10 +776,11 @@
                         <select id="profStudentSelect" onchange="syncManualAttendanceDefaults()"></select>
                         <label>ساعات المادة المعتمدة من رئيس القسم</label>
                         <input type="number" id="profAbsentHours" value="1" readonly aria-readonly="true" tabindex="-1" style="background:#e2e8f0;color:#334155;font-weight:900;cursor:not-allowed;">
-                        <label>تاريخ الغياب</label>
-                        <input type="date" id="profAbsentDate">
+                        <label>تاريخ المحاضرة / عرض المجاميع</label>
+                        <input type="date" id="profAbsentDate" onchange="onProfessorAttendanceDateChanged()">
+                        <small style="display:block;margin-top:-4px;margin-bottom:6px;color:#475569;">اختر تاريخ اليوم أو تاريخ محاضرة سابقة؛ ستفتح فقط المجاميع التي لديها محاضرة منشورة في ذلك التاريخ.</small>
                         <label>وقت المحاضرة</label>
-                        <input type="time" id="profSessionTime">
+                        <input type="time" id="profSessionTime" onchange="onProfessorAttendanceTimeChanged()">
                         <label>نوع الغياب</label>
                         <select id="profExcused">
                             <option value="0">بدون عذر</option>
@@ -905,7 +916,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '38.0-audited';
+        const APP_VERSION = '42.0-history-memory-manager';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -1681,6 +1692,8 @@
                 ids.forEach(id => {
                     const before = base.get(id);
                     const after = current.get(id);
+                    // نسخ الجدول التاريخية لا تُحذف عبر فرق مزامنة صادر من جهاز قديم.
+                    if(name==='scheduleLinks' && String(id).startsWith('schedule_history__') && !String(id).startsWith('schedule_history_gap__') && before && !after)return;
                     if (sameRecord(before, after)) return;
                     const key = String(id).replace(/[.#$\[\]\/]/g, '_');
                     updates[`${name}/${key}`] = after ? after : null;
@@ -1699,6 +1712,8 @@
                 ids.forEach(id => {
                     const before = base.get(id);
                     const after = current.get(id);
+                    // append-only: لا نولّد عملية حذف لنسخة جدول تاريخية موجودة في خط الأساس.
+                    if(name==='scheduleLinks' && String(id).startsWith('schedule_history__') && !String(id).startsWith('schedule_history_gap__') && before && !after)return;
                     if (!sameRecord(before, after) && !syncConflicts[syncConflictKey(name,id)]) changes.push({
                         name, id, before: before === undefined ? undefined : JSON.parse(JSON.stringify(before)),
                         after: after === undefined ? undefined : JSON.parse(JSON.stringify(after))
@@ -1820,6 +1835,29 @@
                 state[name]=Array.from(remote.values());
                 lastSyncedCollections[name]=remoteArr;
                 return changed;
+            }
+
+            // V41: نسخ الجدول التاريخية سجلات append-only داخل scheduleLinks.
+            // لا يسمح لجهاز قديم أو لقطة ناقصة بحذف نسخة تاريخية سبق حفظها.
+            if (name === 'scheduleLinks') {
+                // علامات الحذف صغيرة ودائمة: تمنع أي جهاز قديم من إعادة رفع النسخة التي حذفها رئيس القسم.
+                const gapRecords=[...remote.values(),...local.values(),...base.values()].filter(x=>x?.kind==='scheduleHistoryGap'&&x.deletedVersionId);
+                const gapsById=new Map();
+                gapRecords.forEach(g=>{const cur=gapsById.get(String(g.id));if(!cur||Number(g.deletedAt||0)>Number(cur.deletedAt||0))gapsById.set(String(g.id),g);});
+                gapsById.forEach(g=>remote.set(String(g.id),g));
+                const deletedHistoryIds=new Set([...gapsById.values()].map(g=>String(g.deletedVersionId)));
+                deletedHistoryIds.forEach(id=>{remote.delete(id);local.delete(id);base.delete(id);});
+                const historyIds=new Set([...remote.keys(),...local.keys(),...base.keys()].filter(id=>String(id).startsWith('schedule_history__')&&!String(id).startsWith('schedule_history_gap__')&&!deletedHistoryIds.has(String(id))));
+                historyIds.forEach(id=>{
+                    const candidates=[remote.get(id),local.get(id),base.get(id)].filter(Boolean);
+                    if(!candidates.length)return;
+                    candidates.sort((a,b)=>(Number(b.capturedAt)||Number(b.createdAt)||0)-(Number(a.capturedAt)||Number(a.createdAt)||0));
+                    const chosen=candidates[0];
+                    // ترحيل تلقائي لنسخ V41 القديمة: نحتفظ فقط ببيانات المحاضرات اللازمة تاريخياً.
+                    if(chosen?.kind==='scheduleHistory'&&!chosen.compact&&chosen.snapshot?.structuredSchedule){
+                        remote.set(id,{...chosen,compact:true,snapshot:compactScheduleHistorySnapshot(chosen.snapshot),compactedAt:Date.now()});
+                    } else remote.set(id,chosen);
+                });
             }
 
             // الغيابات حساسة للترتيب الزمني ولوجود نسخ قديمة متعددة للمحاضرة نفسها.
@@ -1945,6 +1983,8 @@
             localIds.forEach(id => {
                 const l = local.get(id);
                 const b = base.get(id);
+                // V41: سجل تاريخ الجدول لا يُحذف إذا كان هذا الجهاز لا يملكه محلياً.
+                if(name==='scheduleLinks' && String(id).startsWith('schedule_history__') && !String(id).startsWith('schedule_history_gap__') && !l)return;
                 if (!sameRecord(l, b)) {
                     if (l) remote.set(id, l);
                     else remote.delete(id);
@@ -3287,6 +3327,103 @@
             return groups;
         }
 
+
+        // V39: المجموعات العملية المتاحة فعلياً داخل شعبة نظرية مع احتساب الحمل الحالي.
+        // لا ننقل اسم المجموعة العملية القديمة تلقائياً لأنها قد تخص الشعبة السابقة.
+        function getPracticalGroupLoadForTheory(level, theoreticalGroup, excludeStudentId = '') {
+            const counts = new Map();
+            const wantedTheory = normalizeGroupName(theoreticalGroup, '');
+            const excluded = String(excludeStudentId || '');
+            (state.students || []).forEach(st => {
+                if (String(st.id) === excluded || Number(st.level) !== Number(level) || studentTheoreticalGroup(st) !== wantedTheory) return;
+                const pg = studentPracticalGroup(st);
+                if (pg) counts.set(pg, (counts.get(pg) || 0) + 1);
+            });
+            // إذا كانت مجموعة عملية معرفة في الجدول للشعبة الجديدة ولكن لم يسجل فيها طالب بعد، أضفها بحمل صفر.
+            (state.subjects || []).forEach(sub => {
+                if (Number(sub.level) !== Number(level) || sub.timetableActive === false || String(sub.groupType || '') !== 'عملي') return;
+                const theoryHint = normalizeGroupName(sub.scheduleTheoreticalGroup || sub.theoreticalGroup || '', '');
+                if (!theoryHint || theoryHint !== wantedTheory) return;
+                const pg = normalizeGroupName(sub.schedulePracticalGroup || sub.targetGroup || sub.group || sub.section || '', '');
+                if (pg && !counts.has(pg)) counts.set(pg, 0);
+            });
+            return [...counts.entries()].map(([name,count]) => ({name,count:Number(count)||0}))
+                .sort((a,b) => a.count-b.count || String(a.name).localeCompare(String(b.name),'ar'));
+        }
+
+        function studentTransferSafetySignature(studentId) {
+            const sid = String(studentId || '');
+            const otherStudents = (state.students || []).filter(st => String(st.id) !== sid)
+                .map(st => stableComparable(st));
+            const otherAttendances = (state.attendances || []).filter(att => String(att.studentId || '') !== sid)
+                .map(att => stableComparable(att));
+            const historical = (state.attendances || []).filter(att => String(att.studentId || '') === sid && !isEnrollmentRecord(att))
+                .map(att => stableComparable(att));
+            return {
+                otherStudents: JSON.stringify(otherStudents),
+                otherAttendances: JSON.stringify(otherAttendances),
+                historical: JSON.stringify(historical)
+            };
+        }
+
+        // حفظ حرج خاص بنقل طالب واحد: يكتب حقول المجموعة لهذا الطالب وروابطه التشغيلية فقط.
+        // لا يكتب مصفوفة students/attendances كاملة، لذلك لا يمكن أن يلمس سجلات بقية الطلبة.
+        async function persistStudentTransferCritical(student, beforeLinkedRecords = []) {
+            const sid = String(student?.id || '');
+            if (!sid) throw new Error('معرف الطالب غير صالح');
+            const localSaved = await persistLocalState('student-group-transfer-v39', true);
+            if (!database || !cloudInitialReadComplete) {
+                scheduleCloudRetry();
+                return { localSaved, cloudSaved:false, verified:false, reason:'offline' };
+            }
+            const studentKey = firebaseRecordKey(sid);
+            const afterLinkedRecords = (state.attendances || []).filter(att => String(att.studentId || '') === sid);
+            const beforeEnroll = mapsById((beforeLinkedRecords || []).filter(isEnrollmentRecord));
+            const afterEnroll = mapsById(afterLinkedRecords.filter(isEnrollmentRecord));
+            const updates = Object.create(null);
+            const studentRef = database.ref(`/students/${studentKey}`);
+            const remoteBefore = (await withTimeout(studentRef.once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة قراءة الطالب قبل النقل')).val();
+            if (remoteBefore && typeof remoteBefore === 'object') {
+                const prefix = `students/${studentKey}/`;
+                updates[prefix+'theoreticalGroup'] = student.theoreticalGroup;
+                updates[prefix+'practicalGroup'] = student.practicalGroup;
+                updates[prefix+'group'] = student.group;
+                updates[prefix+'section'] = student.section;
+                updates[prefix+'groupType'] = student.groupType;
+                updates[prefix+'groupTransferUpdatedAt'] = Number(student.groupTransferUpdatedAt)||Date.now();
+                updates[prefix+'groupTransferUpdatedBy'] = String(student.groupTransferUpdatedBy||state.currentUser?.id||'admin');
+            } else {
+                updates[`students/${studentKey}`] = sanitizeRecord(student);
+            }
+            const linkIds = new Set([...beforeEnroll.keys(), ...afterEnroll.keys()]);
+            linkIds.forEach(id => {
+                const before = beforeEnroll.get(id), after = afterEnroll.get(id);
+                if (sameRecord(before, after)) return;
+                updates[`attendances/${firebaseRecordKey(id)}`] = after ? sanitizeRecord(after) : null;
+            });
+            if (!Object.keys(updates).length) return {localSaved,cloudSaved:true,verified:true,reason:'noop'};
+            await withTimeout(database.ref('/').update(updates), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ نقل الطالب');
+            const verifyStudent = (await withTimeout(studentRef.once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة التحقق من نقل الطالب')).val();
+            const verified = !!verifyStudent &&
+                normalizeGroupName(verifyStudent.theoreticalGroup || verifyStudent.group || verifyStudent.section || '', '') === studentTheoreticalGroup(student) &&
+                normalizeGroupName(verifyStudent.practicalGroup || '', '') === studentPracticalGroup(student);
+            if (!verified) throw new Error('فشل التحقق السحابي من الشعبة النظرية أو المجموعة العملية بعد النقل');
+
+            // حدّث خط الأساس للمسارات التي ثُبتت مباشرة حتى لا يعتبرها الحفظ العام تعارضاً قديماً.
+            const studentBase = mapsById(lastSyncedCollections.students || []);
+            studentBase.set(sid, { ...sanitizeRecord(verifyStudent), id:sid });
+            lastSyncedCollections.students = Array.from(studentBase.values());
+            const attendanceBase = mapsById(lastSyncedCollections.attendances || []);
+            linkIds.forEach(id => {
+                const after = afterEnroll.get(id);
+                if (after) attendanceBase.set(String(id), JSON.parse(JSON.stringify(after)));
+                else attendanceBase.delete(String(id));
+            });
+            lastSyncedCollections.attendances = Array.from(attendanceBase.values());
+            await persistLocalState('student-group-transfer-confirmed-v39', true);
+            return {localSaved,cloudSaved:true,verified:true,linksChanged:[...linkIds].filter(id=>!sameRecord(beforeEnroll.get(id),afterEnroll.get(id))).length};
+        }
+
         // يحدد ارتباط الطالب بالمادة مع دعم النوع المركب نظري+عملي.
         function studentMatchesSubject(student, subject) {
             if (!student || !subject || subject.timetableActive === false || Number(student.level) !== Number(subject.level)) return false;
@@ -3393,11 +3530,13 @@
             if(!professor)return [];
             const wantedDay=arabicDayNameForDateISO(dateISO);
             const wantedGroup=normalizeGroupName(groupName,'');
-            return getProfessorScheduledLectures(professor,subject.level).filter(lecture=>
+            const historical=getStructuredScheduleForDate(dateISO);
+            return historical.lectures.filter(lecture=>
                 normalizeMatchText(lecture.dayName||'')===normalizeMatchText(wantedDay) &&
                 lectureMatchesSubjectForAttendance(lecture,subject,professor) &&
                 (!wantedGroup || lectureAttendanceGroup(lecture,subject)===wantedGroup)
-            ).sort((a,b)=>Number(a.startMinutes)-Number(b.startMinutes));
+            ).map(lecture=>({...lecture,_scheduleVersionId:String(historical.version?.id||''),_schedulePublishedAt:Number(historical.version?.publishedAt)||null,_scheduleHistorical:!historical.version?.current}))
+              .sort((a,b)=>Number(a.startMinutes)-Number(b.startMinutes));
         }
 
         function buildQuickAttendanceContext(subject, groupName, silent=false) {
@@ -3417,7 +3556,7 @@
                 ok:true,code:current?'current':'past',date:clock.dateISO,groupName,
                 sessionTime:formatMinutes24(lecture.startMinutes),sessionKey:attendanceSessionKey(formatMinutes24(lecture.startMinutes)),
                 lectureId:String(lecture.id||''),lecture,subjectId:String(subject.id),professorId:String(subject.professorId||''),
-                schedulePublishedAt:Number(getScheduleLink()?.createdAt)||null,
+                scheduleVersionId:String(lecture._scheduleVersionId||''),schedulePublishedAt:Number(lecture._schedulePublishedAt)||Number(getScheduleLink()?.createdAt)||null,
                 displayTime:lectureTimeRangeText(lecture)
             };
         }
@@ -3502,6 +3641,7 @@
                 source:sanitizeText(meta.source||'professor-panel',60),
                 lectureId:sanitizeText(meta.lectureId||'',120),
                 lectureGroup:sanitizeText(meta.groupName||'',80),
+                scheduleVersionId:sanitizeText(meta.scheduleVersionId||'',180),
                 schedulePublishedAt:Number(meta.schedulePublishedAt)||null,
                 scheduleVerified:meta.scheduleVerified===true,
                 manualOverride:meta.manualOverride===true
@@ -3539,7 +3679,7 @@
             const canonicalId=attendanceCanonicalId(studentId,subject.id,context.date,context.sessionTime);
             const duplicateIds=new Set(ordered.filter(r=>String(r.id)!==String(canonicalId)).map(r=>String(r.id)));
             const nextHours=Math.max(0,Number(hours)||0),nextExcused=nextHours>0&&Number(excused)===1?1:0;
-            const meta={professorId:subject.professorId,source,lectureId:context.lectureId,groupName:context.groupName,schedulePublishedAt:context.schedulePublishedAt,scheduleVerified:!!context.lectureId,manualOverride:!!context.manualOverride};
+            const meta={professorId:subject.professorId,source,lectureId:context.lectureId,groupName:context.groupName,scheduleVersionId:context.scheduleVersionId,schedulePublishedAt:context.schedulePublishedAt,scheduleVerified:context.scheduleVerified===true||!!context.lectureId,manualOverride:!!context.manualOverride};
             const now=Date.now();
             let record=state.attendances.find(a=>String(a.id)===String(canonicalId));
             const beforeHours=Number(previous?.hours)||0;
@@ -3596,7 +3736,7 @@
             const groupName=professorGroupNameForStudent(student,subject);
             const lectures=getScheduledAttendanceLectures(subject,groupName,date);
             const matched=lectures.find(l=>Number(l.startMinutes)===minutes)||null;
-            return {ok:true,date:String(date),sessionTime:normalized,groupName,lectureId:String(matched?.id||''),lecture:matched,schedulePublishedAt:matched?(Number(getScheduleLink()?.createdAt)||null):null,manualOverride:!matched,requiresConfirmation:!matched};
+            return {ok:true,date:String(date),sessionTime:normalized,groupName,lectureId:String(matched?.id||''),lecture:matched,scheduleVersionId:String(matched?._scheduleVersionId||''),schedulePublishedAt:matched?(Number(matched?._schedulePublishedAt)||null):null,manualOverride:!matched,requiresConfirmation:!matched,scheduleVerified:!!matched};
         }
 
         function syncManualAttendanceDefaults() {
@@ -3609,8 +3749,19 @@
             const lockedHours=getSubjectWeeklyHours(subject);
             const hoursInput=document.getElementById('profAbsentHours');
             if(hoursInput){hoursInput.value=lockedHours;hoursInput.readOnly=true;}
-            const context=buildQuickAttendanceContext(subject,professorGroupNameForStudent(student,subject),true);
-            if(timeInput)timeInput.value=context.ok?context.sessionTime:'';
+            const groupName=professorGroupNameForStudent(student,subject);
+            const date=String(dateInput?.value||getLocalDateISO());
+            const lectures=getScheduledAttendanceLectures(subject,groupName,date);
+            const clock=getBaghdadClock();
+            let lecture=null;
+            if(date===getLocalDateISO()){
+                const started=lectures.filter(l=>Number(l.startMinutes)<=clock.minutes);
+                lecture=started.find(l=>clock.minutes<Number(l.startMinutes)+(Number(l.durationMinutes)||60))||started[started.length-1]||null;
+            }else if(date<getLocalDateISO()){
+                lecture=lectures[lectures.length-1]||null;
+            }
+            if(timeInput)timeInput.value=lecture?formatMinutes24(lecture.startMinutes):'';
+            renderProfessorGroups(getStudentsForProfessor());
         }
 
         function persistAttendanceMutation(reason='attendance') {
@@ -3655,7 +3806,9 @@
         }
 
         function ensureActiveSubjectLinks(studentId = null) {
-            ensureStudentGroupingModel();
+            // عند تحديث طالب واحد لا نطبّع بقية الطلبة ولا نغير أي حقل في سجلاتهم.
+            // التطبيع الشامل يبقى فقط عند المزامنة العامة التي تستهدف جميع الطلبة.
+            if (!studentId) ensureStudentGroupingModel();
             const targetIds = studentId ? new Set([String(studentId)]) : new Set(state.students.map(st => String(st.id)));
             const validPairKeys = new Set();
             const existingActiveLinks = new Map();
@@ -4325,6 +4478,38 @@
             if (!url) return { opened: false, reason: 'invalid_number' };
             const popup = window.open(url, '_blank', 'noopener');
             return { opened: !!popup, reason: popup ? 'opened' : 'blocked', url };
+        }
+
+
+        // V39: حجز نافذة واتساب داخل نقرة المستخدم نفسها قبل أي await.
+        // بعض متصفحات الهاتف تمنع window.open إذا حدث بعد انتظار Firebase حتى لو كان سببه زر ضغطه المستخدم.
+        function reserveWhatsAppWindow() {
+            try {
+                const popup = window.open('about:blank','_blank');
+                if (!popup || popup.closed) return null;
+                try {
+                    popup.document.open();
+                    popup.document.write('<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>جار تجهيز واتساب</title></head><body style="font-family:Tahoma,Arial;padding:24px;text-align:center"><h3>جار تثبيت الغيابات...</h3><p>سيتم فتح واتساب تلقائياً بعد اكتمال الحفظ.</p></body></html>');
+                    popup.document.close();
+                } catch (e) {}
+                return popup;
+            } catch (e) { return null; }
+        }
+
+        function navigateReservedWhatsAppWindow(popup, url) {
+            if (!url) return false;
+            try {
+                if (popup && !popup.closed) {
+                    try { popup.opener = null; } catch (e) {}
+                    popup.location.href = url;
+                    return true;
+                }
+            } catch (e) {}
+            return false;
+        }
+
+        function closeReservedWhatsAppWindow(popup) {
+            try { if (popup && !popup.closed) popup.close(); } catch (e) {}
         }
 
         // ==============================================================
@@ -5069,23 +5254,84 @@
 
         async function moveStudentGroup(studentId, currentGroup, groupType, level) {
             if (!requireAppRole('admin')) return false;
-            const student = state.students.find(s => s.id === studentId);
-            if (!student) { alert('الطالب غير موجود'); return; }
-            ensureStudentGroupingModel();
+            const sid = String(studentId || '');
+            const student = state.students.find(st => String(st.id) === sid);
+            if (!student) { alert('الطالب غير موجود'); return false; }
             const oldTheory = studentTheoreticalGroup(student);
             const oldPractical = studentPracticalGroup(student);
-            const newTheory = normalizeGroupName(prompt(`نقل ${student.name} من الشعبة النظرية ${oldTheory} إلى:`, oldTheory) || '', '');
-            if (!newTheory || newTheory === oldTheory) return;
-            const historicalRecords = countHistoricalAttendanceRecords(studentId);
-            const keepPractical = oldPractical && confirm(`الطالب موجود حالياً في المجموعة العملية ${oldPractical}.\nموافق = الاحتفاظ بالمجموعة العملية بعد النقل.\nإلغاء = إزالة التوزيع العملي ليعاد توزيعه داخل الشعبة الجديدة.`);
-            student.theoreticalGroup = newTheory; student.group = newTheory; student.section = newTheory;
-            if (!keepPractical) student.practicalGroup = '';
-            student.groupType = student.practicalGroup ? 'نظري+عملي' : 'نظري';
-            const links = ensureActiveSubjectLinks(studentId);
-            recordAudit('نقل طالب بين الشعب النظرية', { studentId, student:student.name, from:{theoreticalGroup:oldTheory,practicalGroup:oldPractical},
-                to:{theoreticalGroup:newTheory,practicalGroup:student.practicalGroup}, historicalRecordsPreserved:historicalRecords, links });
-            const ok = await saveAll(); renderAll();
-            alert(ok ? `✅ تم نقل ${student.name} إلى الشعبة النظرية ${newTheory}.\n🗂️ الغيابات السابقة محفوظة بالكامل.` : '⚠️ تم النقل محلياً لكن تعذر الحفظ في السحابة.');
+            const availableTheories = [...new Set((state.students || [])
+                .filter(st => String(st.id)!==sid && Number(st.level)===Number(level))
+                .map(studentTheoreticalGroup).filter(g=>g && g!=='غير محدد'))].sort((a,b)=>a.localeCompare(b,'ar'));
+            const hint = availableTheories.length ? `\n\nالشعب المتاحة: ${availableTheories.join('، ')}` : '';
+            const newTheory = normalizeGroupName(prompt(`نقل ${student.name} من الشعبة النظرية ${oldTheory} إلى:${hint}`, oldTheory) || '', '');
+            if (!newTheory || newTheory === oldTheory) return false;
+
+            const loads = getPracticalGroupLoadForTheory(level,newTheory,sid);
+            let newPractical = loads[0]?.name || '';
+            if (!newPractical) {
+                newPractical = normalizeGroupName(prompt(`لا توجد مجموعة عملية معرفة داخل الشعبة ${newTheory}.\nأدخل اسم المجموعة العملية التي سينقل إليها الطالب أيضاً:`, `${newTheory}1`) || '', '');
+                if (!newPractical) {
+                    alert('أُلغي النقل لأن الطالب يجب أن ينتقل إلى شعبة نظرية ومجموعة عملية معاً.');
+                    return false;
+                }
+            }
+            const loadText = loads.length ? `\nتم اختيار ${newPractical} آلياً لأنها الأقل عدداً داخل الشعبة الجديدة (${loads[0].count} طالب قبل النقل).` : `\nسيتم إنشاء/اعتماد المجموعة العملية ${newPractical} للطالب.`;
+            if (!confirm(`تأكيد نقل الطالب «${student.name}»؟\n\nالشعبة النظرية: ${oldTheory} ← ${newTheory}\nالمجموعة العملية: ${oldPractical||'غير موزع'} ← ${newPractical}${loadText}\n\nستبقى بيانات الطالب الشخصية وجميع سجلات غيابه التاريخية كما هي، وسيعاد فقط ربطه بمواد الشعبة والمجموعة الجديدتين.`)) return false;
+
+            const beforeStudentsSnapshot = JSON.parse(JSON.stringify(state.students || []));
+            const beforeAttendancesSnapshot = JSON.parse(JSON.stringify(state.attendances || []));
+            const beforeLinkedRecords = beforeAttendancesSnapshot.filter(att => String(att.studentId || '') === sid);
+            const safetyBefore = studentTransferSafetySignature(sid);
+            const historicalRecords = countHistoricalAttendanceRecords(sid);
+
+            try {
+                student.theoreticalGroup = newTheory;
+                student.group = newTheory;
+                student.section = newTheory;
+                student.practicalGroup = newPractical;
+                student.groupType = 'نظري+عملي';
+                student.groupTransferUpdatedAt = Date.now();
+                student.groupTransferUpdatedBy = String(state.currentUser?.id || 'admin');
+                const links = ensureActiveSubjectLinks(sid);
+
+                // فحص عزل صارم: لا نسمح لعملية نقل طالب واحد بتغيير طالب أو غياب تاريخي آخر.
+                const safetyAfter = studentTransferSafetySignature(sid);
+                if (safetyBefore.otherStudents !== safetyAfter.otherStudents || safetyBefore.otherAttendances !== safetyAfter.otherAttendances || safetyBefore.historical !== safetyAfter.historical) {
+                    throw new Error('اكتشف فحص السلامة تغيراً خارج بيانات الربط الخاصة بالطالب المنقول');
+                }
+                const currentStudent = state.students.find(st=>String(st.id)===sid);
+                if (!currentStudent || studentTheoreticalGroup(currentStudent)!==newTheory || studentPracticalGroup(currentStudent)!==newPractical) {
+                    throw new Error('لم تثبت الشعبة أو المجموعة العملية محلياً بعد النقل');
+                }
+
+                recordAudit('نقل طالب كامل بين الشعب النظرية', {
+                    studentId:sid,student:student.name,
+                    from:{theoreticalGroup:oldTheory,practicalGroup:oldPractical},
+                    to:{theoreticalGroup:newTheory,practicalGroup:newPractical},
+                    practicalAssignmentMode:loads.length?'least-loaded-target-group':'manual-target-group',
+                    historicalRecordsPreserved:historicalRecords,
+                    links
+                });
+
+                const saved = await persistStudentTransferCritical(student,beforeLinkedRecords);
+                // بقية السجل (audit) يرفع بالطابور العام، لكن نجاح النقل لا يعتمد على تعارضات سجلات غير مرتبطة به.
+                pushToFirebase({silent:true}).catch(err=>{console.warn('تعذر رفع سجل التدقيق بعد النقل:',err);scheduleCloudRetry();});
+                renderAll();
+                if (saved.cloudSaved && saved.verified) {
+                    alert(`✅ تم نقل ${student.name} بالكامل.\n📖 الشعبة النظرية: ${newTheory}\n🔬 المجموعة العملية: ${newPractical}\n🗂️ حُفظت ${historicalRecords} سجلات تاريخية دون تعديل.\n☁️ تم التحقق من الحفظ السحابي.\nلم تتأثر بيانات أي طالب آخر.`);
+                } else {
+                    alert(`🟠 تم نقل ${student.name} محلياً إلى ${newTheory} / ${newPractical} مع حفظ كل بياناته وغياباته.\nتعذر التحقق السحابي المباشر الآن؛ ستعاد المزامنة تلقائياً عند استقرار الاتصال، ولم تتأثر بيانات بقية الطلبة.`);
+                }
+                return true;
+            } catch(err) {
+                console.error('فشل نقل الطالب:',err);
+                state.students = beforeStudentsSnapshot;
+                state.attendances = beforeAttendancesSnapshot;
+                await persistLocalState('student-transfer-rollback-v39',true).catch(()=>false);
+                renderAll();
+                alert('⛔ أوقف النظام عملية النقل واستعاد الحالة السابقة بالكامل لحماية البيانات.\nالسبب: '+(err.message||err));
+                return false;
+            }
         }
 
         function createTheoreticalGroup(level) {
@@ -6186,6 +6432,246 @@
             return (state.scheduleLinks||[]).find(x=>x.id==='weekly_timetable') || null;
         }
 
+        function scheduleSnapshotSignature(snapshot) {
+            const lectures=Array.isArray(snapshot?.structuredSchedule?.lectures)?snapshot.structuredSchedule.lectures:[];
+            const compact=lectures.map(l=>({
+                id:String(l.id||''),professorId:String(l.professorId||''),subjectId:String(l.subjectId||''),
+                subjectName:String(l.subjectName||''),type:String(l.type||''),dayName:String(l.dayName||''),
+                dayIndex:Number(l.dayIndex)||0,startMinutes:Number(l.startMinutes)||0,durationMinutes:Number(l.durationMinutes)||60,
+                theoreticalGroup:String(l.theoreticalGroup||''),practicalGroup:String(l.practicalGroup||''),targetGroup:String(l.targetGroup||''),hall:String(l.hall||''),
+                stageName:String(l.stageName||''),stageIndex:Number(l.stageIndex)||0
+            })).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+            return simpleHash(JSON.stringify(compact));
+        }
+
+        function scheduleEffectiveDateFromMs(ms) {
+            const n=Number(ms)||0;
+            return n>0?getLocalDateISO(new Date(n)):getLocalDateISO();
+        }
+
+        function getScheduleHistoryEntries() {
+            return (state.scheduleLinks||[]).filter(x=>x&&x.kind==='scheduleHistory'&&x.snapshot?.structuredSchedule&&isValidAttendanceDate(x.effectiveFromDate))
+                .sort((a,b)=>(Number(a.effectiveFromMs)||Number(a.publishedAt)||Number(a.capturedAt)||0)-(Number(b.effectiveFromMs)||Number(b.publishedAt)||Number(b.capturedAt)||0));
+        }
+
+        function getScheduleHistoryGaps() {
+            return (state.scheduleLinks||[]).filter(x=>x&&x.kind==='scheduleHistoryGap'&&x.deletedVersionId&&isValidAttendanceDate(x.effectiveFromDate))
+                .sort((a,b)=>(Number(a.effectiveFromMs)||0)-(Number(b.effectiveFromMs)||0));
+        }
+
+        function compactScheduleHistorySnapshot(snapshot) {
+            const lectures=Array.isArray(snapshot?.structuredSchedule?.lectures)?snapshot.structuredSchedule.lectures:[];
+            return {structuredSchedule:{lectures:lectures.map(l=>({
+                id:String(l.id||''),professorId:String(l.professorId||''),subjectId:String(l.subjectId||''),subjectName:String(l.subjectName||''),
+                type:String(l.type||''),dayName:String(l.dayName||''),dayIndex:Number(l.dayIndex)||0,startMinutes:Number(l.startMinutes)||0,
+                durationMinutes:Number(l.durationMinutes)||60,theoreticalGroup:String(l.theoreticalGroup||''),practicalGroup:String(l.practicalGroup||''),
+                targetGroup:String(l.targetGroup||''),hall:String(l.hall||''),stageName:String(l.stageName||''),stageIndex:Number(l.stageIndex)||0
+            }))}};
+        }
+
+        function scheduleHistoryRecordBytes(record) {
+            try{return new Blob([JSON.stringify(record||{})]).size;}catch(err){return JSON.stringify(record||{}).length*2;}
+        }
+
+        function formatStorageBytes(bytes) {
+            const n=Math.max(0,Number(bytes)||0);
+            if(n<1024)return `${n} B`;
+            if(n<1024*1024)return `${(n/1024).toFixed(1)} KB`;
+            return `${(n/(1024*1024)).toFixed(2)} MB`;
+        }
+
+        function getScheduleVersionForDate(dateISO) {
+            if(!isValidAttendanceDate(dateISO))return null;
+            const today=getLocalDateISO();
+            const current=getScheduleLink();
+            if(dateISO===today && current?.snapshot?.structuredSchedule){
+                return {
+                    id:String(current.historyVersionId||`schedule_current__${scheduleSnapshotSignature(current.snapshot)}`),
+                    kind:'currentSchedule',snapshot:current.snapshot,source:current.source||'الجدول الحالي',
+                    effectiveFromDate:scheduleEffectiveDateFromMs(current.createdAt),effectiveFromMs:Number(current.createdAt)||0,
+                    publishedAt:Number(current.createdAt)||0,signature:scheduleSnapshotSignature(current.snapshot),current:true
+                };
+            }
+            // التاريخ يختار آخر حدث زمني: نسخة محفوظة أو علامة حذف. علامة الحذف تعني لا تخمّن بجدول أقدم.
+            const timeline=[...getScheduleHistoryEntries(),...getScheduleHistoryGaps()]
+                .filter(v=>String(v.effectiveFromDate)<=String(dateISO))
+                .sort((a,b)=>(Number(a.effectiveFromMs)||Number(a.publishedAt)||0)-(Number(b.effectiveFromMs)||Number(b.publishedAt)||0));
+            if(!timeline.length)return null;
+            const selected=timeline[timeline.length-1];
+            return selected.kind==='scheduleHistoryGap'?null:selected;
+        }
+
+        function getStructuredScheduleForDate(dateISO) {
+            const version=getScheduleVersionForDate(dateISO);
+            return {version,lectures:Array.isArray(version?.snapshot?.structuredSchedule?.lectures)?version.snapshot.structuredSchedule.lectures:[]};
+        }
+
+        function getRecordedSessionForGroupDate(subject,groupName,dateISO) {
+            if(!subject||!isValidAttendanceDate(dateISO))return null;
+            const records=getLogicalAttendanceRecords(state.attendances).filter(att=>
+                String(att.subjectId)===String(subject.id) && String(att.date||'')===String(dateISO) &&
+                attendanceRecordSessionKey(att)!=='legacy' && attendanceRecordMatchesGroup(att,subject,groupName)
+            );
+            if(!records.length)return null;
+            const sessions=new Map();
+            records.forEach(att=>{
+                const t=normalizeSessionTime(att.sessionTime);
+                if(!t)return;
+                const key=attendanceSessionKey(t);
+                const cur=sessions.get(key)||{records:[],sessionTime:t,revision:0};
+                cur.records.push(att);cur.revision=Math.max(cur.revision,attendanceRecordRevision(att));sessions.set(key,cur);
+            });
+            const selected=[...sessions.values()].sort((a,b)=>String(b.sessionTime).localeCompare(String(a.sessionTime))||b.revision-a.revision)[0];
+            if(!selected)return null;
+            const first=selected.records[0]||{};
+            return {
+                ok:true,code:'recorded-history',date:dateISO,sessionTime:selected.sessionTime,sessionKey:attendanceSessionKey(selected.sessionTime),
+                groupName:groupName||'',subjectId:String(subject.id),professorId:String(subject.professorId||''),
+                lectureId:String(first.lectureId||''),scheduleVersionId:String(first.scheduleVersionId||''),
+                schedulePublishedAt:Number(first.schedulePublishedAt)||null,displayTime:`${dateISO} · ${selected.sessionTime}`,
+                fromRecordedAttendance:true,recordedCount:selected.records.length,scheduleVerified:!!first.lectureId
+            };
+        }
+
+        async function persistScheduleHistoryRecord(record) {
+            if(!record?.id)return false;
+            if(!(state.scheduleLinks||[]).some(x=>String(x.id)===String(record.id))) state.scheduleLinks.push(record);
+            scheduleLocalPersistence(0);
+            if(!database||!cloudInitialReadComplete)return false;
+            try{
+                const ref=database.ref(`/scheduleLinks/${firebaseRecordKey(record.id)}`);
+                const result=await withTimeout(ref.transaction(current=>current||record,undefined,false),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة حفظ نسخة الجدول التاريخية');
+                const saved=result.snapshot?.val()||record;
+                const base=mapsById(lastSyncedCollections.scheduleLinks||[]);
+                base.set(String(record.id),sanitizeRecord(saved));
+                lastSyncedCollections.scheduleLinks=Array.from(base.values());
+                return true;
+            }catch(err){
+                console.warn('تعذر حفظ نسخة الجدول التاريخية سحابياً؛ بقيت محفوظة محلياً وستعاد المحاولة:',err);
+                scheduleCloudRetry();
+                return false;
+            }
+        }
+
+        function archiveScheduleLinkVersion(link, source='الجدول المنشور') {
+            if(!link?.snapshot?.structuredSchedule?.lectures?.length)return null;
+            const signature=scheduleSnapshotSignature(link.snapshot);
+            const histories=getScheduleHistoryEntries();
+            const latest=histories[histories.length-1]||null;
+            // لا نحفظ نسخة جديدة إذا أعيد نشر نفس الجدول دون أي تغيير فعلي.
+            if(latest&&String(latest.signature||'')===String(signature)){
+                link.historyVersionId=latest.id;
+                renderScheduleHistoryStatus();
+                return latest;
+            }
+            const publishedAt=Math.max(1,Number(link.createdAt)||Date.now());
+            const id=`schedule_history__${publishedAt}_${signature}`;
+            // إذا حذف رئيس القسم هذه النسخة عمداً، لا يعيدها مستمع Firebase الحي تلقائياً.
+            const deletedByGap=getScheduleHistoryGaps().some(g=>String(g.deletedVersionId)===String(id));
+            if(deletedByGap){link.historyVersionId='';renderScheduleHistoryStatus();return null;}
+            let existing=(state.scheduleLinks||[]).find(x=>String(x.id)===id);
+            if(existing){link.historyVersionId=existing.id;return existing;}
+            const record={
+                id,kind:'scheduleHistory',immutable:true,compact:true,signature,
+                source:sanitizeText(source||link.source||'الجدول المنشور',160),
+                publishedAt,effectiveFromMs:publishedAt,effectiveFromDate:scheduleEffectiveDateFromMs(publishedAt),
+                capturedAt:Date.now(),createdAt:Date.now(),snapshot:compactScheduleHistorySnapshot(link.snapshot)
+            };
+            state.scheduleLinks.push(record);
+            link.historyVersionId=id;
+            persistScheduleHistoryRecord(record).catch(console.error);
+            renderScheduleHistoryStatus();
+            return record;
+        }
+
+        function scheduleHistoryReferenceCount(versionId) {
+            return getLogicalAttendanceRecords(state.attendances).filter(a=>String(a.scheduleVersionId||'')===String(versionId||'')).length;
+        }
+
+        function renderScheduleHistoryDeleteInfo() {
+            const select=document.getElementById('scheduleHistoryDeleteSelect');
+            const info=document.getElementById('scheduleHistoryDeleteInfo');
+            if(!select||!info)return;
+            const entry=getScheduleHistoryEntries().find(x=>String(x.id)===String(select.value));
+            if(!entry){info.textContent='اختر نسخة تاريخية لعرض تفاصيلها.';return;}
+            const entries=getScheduleHistoryEntries();
+            const idx=entries.findIndex(x=>String(x.id)===String(entry.id));
+            const next=idx>=0?entries[idx+1]:null;
+            const refs=scheduleHistoryReferenceCount(entry.id);
+            info.textContent=`الفترة: من ${entry.effectiveFromDate}${next?' إلى ما قبل '+next.effectiveFromDate:' حتى النسخة التالية/الحالية'} | الحجم التقريبي: ${formatStorageBytes(scheduleHistoryRecordBytes(entry))} | سجلات حضور مرتبطة: ${refs}.`;
+        }
+
+        function renderScheduleHistoryManager() {
+            const select=document.getElementById('scheduleHistoryDeleteSelect');
+            if(!select)return;
+            const previous=select.value;
+            const entries=getScheduleHistoryEntries();
+            select.innerHTML=entries.length?entries.map((e,i)=>`<option value="${escapeHtml(e.id)}">نسخة ${i+1} — ${escapeHtml(e.effectiveFromDate)} — ${formatStorageBytes(scheduleHistoryRecordBytes(e))}</option>`).join(''):'<option value="">لا توجد نسخ محفوظة</option>';
+            if(previous&&entries.some(e=>String(e.id)===String(previous)))select.value=previous;
+            renderScheduleHistoryDeleteInfo();
+        }
+
+        async function deleteSelectedScheduleHistoryVersion() {
+            if(!requireAppRole('admin'))return false;
+            const select=document.getElementById('scheduleHistoryDeleteSelect');
+            const id=String(select?.value||'');
+            const entries=getScheduleHistoryEntries();
+            const entry=entries.find(x=>String(x.id)===id);
+            if(!entry){alert('لا توجد نسخة تاريخية محددة للحذف.');return false;}
+            const idx=entries.findIndex(x=>String(x.id)===id);
+            const next=idx>=0?entries[idx+1]:null;
+            const refs=scheduleHistoryReferenceCount(id);
+            const bytes=scheduleHistoryRecordBytes(entry);
+            const period=`من ${entry.effectiveFromDate}${next?' إلى ما قبل '+next.effectiveFromDate:' حتى النسخة التالية/الحالية'}`;
+            const warning=`حذف نسخة الجدول التاريخية؟
+
+الفترة: ${period}
+الحجم التقريبي: ${formatStorageBytes(bytes)}
+سجلات حضور مرتبطة بهذه النسخة: ${refs}
+
+لن تُحذف أو تتغير أي غيابات أو بيانات طلاب. سيحتفظ النظام بعلامة حذف صغيرة لهذه الفترة حتى لا يستخدم جدولاً أقدم بالخطأ. عند الرجوع لهذه الفترة سيعتمد فقط على جلسات الحضور المثبتة، وإلا سيعرض أن المعلومات التاريخية غير كافية.`;
+            if(!confirm(warning))return false;
+            const now=Date.now();
+            const gap={
+                id:`schedule_history_gap__${firebaseSafeKey(id)}`,kind:'scheduleHistoryGap',deletedVersionId:id,
+                effectiveFromDate:entry.effectiveFromDate,effectiveFromMs:Number(entry.effectiveFromMs)||Number(entry.publishedAt)||now,
+                nextEffectiveFromDate:next?.effectiveFromDate||'',deletedAt:now,deletedById:String(state.currentUser?.id||'admin'),
+                source:'حذف يدوي لتفريغ ذاكرة أرشيف الجدول'
+            };
+            if(database){
+                if(!cloudInitialReadComplete){alert('انتظر اكتمال المزامنة السحابية قبل حذف نسخة تاريخية حتى لا تعود من جهاز آخر.');return false;}
+                try{
+                    const updates={};
+                    updates[`scheduleLinks/${firebaseRecordKey(id)}`]=null;
+                    updates[`scheduleLinks/${firebaseRecordKey(gap.id)}`]=gap;
+                    await withTimeout(database.ref('/').update(updates),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة حذف نسخة الجدول');
+                    const verify=await withTimeout(database.ref(`/scheduleLinks/${firebaseRecordKey(id)}`).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق من حذف نسخة الجدول');
+                    if(verify.exists())throw new Error('بقيت النسخة موجودة في السحابة بعد محاولة الحذف');
+                }catch(err){console.error(err);alert('❌ تعذر حذف النسخة سحابياً، لذلك لم تُحذف محلياً. حاول بعد استقرار الاتصال.');return false;}
+            }
+            state.scheduleLinks=(state.scheduleLinks||[]).filter(x=>String(x.id)!==id&&String(x.id)!==String(gap.id));
+            state.scheduleLinks.push(gap);
+            const base=mapsById(lastSyncedCollections.scheduleLinks||[]);base.delete(id);base.set(String(gap.id),sanitizeRecord(gap));lastSyncedCollections.scheduleLinks=Array.from(base.values());
+            recordAudit('حذف نسخة تاريخية للجدول لتفريغ الذاكرة',{deletedVersionId:id,effectiveFromDate:entry.effectiveFromDate,approxBytesFreed:bytes,attendanceReferencesPreserved:refs,gapId:gap.id});
+            await persistLocalState('delete-schedule-history-v42',true);
+            renderScheduleHistoryStatus();
+            alert(`✅ تم حذف النسخة التاريخية وتحرير نحو ${formatStorageBytes(bytes)} من بيانات الأرشيف.
+لم يتم حذف أي سجل حضور أو غياب.`);
+            return true;
+        }
+
+        function renderScheduleHistoryStatus() {
+            const el=document.getElementById('scheduleHistoryStatus');
+            if(!el)return;
+            const entries=getScheduleHistoryEntries();
+            const gaps=getScheduleHistoryGaps();
+            const totalBytes=entries.reduce((sum,e)=>sum+scheduleHistoryRecordBytes(e),0);
+            if(!entries.length){el.textContent=`🕘 أرشيف الجدول: لا توجد نسخة تاريخية محفوظة حالياً${gaps.length?' — توجد '+gaps.length+' فترة محذوفة محمية من التخمين الخاطئ.':''}`;renderScheduleHistoryManager();return;}
+            const first=entries[0],last=entries[entries.length-1];
+            el.textContent=`🕘 أرشيف الجدول: ${entries.length} نسخة مضغوطة — الحجم التقريبي ${formatStorageBytes(totalBytes)} — من ${first.effectiveFromDate} إلى ${last.effectiveFromDate}${gaps.length?' — فترات محذوفة محمية: '+gaps.length:''}.`;
+            renderScheduleHistoryManager();
+        }
+
         function normalizeMatchText(value) {
             return String(value||'').toLowerCase().replace(/[أإآ]/g,'ا').replace(/ة/g,'ه').replace(/ى/g,'ي').replace(/[()\[\]{}\-_]/g,' ').replace(/\b(نظري|عملي|theoretical|practical)\b/gi,' ').replace(/\s+/g,' ').trim();
         }
@@ -6392,6 +6878,7 @@
             const link=buildLiveWeeklyTimetable(data);
             liveWeeklyTimetable=link;
             if(link?.snapshot){
+                archiveScheduleLinkVersion(link,'Firebase المباشر');
                 const cachedLink={
                     id:'weekly_timetable',
                     source:'Firebase المباشر — نسخة محفوظة في المتصفح',
@@ -6625,8 +7112,10 @@
             if (!requireAppRole('admin')) return false;
             const snapshot=compactWeeklyScheduleData(data); const analysis=analyzeWeeklyScheduleLink(snapshot);
             state.scheduleLinks=(state.scheduleLinks||[]).filter(x=>x.id!=='weekly_timetable');
-            state.scheduleLinks.push({id:'weekly_timetable',source:sanitizeText(source,160),linkedAt:new Date().toISOString(),createdAt:Date.now(),snapshot,analysis});
-            recordAudit('ربط برنامج الجدول الأسبوعي',{source,analysis});
+            const currentLink={id:'weekly_timetable',source:sanitizeText(source,160),linkedAt:new Date().toISOString(),createdAt:Date.now(),snapshot,analysis};
+            state.scheduleLinks.push(currentLink);
+            archiveScheduleLinkVersion(currentLink,source);
+            recordAudit('ربط برنامج الجدول الأسبوعي',{source,analysis,scheduleHistoryId:currentLink.historyVersionId||''});
             await saveAll(); renderWeeklyScheduleLinkStatus();
             const reminderPublished = snapshot.structuredSchedule ? await publishLectureReminderSchedule(false) : false;
             alert(`✅ تم ربط بيانات الجدول الأسبوعي بأمان.\nالأساتذة المطابقون: ${analysis.matchedProfessors}/${analysis.teacherTotal}\nالمواد المطابقة: ${analysis.matchedSubjects}/${analysis.subjectTotal}\nبيانات أوقات التذكير: ${snapshot.structuredSchedule ? (reminderPublished?'تمت مزامنتها':'موجودة لكن تعذر رفعها') : 'غير موجودة — أعد إنشاء الجدول بالنسخة الجديدة'}\nلم يتم تغيير سجلات الغياب.`);
@@ -6651,8 +7140,9 @@
 
         function renderWeeklyScheduleLinkStatus() {
             const el=document.getElementById('weeklyScheduleLinkStatus'); if(!el)return;
-            const link=getScheduleLink(); if(!link){el.textContent='☁️ لا يوجد جدول منشور في Firebase بعد. سيظهر تلقائياً فور نشره من برنامج الجدول الأسبوعي.';return;}
+            const link=getScheduleLink(); if(!link){el.textContent='☁️ لا يوجد جدول منشور في Firebase بعد. سيظهر تلقائياً فور نشره من برنامج الجدول الأسبوعي.';renderScheduleHistoryStatus();return;}
             const a=link.analysis||{}; const snap=link.snapshot||{};
+            renderScheduleHistoryStatus();
             el.textContent=`${link.live?'☁️ مزامنة مباشرة نشطة':'✅ ربط احتياطي'} — ${link.source||''}\nآخر نشر/ربط: ${link.linkedAt?new Date(link.linkedAt).toLocaleString('ar-IQ'):''}\nالمراحل: ${(snap.stages||[]).length} | الأساتذة المطابقون: ${a.matchedProfessors||0}/${a.teacherTotal||0} | المواد المطابقة: ${a.matchedSubjects||0}/${a.subjectTotal||0} | محاضرات منظمة: ${snap.structuredSchedule?.lectures?.length||0}`;
         }
 
@@ -6959,6 +7449,40 @@
             renderProfessor({preserveView:false});
         }
 
+        function onProfessorAttendanceDateChanged() {
+            if(state.currentUser?.role!=='professor')return;
+            const dateInput=document.getElementById('profAbsentDate');
+            const timeInput=document.getElementById('profSessionTime');
+            const today=getLocalDateISO();
+            if(dateInput){
+                dateInput.max=today;
+                if(!dateInput.value)dateInput.value=today;
+                if(dateInput.value>today){
+                    dateInput.value=today;
+                    showAttendanceToast('لا يمكن اختيار تاريخ مستقبلي.','warning');
+                }
+            }
+            if(timeInput)timeInput.value='';
+            const savedView=captureProfessorViewState();
+            renderProfessorGroups(getStudentsForProfessor());
+            renderProfessorAttendance(getProfessorSubject()?.id);
+            renderProfessorSubmissionStatus(getProfessorSubject());
+            restoreProfessorViewState(savedView,'');
+        }
+
+        function onProfessorAttendanceTimeChanged() {
+            if(state.currentUser?.role!=='professor')return;
+            const savedView=captureProfessorViewState();
+            renderProfessorGroups(getStudentsForProfessor());
+            restoreProfessorViewState(savedView,'');
+        }
+
+        function getProfessorAttendanceWorkDate() {
+            const today=getLocalDateISO();
+            const value=String(document.getElementById('profAbsentDate')?.value||today);
+            return isValidAttendanceDate(value)&&value<=today?value:today;
+        }
+
         function getSubjectOperationalAttendanceRecords(subjectId) {
             // البصمة تعتمد فقط على الحالة النهائية المنطقية لكل محاضرة، لا على نسخ مكررة/متجاوزة تقنية.
             return getLogicalAttendanceRecords(state.attendances)
@@ -7065,9 +7589,10 @@
             const latestCompleted=getLatestCompletedSubmission(subject.id,professorId);
             const workflow=getAttendanceWorkflowState(subject.id,professorId,false);
             if(!latestCompleted)return {code:'not-sent',label:'لم يرسل الغيابات بعد',canReopen:false,workflow,professor:prof};
-            if(workflow.locked===false){
-                const adminOpen=workflow.mode==='editing_after_admin_reopen';
-                return {code:adminOpen?'admin-open':'open',label:adminOpen?'مفتوحة بقرار رئيس القسم':'مفتوحة للتعديل',canReopen:false,workflow,professor:prof,latest:latestCompleted};
+            const durableAdminOpen=isAdminReopenStillActive(subject,professorId);
+            if(durableAdminOpen || workflow.locked===false){
+                const adminOpen=durableAdminOpen || workflow.mode==='editing_after_admin_reopen';
+                return {code:adminOpen?'admin-open':'open',label:adminOpen?'مفتوحة بقرار رئيس القسم':'مفتوحة للتعديل',canReopen:false,workflow,professor:prof,latest:latestCompleted,adminOpen};
             }
             return {code:'locked',label:'مقفلة بعد الإرسال',canReopen:true,workflow,professor:prof,latest:latestCompleted};
         }
@@ -7081,8 +7606,8 @@
             if(!professor){alert('لا يمكن فتح الغيابات لأن المادة غير مرتبطة بأستاذ.');return false;}
             const status=getAdminAttendanceWorkflowStatus(subject);
             if(!status.latest){alert(`الأستاذ «${professor.name}» لم يرسل غيابات مادة «${subject.name}» بعد، لذلك لا يوجد إرسال مقفل لإعادة فتحه.`);return false;}
-            if(status.workflow?.locked===false){
-                alert(status.workflow?.mode==='editing_after_admin_reopen'?'✅ الغيابات مفتوحة بالفعل بقرار رئيس القسم.':'✅ الغيابات مفتوحة بالفعل للتعديل لدى الأستاذ.');
+            if(status.code==='admin-open'||status.workflow?.locked===false){
+                alert(status.code==='admin-open'||status.workflow?.mode==='editing_after_admin_reopen'?'✅ الغيابات مفتوحة بالفعل بقرار رئيس القسم.':'✅ الغيابات مفتوحة بالفعل للتعديل لدى الأستاذ.');
                 return true;
             }
             if(!confirm(`إعادة فتح غيابات مادة «${subject.name}» للأستاذ «${professor.name}»؟
@@ -7166,9 +7691,46 @@
                 .sort((a,b)=>(Number(b.createdAt)||0)-(Number(a.createdAt)||0))[0]||null;
         }
 
+        // V40: الفتح الإداري صلاحية مستمرة للمادة، وليس إذناً لإجراء واحد.
+        // يظل فعالاً مهما سجّل الأستاذ من حضور/غياب، ولا ينتهي إلا بإرسال جديد لاحق لوقت الفتح.
+        function getLatestAdminReopenEvidence(subjectId, professorId) {
+            const workflow=getAttendanceWorkflowState(subjectId,professorId,false);
+            let reopenedAt=Number(workflow?.adminReopenedAt)||0;
+            let reopenedFromSubmissionId=String(workflow?.reopenedFromSubmissionId||'');
+            let source=reopenedAt||reopenedFromSubmissionId?'workflow':'';
+            (state.auditLogs||[]).forEach(log=>{
+                const d=log?.detailsData||{};
+                if(String(d.subjectId||'')!==String(subjectId))return;
+                if(String(d.professorId||'')!==String(professorId))return;
+                if(!String(log?.action||'').includes('إعادة فتح غيابات أستاذ بقرار رئيس القسم'))return;
+                const at=Number(log?.createdAt)||0;
+                if(at>=reopenedAt){
+                    reopenedAt=at;
+                    reopenedFromSubmissionId=String(d.reopenedFromSubmissionId||reopenedFromSubmissionId||'');
+                    source='audit';
+                }
+            });
+            return {reopenedAt,reopenedFromSubmissionId,source,workflow};
+        }
+
+        function isAdminReopenStillActive(subject, professorId) {
+            if(!subject||!professorId)return false;
+            const latestCompleted=getLatestCompletedSubmission(subject.id,professorId);
+            const evidence=getLatestAdminReopenEvidence(subject.id,professorId);
+            if(!latestCompleted)return !!evidence.reopenedAt;
+            // الفتح الإداري يبقى سارياً ما دام آخر إرسال هو نفسه الذي فتحه رئيس القسم.
+            // عدد تعديلات الحضور والغياب لا يستهلك هذه الصلاحية.
+            if(evidence.reopenedFromSubmissionId){
+                return String(latestCompleted.id)===String(evidence.reopenedFromSubmissionId);
+            }
+            return !!evidence.reopenedAt && evidence.reopenedAt>(Number(latestCompleted.createdAt)||0);
+        }
+
         function isProfessorSubjectLockedAfterSubmission(subject) {
             if(!subject||state.currentUser?.role!=='professor')return false;
-            const workflow=getAttendanceWorkflowState(subject.id,state.currentUser.id,false);
+            const professorId=String(state.currentUser.id||'');
+            if(isAdminReopenStillActive(subject,professorId))return false;
+            const workflow=getAttendanceWorkflowState(subject.id,professorId,false);
             return !!workflow.locked;
         }
 
@@ -7188,9 +7750,9 @@
             if(!prof)return {code:'unassigned',label:'المادة بلا أستاذ',cls:'submission-unassigned'};
             const workflow=getAttendanceWorkflowState(subject.id,prof.id,false);
             const latestCompleted=getLatestCompletedSubmission(subject.id,prof.id);
-            if(workflow.locked===false && (workflow.mode==='editing_after_undo'||workflow.mode==='editing_after_admin_reopen')){
-                const adminOpen=workflow.mode==='editing_after_admin_reopen';
-                return {code:'reopened',label:adminOpen?'🔓 أعاد رئيس القسم فتح المادة للتعديل — عدّل بحرية ثم أعد الإرسال':'المادة مفتوحة للتعديل بعد التراجع — عدّل بحرية ثم أعد الإرسال',cls:'submission-dirty',latest:latestCompleted,workflow,adminOpen};
+            const adminOpen=isAdminReopenStillActive(subject,prof.id);
+            if(adminOpen || (workflow.locked===false && (workflow.mode==='editing_after_undo'||workflow.mode==='editing_after_admin_reopen'))){
+                return {code:'reopened',label:adminOpen?'🔓 أعاد رئيس القسم فتح المادة للتعديل — جميع المحاضرات مفتوحة حتى تعيد الإرسال':'المادة مفتوحة للتعديل بعد التراجع — عدّل بحرية ثم أعد الإرسال',cls:'submission-dirty',latest:latestCompleted,workflow,adminOpen};
             }
             if(!latestCompleted)return {code:'pending',label:'لم يؤكد الإكمال',cls:'submission-pending',workflow};
             const current=getSubjectAttendanceFingerprint(subject.id);
@@ -7234,7 +7796,7 @@
             if(note){
                 if(locked&&!undoUsed)note.textContent='🔒 تم إغلاق الغيابات بعد الإرسال. إذا وجدت خطأ فلديك فرصة تراجع واحدة فقط لفتح المادة وتعديلها ثم إعادة الإرسال.';
                 else if(locked&&undoUsed)note.textContent='🔒 تم إغلاق الغيابات بعد الإرسال، وقد استُخدمت فرصة التراجع الوحيدة لهذه المادة.';
-                else if(st.code==='reopened'&&st.workflow?.mode==='editing_after_admin_reopen')note.textContent='🔓 أعاد رئيس القسم فتح الغيابات للتعديل. يمكنك إجراء جميع التعديلات المطلوبة، وستبقى المادة مفتوحة حتى تضغط «إعادة إرسال الغيابات بعد التعديل».';
+                else if(st.code==='reopened'&&st.adminOpen)note.textContent='🔓 أعاد رئيس القسم فتح الغيابات للتعديل. جميع محاضرات المادة، الحالية والسابقة المتاحة تاريخياً، تبقى مفتوحة حتى تضغط «إعادة إرسال الغيابات بعد التعديل».';
                 else if(st.code==='reopened')note.textContent='↩️ تم استخدام فرصة التراجع الوحيدة. عدّل الغيابات المطلوبة ثم أعد التأكيد والإرسال.';
                 else note.textContent=whatsappConfigured?'⚠️ مهم: الغيابات لا تُعد واصلة لمسؤول الغيابات بمجرد الحفظ. بعد فتح واتساب يجب أن تضغط «إرسال» بنفسك.':'⚠️ مهم: رقم واتساب مسؤول الغيابات غير مفعّل. الحفظ داخل النظام لا يعني وصول الغيابات إليه عبر واتساب.';
             }
@@ -7242,25 +7804,33 @@
 
         async function resendLastSubmissionWhatsApp() {
             const sub=getProfessorSubject();
-            if(!sub||state.currentUser?.role!=='professor'){alert('هذه العملية متاحة للأستاذ صاحب المادة فقط.');return;}
+            if(!sub||state.currentUser?.role!=='professor'){alert('هذه العملية متاحة للأستاذ صاحب المادة فقط.');return false;}
             const st=getSubmissionState(sub);
             const latest=st.latest||getLatestSubmission(sub.id,state.currentUser.id);
-            if(!latest||latest.declaration!=='completed'){alert('لا يوجد إرسال مكتمل يمكن إعادة فتح رسالته.');return;}
+            if(!latest||latest.declaration!=='completed'){alert('لا يوجد إرسال مكتمل يمكن إعادة فتح رسالته.');return false;}
             if(st.code!=='ok'){
                 alert('توجد تغييرات بعد آخر إرسال. استخدم زر «إعادة إرسال الغيابات بعد التعديل» أولاً حتى تصل النسخة الحالية.');
-                return;
+                return false;
             }
             const number=getOfficerWhatsAppNumber();
-            if(!number){alert('رقم واتساب مسؤول الغيابات غير مضبوط. اطلب من رئيس القسم حفظ الرقم أولاً.');return;}
+            if(!number){alert('رقم واتساب مسؤول الغيابات غير مضبوط. اطلب من رئيس القسم حفظ الرقم أولاً.');return false;}
             const students=getStudentsForProfessor();
             const url=buildWhatsAppUrl(number,buildOfficerWhatsAppMessage(sub,latest,students));
-            if(!url){alert('تعذر إنشاء رابط واتساب بسبب رقم غير صالح.');return;}
-            const popup=window.open(url,'_blank','noopener');
+            if(!url){alert('تعذر إنشاء رابط واتساب بسبب رقم غير صالح.');return false;}
+            // هذه الدالة تُستدعى مباشرة من زر المستخدم، لذلك نحجز النافذة فوراً قبل أي حفظ غير متزامن.
+            const popup=reserveWhatsAppWindow();
+            let opened=navigateReservedWhatsAppWindow(popup,url);
+            if(!opened){
+                // fallback بلا popup: فتح الرابط في الصفحة الحالية لا يخضع لحظر النوافذ المنبثقة.
+                try { window.location.href=url; opened=true; } catch(e) {}
+            }
             latest.whatsappReopenCount=(Number(latest.whatsappReopenCount)||0)+1;
             latest.whatsappLastReopenedAt=Date.now();
             recordAudit('إعادة فتح رسالة واتساب لآخر إرسال',{subjectId:sub.id,subject:sub.name,submissionId:latest.id,reopenCount:latest.whatsappReopenCount});
-            persistLocalState('resend-whatsapp-v30',true).then(()=>pushToFirebase({silent:true})).catch(console.error);
-            alert(popup?'📱 تم فتح آخر رسالة واتساب من جديد.\n\nاضغط «إرسال» داخل واتساب حتى تصل فعلياً لمسؤول الغيابات.':'⚠️ منع المتصفح فتح واتساب. اسمح بالنوافذ المنبثقة ثم اضغط الزر مرة أخرى.');
+            persistLocalState('resend-whatsapp-v39',true).then(()=>pushToFirebase({silent:true})).catch(console.error);
+            if(opened && popup) alert('📱 تم فتح آخر رسالة واتساب من جديد.\n\nاضغط «إرسال» داخل واتساب حتى تصل فعلياً لمسؤول الغيابات.');
+            else if(!opened) alert('⚠️ تعذر فتح واتساب على هذا الجهاز. تحقق من تثبيت واتساب أو السماح بفتح روابط wa.me.');
+            return opened;
         }
 
         async function undoLastSubmissionOnce() {
@@ -7491,8 +8061,10 @@
             const manualHoursInput = document.getElementById('profAbsentHours');
             if (quickHoursInput) { quickHoursInput.value = lockedSubjectHours; quickHoursInput.readOnly = true; }
             if (manualHoursInput) { manualHoursInput.value = lockedSubjectHours; manualHoursInput.readOnly = true; }
-            if (!document.getElementById('profAbsentDate').value) {
-                document.getElementById('profAbsentDate').value = getLocalDateISO();
+            const attendanceDateInput=document.getElementById('profAbsentDate');
+            if (attendanceDateInput) {
+                attendanceDateInput.max=getLocalDateISO();
+                if (!attendanceDateInput.value || attendanceDateInput.value>getLocalDateISO()) attendanceDateInput.value=getLocalDateISO();
             }
             renderProfessorAttendance(sub.id);
             renderProfessorSubmissionStatus(sub);
@@ -7553,14 +8125,11 @@
         }
 
         function getBulkCancelContext(subject, groupName, groupStudents) {
-            const scheduled=buildQuickAttendanceContext(subject,groupName,true);
-            if(scheduled.ok){
-                const currentAbsent=getAbsentRecordsForSession(subject,scheduled.date,scheduled.sessionTime,groupName);
-                if(currentAbsent.length)return {...scheduled,absentCount:currentAbsent.length};
-            }
-            const recorded=getLatestAbsentSessionContextForGroup(subject,groupName,groupStudents);
-            if(recorded)return recorded;
-            return scheduled.ok?{...scheduled,absentCount:0}:{ok:false,absentCount:0,reason:scheduled.reason||'لا توجد محاضرة مسجلة يمكن تصحيحها.'};
+            // زر إزالة غياب الكل يتبع المحاضرة المفتوحة في التاريخ المختار فقط.
+            const scheduled=resolveBulkAttendanceContext(subject,groupName,false);
+            if(!scheduled.ok)return {...scheduled,absentCount:0};
+            const currentAbsent=getAbsentRecordsForSession(subject,scheduled.date,scheduled.sessionTime,groupName);
+            return {...scheduled,absentCount:currentAbsent.length};
         }
 
         // V33: سياق موحد وموثوق للأوامر الجماعية.
@@ -7629,48 +8198,76 @@
                 sessionKey:attendanceSessionKey(sessionTime),groupName:groupName||'',
                 subjectId:String(subject.id),professorId:String(subject.professorId||''),
                 lectureId:String(matched?.id||''),lecture:matched,
-                schedulePublishedAt:matched?(Number(getScheduleLink()?.createdAt)||null):null,
+                scheduleVersionId:String(matched?._scheduleVersionId||''),schedulePublishedAt:matched?(Number(matched?._schedulePublishedAt)||null):null,
                 displayTime:`${date} · ${sessionTime}${matched?'':' · استثنائية'}`,
                 contextSource:matched?'schedule':'manual',manualOverride:!matched,scheduleVerified:!!matched,
                 requiresConfirmation:!matched
             };
         }
 
-        // V35: لا تعتمد أوامر الحضور/الغياب على وجود محاضرة مجدولة اليوم.
-        // الأولوية: محاضرة الجدول الحالية -> وقت يدوي صريح -> جلسة مسجلة في التاريخ نفسه ->
-        // عند الضغط الفعلي تُنشأ جلسة استثنائية بالتاريخ/الوقت اليدوي أو الوقت الحالي.
+        // V41: بطاقات المجاميع تستخدم نسخة الجدول التي كانت نافذة في التاريخ المختار.
+        // إذا كان التاريخ أقدم من بداية الأرشيف، لا نفترض أن جدول اليوم كان نافذاً آنذاك:
+        // نفتح فقط جلسة مثبتة فعلياً في سجلات الحضور، وإلا نظهر أن المعلومات التاريخية غير كافية.
         function resolveBulkAttendanceContext(subject, groupName, interactive=false) {
-            const desiredDate=String(document.getElementById('profAbsentDate')?.value||getLocalDateISO());
+            if(!subjectBelongsToCurrentProfessor(subject))return {ok:false,code:'unauthorized',reason:'هذه المادة ليست مرتبطة بحساب الأستاذ الحالي.'};
+            const today=getLocalDateISO();
+            const desiredDate=getProfessorAttendanceWorkDate();
+            if(desiredDate>today)return {ok:false,code:'future-date',reason:'لا يمكن تسجيل محاضرة بتاريخ مستقبلي.'};
+
+            const version=getScheduleVersionForDate(desiredDate);
+            const lectures=getScheduledAttendanceLectures(subject,groupName,desiredDate);
+            const recorded=getRecordedSessionForGroupDate(subject,groupName,desiredDate);
+
+            if(!version && desiredDate<today){
+                if(recorded)return {...recorded,contextSource:'recorded-history',historicalEvidence:true};
+                return {ok:false,code:'history-unknown',reason:'لا توجد معلومات تاريخية كافية لهذا التاريخ؛ لم يكن أرشيف الجدول قد بدأ ولا توجد جلسة حضور مسجلة تثبت المحاضرة.',date:desiredDate,groupName};
+            }
+            if(!version && desiredDate===today){
+                return {ok:false,code:'no-timetable',reason:'لا يوجد جدول أسبوعي منشور للتحقق من محاضرات المجموعة.',date:desiredDate,groupName};
+            }
+            if(!lectures.length){
+                // وجود جلسة فعلية قديمة أقوى من نسخة جدول ناقصة/قديمة تم استيرادها لاحقاً.
+                if(desiredDate<today && recorded)return {...recorded,contextSource:'recorded-history',historicalEvidence:true};
+                return {
+                    ok:false,code:'not-scheduled',
+                    reason:desiredDate===today?'ليس لديهم محاضرة اليوم':'ليس لديهم محاضرة وفق جدول ذلك التاريخ',
+                    date:desiredDate,groupName,scheduleVersionId:String(version?.id||'')
+                };
+            }
+
             const typedTime=normalizeSessionTime(document.getElementById('profSessionTime')?.value||'');
-            if(desiredDate!==getLocalDateISO() || typedTime){
-                const explicit=buildPanelManualAttendanceContext(subject,groupName,interactive);
-                if(explicit)return explicit;
-                return {ok:false,reason:'حدد وقت المحاضرة للتاريخ الذي اخترته.'};
-            }
-            const scheduled=buildQuickAttendanceContext(subject,groupName,true);
-            if(scheduled.ok)return {...scheduled,contextSource:'schedule'};
+            let lecture=typedTime?lectures.find(l=>Number(l.startMinutes)===(Number(typedTime.slice(0,2))*60+Number(typedTime.slice(3,5)))):null;
+            const clock=getBaghdadClock();
 
-            const explicitManual=buildPanelManualAttendanceContext(subject,groupName,false);
-            if(explicitManual){
-                if(explicitManual.ok)return explicitManual;
-                if(interactive)return explicitManual;
-            }
-
-            const recorded=latestRecordedSessionContext(subject,groupName);
-
-            if(recorded && String(recorded.date)===desiredDate){
-                return {...recorded,contextSource:'recorded',fallbackReason:scheduled.reason||''};
-            }
-
-            if(interactive){
-                const manual=buildPanelManualAttendanceContext(subject,groupName,true);
-                if(manual)return manual;
+            if(desiredDate===today){
+                const started=lectures.filter(l=>Number(l.startMinutes)<=clock.minutes);
+                if(!started.length){
+                    const next=lectures[0];
+                    return {ok:false,code:'future',reason:`محاضرتهم اليوم تبدأ الساعة ${formatScheduleMinutes(next.startMinutes)} ولم تبدأ بعد.`,lecture:next,date:desiredDate,groupName,scheduleVersionId:String(version?.id||'')};
+                }
+                if(!lecture || Number(lecture.startMinutes)>clock.minutes){
+                    const current=started.find(l=>clock.minutes<Number(l.startMinutes)+(Number(l.durationMinutes)||60));
+                    lecture=current||started[started.length-1];
+                }
+            } else if(!lecture) {
+                // إذا سبق تسجيل جلسة في ذلك التاريخ نفضّل وقتها إن كان موجوداً في نسخة الجدول.
+                if(recorded){
+                    const recordedMinutes=Number(recorded.sessionTime.slice(0,2))*60+Number(recorded.sessionTime.slice(3,5));
+                    lecture=lectures.find(l=>Number(l.startMinutes)===recordedMinutes)||null;
+                }
+                if(!lecture)lecture=lectures[lectures.length-1];
             }
 
-            if(recorded)return {...recorded,contextSource:'recorded',fallbackReason:scheduled.reason||''};
+            const sessionTime=formatMinutes24(lecture.startMinutes);
+            const isCurrent=desiredDate===today && clock.minutes>=Number(lecture.startMinutes) && clock.minutes<Number(lecture.startMinutes)+(Number(lecture.durationMinutes)||60);
             return {
-                ok:false,code:scheduled.code||'no-context',
-                reason:(scheduled.reason||'تعذر تحديد المحاضرة.')+' حدد التاريخ والوقت في خانة «تسجيل غياب يدوي» ثم أعد الضغط؛ ويمكن تسجيل المحاضرة حتى لو لم تكن مجدولة.'
+                ok:true,code:isCurrent?'current':(desiredDate===today?'past':'past-date'),
+                date:desiredDate,groupName,sessionTime,sessionKey:attendanceSessionKey(sessionTime),
+                lectureId:String(lecture.id||''),lecture,subjectId:String(subject.id),professorId:String(subject.professorId||''),
+                scheduleVersionId:String(lecture._scheduleVersionId||version?.id||''),
+                schedulePublishedAt:Number(lecture._schedulePublishedAt)||Number(version?.publishedAt)||null,
+                displayTime:`${desiredDate} · ${lectureTimeRangeText(lecture)}`,
+                contextSource:'schedule-history',scheduleVerified:true,isCurrent,historicalSchedule:desiredDate<today
             };
         }
 
@@ -7692,14 +8289,15 @@
                 const context=resolveBulkAttendanceContext(sub,groupName,false);
                 const encodedGroup=encodeURIComponent(groupName);
                 const chipClass=context.ok?'':(context.code==='future'?'waiting':'unavailable');
-                const chipPrefix=context.contextSource==='manual'?'✳ استثنائية':context.contextSource==='recorded'?'↶ مسجلة':(context.code==='current'?'● الآن':'✓ متاحة');
-                const chipText=context.ok?`${chipPrefix} · ${context.displayTime}`:(context.code==='future'?`⏳ ${formatScheduleMinutes(context.lecture?.startMinutes)}`:'غير مجدولة — يمكن التسجيل اليدوي');
-                // V33: لا نعطل الزرين بصمت بسبب فشل تحديد المحاضرة؛ الدالة نفسها تحاول السياق الحالي ثم آخر محاضرة مسجلة وتشرح أي مانع.
-                const disabled=!submissionLocked?'':'disabled aria-disabled="true"';
+                const chipPrefix=context.code==='current'?'● المحاضرة جارية':context.code==='recorded-history'?'↶ جلسة تاريخية مثبتة':context.code==='past-date'?'↶ حسب جدول ذلك التاريخ':'✓ متاحة';
+                const chipText=context.ok?`${chipPrefix} · ${context.displayTime}`:(context.code==='future'?`⏳ لم تبدأ بعد · ${formatScheduleMinutes(context.lecture?.startMinutes)}`:(context.reason||'ليس لديهم محاضرة اليوم'));
+                // V40: المجموعة بلا محاضرة في التاريخ المختار تبقى ظاهرة ولكن جميع أدواتها مقفلة.
+                const groupScheduleLocked=!context.ok;
+                const disabled=(!submissionLocked&&!groupScheduleLocked)?'':'disabled aria-disabled="true"';
                 const bulkCancelContext=getBulkCancelContext(sub,groupName,groupStudents);
                 const currentAbsentCount=Number(bulkCancelContext?.absentCount)||0;
-                const cancelAllDisabled=!submissionLocked?'':'disabled aria-disabled="true"';
-                const actionTitle=escapeHtml(submissionLocked?'الغيابات مغلقة بعد الإرسال؛ استخدم فرصة التراجع إن كانت متاحة.':(context.ok?`تسجيل محاضرة ${context.displayTime}`:`اضغط للتنفيذ؛ سيحاول النظام تحديد المحاضرة الحالية أو آخر محاضرة مسجلة. ${context.reason||''}`));
+                const cancelAllDisabled=(!submissionLocked&&!groupScheduleLocked)?'':'disabled aria-disabled="true"';
+                const actionTitle=escapeHtml(submissionLocked?'الغيابات مغلقة بعد الإرسال؛ استخدم فرصة التراجع إن كانت متاحة.':(groupScheduleLocked?(context.reason||'ليس لديهم محاضرة في التاريخ المختار'):`تسجيل أو تعديل محاضرة ${context.displayTime}`));
                 html += `<div class="group-card"><div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length})</span></div>
                     <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button><button data-attendance-control="1" ${cancelAllDisabled} title="${currentAbsentCount?`إزالة غياب ${currentAbsentCount} طالب من ${escapeHtml(bulkCancelContext.displayTime||'آخر محاضرة مسجلة')}`:'اضغط للبحث عن آخر محاضرة مسجلة فيها غياب لهذه المجموعة'}" data-cancel-all-group="${escapeHtml(encodedGroup)}" onclick="removeAllCurrentSessionAbsences(decodeURIComponent('${encodedGroup}'))" class="btn-secondary btn-sm" style="font-size:10px;">🗑️ إزالة غياب الكل${currentAbsentCount?` (${currentAbsentCount})`:''}</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
                 groupStudents.forEach(st => {
@@ -7717,7 +8315,7 @@
                         html += `<div class="student-quick-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-label">${escapeHtml(st.name)}</span> <span class="student-status-icon">${statusIcon}</span><span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="present" aria-pressed="${isPresent?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present ${isPresent?'attendance-selected':hasAbsence?'attendance-dimmed':''}">✅ حاضر</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="absent" aria-pressed="${hasAbsence?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent ${hasAbsence?'attendance-selected':isPresent?'attendance-dimmed':''}">❌ غائب</button></div></div>`;
                     } else {
                         const todayBadge = hasAbsence ? '<span data-attendance-session-badge="1" class="badge bg-red" style="font-size:8px;">غائب في هذه المحاضرة</span>' : isPresent ? '<span data-attendance-session-badge="1" class="badge bg-green" style="font-size:8px;">حاضر في هذه المحاضرة</span>' : '<span data-attendance-session-badge="1" class="badge" style="font-size:8px;background:#e2e8f0;color:#475569;">لم تُسجل حالته</span>';
-                        html += `<div class="student-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name">👨‍🎓 ${escapeHtml(st.name)} <span class="student-status-icon">${statusIcon}</span> ${todayBadge}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="student-actions" style="display:flex;gap:4px;flex-wrap:wrap;"><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="markStudentAbsent(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-warning" style="font-size:10px;">📝</button><span data-remove-absence-slot="1">${hasAbsence?`<button data-attendance-control="1" ${submissionLocked?'disabled aria-disabled="true"':''} title="${submissionLocked?'الغيابات مغلقة بعد الإرسال':'إزالة غياب هذه المحاضرة'}" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:''}</span></div></div>`;
+                        html += `<div class="student-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name">👨‍🎓 ${escapeHtml(st.name)} <span class="student-status-icon">${statusIcon}</span> ${todayBadge}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="student-actions" style="display:flex;gap:4px;flex-wrap:wrap;"><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="markStudentAbsent(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-warning" style="font-size:10px;">📝</button><span data-remove-absence-slot="1">${hasAbsence?`<button data-attendance-control="1" ${(submissionLocked||groupScheduleLocked)?'disabled aria-disabled="true"':''} title="${submissionLocked?'الغيابات مغلقة بعد الإرسال':groupScheduleLocked?(context.reason||'المجموعة غير متاحة في هذا التاريخ'):'إزالة غياب هذه المحاضرة'}" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:''}</span></div></div>`;
                     }
                 });
                 html += `</div></div>`;
@@ -7980,7 +8578,7 @@
             if(!canProfessorEditAttendanceForSubject(sub))return;
             const students=getStudentsForProfessor().filter(st=>professorGroupNameForStudent(st,sub)===groupName);
             const context=getBulkCancelContext(sub,groupName,students);
-            if(!context.ok){alert(context.reason||'لا توجد محاضرة مسجلة يمكن إزالة غيابها.');return;}
+            if(!context.ok){alert(context.reason||'هذه المجموعة ليست لديها محاضرة متاحة في التاريخ المختار.');return;}
             const absentRecords=getAbsentRecordsForSession(sub,context.date,context.sessionTime,groupName);
             if(!absentRecords.length){showAttendanceToast('لا توجد غيابات في آخر محاضرة مسجلة لهذه المجموعة.','warning');return;}
             const label=sub.groupType==='عملي'?'المجموعة العملية':'الشعبة النظرية';
@@ -8268,100 +8866,119 @@
         async function sendToOfficer() {
             if (!requireAppRole('professor') || submissionMutationBusy) return false;
             submissionMutationBusy=true;
+            let whatsappWindow=null;
             try {
-            const sub = getProfessorSubject();
-            if (!sub || !subjectBelongsToCurrentProfessor(sub)) { alert('لا توجد مادة مرتبطة بهذا الحساب'); return; }
-            await attendancePersistenceQueue.catch(()=>false);
-            const currentState=getSubmissionState(sub);
-            if(currentState.code==='ok' && currentState.latest){
-                await resendLastSubmissionWhatsApp();
-                return;
-            }
-            const students = getStudentsForProfessor();
-            const realRecords = getSubjectOperationalAttendanceRecords(sub.id);
-            const previousSubmission=getLatestSubmission(sub.id,state.currentUser?.id);
-            const previousCompleted=getLatestCompletedSubmission(sub.id,state.currentUser?.id);
-            const isResend=!!previousSubmission;
-            const actionLabel=isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات';
-            if (!confirm(`هل تؤكد ${actionLabel} لمادة «${sub.name}» حتى تاريخ ${getLocalDateISO()}؟\n\nعدد الطلبة الحاليين: ${students.length}\nالحالات التشغيلية للمحاضرات: ${realRecords.length}${getOfficerWhatsAppNumber()?'\n\nبعد الحفظ سيفتح واتساب، ويجب الضغط على «إرسال» داخله يدوياً.':''}`)) return;
+                const sub = getProfessorSubject();
+                if (!sub || !subjectBelongsToCurrentProfessor(sub)) { alert('لا توجد مادة مرتبطة بهذا الحساب'); return false; }
 
-            const savedView=captureProfessorViewState();
-            const now = new Date();
-            const whatsappNumber = getOfficerWhatsAppNumber();
-            let whatsappWindow = null;
-            if (whatsappNumber) {
-                try { whatsappWindow = window.open('about:blank', '_blank'); } catch (e) {}
-            }
-            const priorCompleted=(state.submissions||[]).filter(x=>String(x.subjectId)===String(sub.id)&&String(x.professorId)===String(state.currentUser.id)&&x.declaration==='completed').length;
-            const submission = {
-                id: makeId('submission'),
-                professorId: state.currentUser.id,
-                professorName: sanitizeText(state.currentUser.name,120),
-                subjectId: sub.id,
-                subjectName: sanitizeText(sub.name,160),
-                level: Number(sub.level)||0,
-                fingerprint: getSubjectAttendanceFingerprint(sub.id),
-                studentCount: students.length,
-                attendanceRecordCount: realRecords.length,
-                date: getLocalDateISO(now),
-                time: now.toLocaleTimeString('ar-IQ'),
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-                declaration: 'completed',
-                revisionNumber:priorCompleted+1,
-                resendOfSubmissionId:isResend?String(previousCompleted?.id||previousSubmission?.id||''):null,
-                undoEligible: !hasSubmissionUndoEverUsed(sub.id, state.currentUser.id),
-                undoUsed: false,
-                whatsappNumberConfigured: !!whatsappNumber,
-                whatsappPreparedAt: whatsappNumber ? Date.now() : null
-            };
-            state.submissions.push(submission);
-            if (state.submissions.length > 5000) state.submissions = state.submissions.slice(-5000);
-            const workflowRecord=setAttendanceWorkflowState(sub,{locked:true,mode:'submitted',lastSubmissionId:String(submission.id),lastSubmittedAt:Number(submission.createdAt)||Date.now()});
-            state.notifications.push({ id: makeId('note'), msg: `${isResend?'🔄':'✅'} الأستاذ ${state.currentUser.name} ${isResend?'أعاد إرسال':'أكد إكمال'} غيابات مادة ${sub.name} داخل النظام`, time: now.toLocaleString('ar-IQ'), professorId:state.currentUser.id, subjectId:sub.id, submissionId:submission.id });
-            recordAudit(isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات وتجهيز واتساب لمسؤول الغيابات', { subject: sub.name, students: students.length, records: realRecords.length, submissionId: submission.id, previousSubmissionId:submission.resendOfSubmissionId, revisionNumber:submission.revisionNumber, workflowRevision:Number(workflowRecord?.revision)||0, whatsappPrepared: !!whatsappNumber });
-
-            const ok = await saveAll();
-            renderProfessorSubmissionStatus(sub);
-            if (!ok) {
-                try { if (whatsappWindow && !whatsappWindow.closed) whatsappWindow.close(); } catch (e) {}
-                alert('⚠️ تم تسجيل التأكيد محلياً لكن تعذر تثبيته في السحابة. ستعاد المزامنة تلقائياً؛ لا تعتبر الإرسال مكتملاً على جهاز آخر حتى يعود الاتصال.');
-                return;
-            }
-
-            // الإرسال الجديد يقفل أدوات الغياب فوراً بصرياً ومنطقياً، مع حفظ موضع القائمة.
-            renderProfessorGroups(getStudentsForProfessor());
-            restoreProfessorViewState(savedView,'');
-            renderProfessorSubmissionStatus(sub);
-
-            if (!whatsappNumber) {
-                alert('✅ تم توثيق إكمال الغيابات داخل النظام.\n\n⚠️ رقم واتساب مسؤول الغيابات غير مضبوط، لذلك لم تُفتح رسالة واتساب.');
-                return;
-            }
-
-            const message = buildOfficerWhatsAppMessage(sub, submission, students);
-            const url = buildWhatsAppUrl(whatsappNumber, message);
-            let opened = false;
-            try {
-                if (whatsappWindow && !whatsappWindow.closed) {
-                    whatsappWindow.location.href = url;
-                    opened = true;
-                } else {
-                    const fallback = window.open(url, '_blank', 'noopener');
-                    opened = !!fallback;
+                // مهم: لا نضع أي await قبل محاولة فتح واتساب من زر "إعادة آخر رسالة".
+                // التأخير قبل window.open كان سبباً مباشراً في حظر النافذة عند بعض Android/iPhone/Chrome/Safari.
+                const immediateState=getSubmissionState(sub);
+                if(immediateState.code==='ok' && immediateState.latest){
+                    return await resendLastSubmissionWhatsApp();
                 }
-            } catch (e) {}
-            if (opened) {
-                submission.whatsappOpenedAt=Date.now();
-                submission.whatsappOpenCount=(Number(submission.whatsappOpenCount)||0)+1;
-                persistLocalState('submission-whatsapp-opened',true).then(()=>pushToFirebase({silent:true})).catch(console.error);
-                alert(`${isResend?'🔄 تم تثبيت النسخة المعدلة وفتح واتساب من جديد.':'✅ تم توثيق اكتمال الغيابات وفتح واتساب.'}\n\n⚠️ يجب الضغط على «إرسال» داخل واتساب؛ فتح النافذة وحده لا يعني وصول الرسالة لمسؤول الغيابات.`);
-            } else {
-                try { await navigator.clipboard.writeText(message); } catch (e) {}
-                alert('✅ تم تثبيت الغيابات داخل النظام.\n⚠️ منع المتصفح فتح واتساب؛ اسمح بالنوافذ المنبثقة ثم استخدم زر «إعادة فتح آخر رسالة واتساب».');
-            }
 
-            } finally {submissionMutationBusy=false;}
+                const previewStudents = getStudentsForProfessor();
+                const previewRecords = getSubjectOperationalAttendanceRecords(sub.id);
+                const previewPrevious=getLatestSubmission(sub.id,state.currentUser?.id);
+                const isResendPreview=!!previewPrevious;
+                const actionLabel=isResendPreview?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات';
+                const whatsappNumber = getOfficerWhatsAppNumber();
+                if (!confirm(`هل تؤكد ${actionLabel} لمادة «${sub.name}» حتى تاريخ ${getLocalDateISO()}؟\n\nعدد الطلبة الحاليين: ${previewStudents.length}\nالحالات التشغيلية للمحاضرات: ${previewRecords.length}${whatsappNumber?'\n\nبعد تثبيت الحفظ سيفتح واتساب تلقائياً، ويجب الضغط على «إرسال» داخله يدوياً.':''}`)) return false;
+
+                // احجز نافذة واتساب الآن، أثناء نفس نقرة المستخدم، قبل انتظار أي عملية تخزين.
+                if (whatsappNumber) whatsappWindow=reserveWhatsAppWindow();
+                const savedView=captureProfessorViewState();
+
+                // انتظر فقط بعد حجز النافذة، ثم ابنِ الإرسال من أحدث حالة فعلية.
+                await attendancePersistenceQueue.catch(()=>false);
+                const students = getStudentsForProfessor();
+                const realRecords = getSubjectOperationalAttendanceRecords(sub.id);
+                const previousSubmission=getLatestSubmission(sub.id,state.currentUser?.id);
+                const previousCompleted=getLatestCompletedSubmission(sub.id,state.currentUser?.id);
+                const isResend=!!previousSubmission;
+                const now = new Date();
+                const priorCompleted=(state.submissions||[]).filter(x=>String(x.subjectId)===String(sub.id)&&String(x.professorId)===String(state.currentUser.id)&&x.declaration==='completed').length;
+                const submission = {
+                    id: makeId('submission'),
+                    professorId: state.currentUser.id,
+                    professorName: sanitizeText(state.currentUser.name,120),
+                    subjectId: sub.id,
+                    subjectName: sanitizeText(sub.name,160),
+                    level: Number(sub.level)||0,
+                    fingerprint: getSubjectAttendanceFingerprint(sub.id),
+                    studentCount: students.length,
+                    attendanceRecordCount: realRecords.length,
+                    date: getLocalDateISO(now),
+                    time: now.toLocaleTimeString('ar-IQ'),
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    declaration: 'completed',
+                    revisionNumber:priorCompleted+1,
+                    resendOfSubmissionId:isResend?String(previousCompleted?.id||previousSubmission?.id||''):null,
+                    undoEligible: !hasSubmissionUndoEverUsed(sub.id, state.currentUser.id),
+                    undoUsed: false,
+                    whatsappNumberConfigured: !!whatsappNumber,
+                    whatsappPreparedAt: whatsappNumber ? Date.now() : null
+                };
+                state.submissions.push(submission);
+                if (state.submissions.length > 5000) state.submissions = state.submissions.slice(-5000);
+                const workflowRecord=setAttendanceWorkflowState(sub,{locked:true,mode:'submitted',lastSubmissionId:String(submission.id),lastSubmittedAt:Number(submission.createdAt)||Date.now()});
+                state.notifications.push({ id: makeId('note'), msg: `${isResend?'🔄':'✅'} الأستاذ ${state.currentUser.name} ${isResend?'أعاد إرسال':'أكد إكمال'} غيابات مادة ${sub.name} داخل النظام`, time: now.toLocaleString('ar-IQ'), professorId:state.currentUser.id, subjectId:sub.id, submissionId:submission.id });
+                recordAudit(isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات وتجهيز واتساب لمسؤول الغيابات', { subject: sub.name, students: students.length, records: realRecords.length, submissionId: submission.id, previousSubmissionId:submission.resendOfSubmissionId, revisionNumber:submission.revisionNumber, workflowRevision:Number(workflowRecord?.revision)||0, whatsappPrepared: !!whatsappNumber, whatsappPopupReserved:!!whatsappWindow });
+
+                const ok = await saveAll();
+                renderProfessorSubmissionStatus(sub);
+                if (!ok) {
+                    closeReservedWhatsAppWindow(whatsappWindow);
+                    whatsappWindow=null;
+                    alert('⚠️ تم تسجيل التأكيد محلياً لكن تعذر تثبيته في السحابة. ستعاد المزامنة تلقائياً؛ لم تُفتح رسالة واتساب حتى لا تُرسل نسخة غير مثبتة سحابياً.');
+                    return false;
+                }
+
+                // الإرسال الجديد يقفل أدوات الغياب فوراً بصرياً ومنطقياً، مع حفظ موضع القائمة.
+                renderProfessorGroups(getStudentsForProfessor());
+                restoreProfessorViewState(savedView,'');
+                renderProfessorSubmissionStatus(sub);
+
+                if (!whatsappNumber) {
+                    alert('✅ تم توثيق إكمال الغيابات داخل النظام.\n\n⚠️ رقم واتساب مسؤول الغيابات غير مضبوط، لذلك لم تُفتح رسالة واتساب.');
+                    return true;
+                }
+
+                const message = buildOfficerWhatsAppMessage(sub, submission, students);
+                const url = buildWhatsAppUrl(whatsappNumber, message);
+                let opened = navigateReservedWhatsAppWindow(whatsappWindow,url);
+                let sameTabFallback=false;
+                if (!opened) {
+                    // لا نعتمد على window.open جديد بعد await لأنه سيُحظر في بعض المتصفحات.
+                    // الانتقال في نفس التبويب fallback موثوق ولا يحتاج إذن popup.
+                    try {
+                        submission.whatsappFallbackMode='same-tab';
+                        sameTabFallback=true;
+                        opened=true;
+                    } catch(e) {}
+                }
+                if (opened) {
+                    submission.whatsappOpenedAt=Date.now();
+                    submission.whatsappOpenCount=(Number(submission.whatsappOpenCount)||0)+1;
+                    submission.whatsappOpenMode=sameTabFallback?'same-tab':'reserved-window';
+                    await persistLocalState('submission-whatsapp-opened-v39',true).catch(()=>false);
+                    pushToFirebase({silent:true}).catch(console.error);
+                    if(sameTabFallback){
+                        showAttendanceToast('📱 سيفتح واتساب في هذه الصفحة لأن المتصفح منع النافذة الجديدة.','success');
+                        setTimeout(()=>{ try { window.location.href=url; } catch(e) {} },80);
+                    } else {
+                        alert(`${isResend?'🔄 تم تثبيت النسخة المعدلة وفتح واتساب من جديد.':'✅ تم توثيق اكتمال الغيابات وفتح واتساب.'}\n\n⚠️ يجب الضغط على «إرسال» داخل واتساب؛ فتح النافذة وحده لا يعني وصول الرسالة لمسؤول الغيابات.`);
+                    }
+                    return true;
+                }
+                try { await navigator.clipboard.writeText(message); } catch (e) {}
+                alert('✅ تم تثبيت الغيابات داخل النظام.\n⚠️ تعذر فتح واتساب على هذا الجهاز. تم تجهيز الرسالة ويمكن استخدام زر «إعادة فتح آخر رسالة واتساب».');
+                return true;
+            } finally {
+                submissionMutationBusy=false;
+            }
         }
 
         // ==============================================================
