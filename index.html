@@ -426,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V37</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V38</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -5242,13 +5242,13 @@
             }
             let html =
                 `<div class="card"><h4>📘 مواد ${getLevelName(level)}</h4><div class="table-wrapper"><table>
-                <tr><th>#</th><th>المادة</th><th>النوع</th><th>س/أسبوع</th><th>الأستاذ</th><th>ECTS</th></tr>`;
+                <tr><th>#</th><th>المادة</th><th>النوع</th><th>س/أسبوع</th><th>الأستاذ</th><th>ECTS</th><th>فتح الغيابات</th></tr>`;
             stats.subjects.forEach((sub, idx) => {
                 const prof = state.professors.find(p => p.id === sub.professorId);
                 const typeIcon = sub.groupType === 'نظري' ? '📖' : sub.groupType === 'عملي' ? '🔬' : '📖🔬';
                 const typeClass = sub.groupType === 'نظري' ? 'bg-blue' : sub.groupType === 'عملي' ? 'bg-green' : 'bg-purple';
                 html +=
-                    `<tr><td>${idx + 1}</td><td>${sub.name}</td><td><span class="badge ${typeClass}">${typeIcon} ${sub.groupType}</span></td><td>${getSubjectWeeklyHours(sub)}</td><td>${prof ? prof.name : 'غير معين'}</td><td>${sub.ects || '-'}</td></tr>`;
+                    (()=>{const wf=getAdminAttendanceWorkflowStatus(sub);const sid=encodeURIComponent(String(sub.id));return `<tr><td>${idx + 1}</td><td>${sub.name}</td><td><span class="badge ${typeClass}">${typeIcon} ${sub.groupType}</span></td><td>${getSubjectWeeklyHours(sub)}</td><td>${prof ? prof.name : 'غير معين'}</td><td>${sub.ects || '-'}</td><td><div style="display:flex;gap:4px;align-items:center;justify-content:center;flex-wrap:wrap;"><span class="badge ${wf.code==='locked'?'bg-red':wf.code==='admin-open'||wf.code==='open'?'bg-green':'bg-blue'}">${escapeHtml(wf.label)}</span>${wf.canReopen?`<button type="button" class="btn-warning btn-sm" onclick="reopenProfessorAttendanceByAdmin(decodeURIComponent('${sid}'))">🔓 إعادة فتح للتعديل</button>`:''}</div></td></tr>`;})();
             });
             html += `</table></div></div>`;
             container.innerHTML = html;
@@ -5426,6 +5426,7 @@
                             <button onclick="saveSubjectHoursFromInput(decodeURIComponent('${encodeURIComponent(String(s.id))}'),'levelSubjectHours_${encodeURIComponent(String(s.id))}')" class="btn-sm btn-success" style="padding:3px 7px;font-size:10px;">💾 حفظ الساعات</button>
                             <button onclick="editSubjectWeeks('${s.id}')" class="btn-sm btn-warning" style="min-width:25px; padding:1px 4px; font-size:10px;" title="تعديل أسابيع التدريس">📐</button>
                             <button onclick="editSubjectProfessor('${s.id}')" class="btn-sm btn-warning" style="min-width:25px; padding:1px 4px; font-size:10px;">👤</button>
+                            ${(()=>{const wf=getAdminAttendanceWorkflowStatus(s);return wf.canReopen?`<button type="button" onclick="reopenProfessorAttendanceByAdmin(decodeURIComponent('${encodeURIComponent(String(s.id))}'))" class="btn-sm btn-info" style="padding:2px 6px;font-size:10px;" title="${escapeHtml(wf.label)}">🔓 إعادة فتح الغيابات</button>`:`<span class="badge ${wf.code==='admin-open'||wf.code==='open'?'bg-green':wf.code==='locked'?'bg-red':'bg-blue'}" title="حالة إرسال الغيابات">${escapeHtml(wf.label)}</span>`;})()}
                             <button onclick="deleteSubjectFromLevel('${s.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button>
                         </div>
                     </div>
@@ -5587,7 +5588,9 @@
                             <label style="font-size:9px;margin:0;color:#475569;">ساعات/أسبوع</label>
                             <input id="fullSubjectHours_${encodeURIComponent(String(s.id))}" type="number" min="0.5" max="20" step="0.5" value="${getSubjectWeeklyHours(s)}" style="width:72px;padding:4px 6px;font-size:10px;">
                             <button onclick="saveSubjectHoursFromInput(decodeURIComponent('${encodeURIComponent(String(s.id))}'),'fullSubjectHours_${encodeURIComponent(String(s.id))}')" class="btn-sm btn-success" style="padding:3px 7px;font-size:10px;">💾 حفظ الساعات</button>
-                            <button onclick="editSubjectWeeks('${s.id}')" class="btn-sm btn-warning" style="padding:1px 5px;font-size:10px;">📐 الأسابيع</button><button onclick="deleteSubjectFull('${s.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button></div>
+                            <button onclick="editSubjectWeeks('${s.id}')" class="btn-sm btn-warning" style="padding:1px 5px;font-size:10px;">📐 الأسابيع</button>
+                            ${(()=>{const wf=getAdminAttendanceWorkflowStatus(s);return wf.canReopen?`<button type="button" onclick="reopenProfessorAttendanceByAdmin(decodeURIComponent('${encodeURIComponent(String(s.id))}'))" class="btn-sm btn-info" style="padding:2px 6px;font-size:10px;">🔓 إعادة فتح الغيابات</button>`:`<span class="badge ${wf.code==='admin-open'||wf.code==='open'?'bg-green':wf.code==='locked'?'bg-red':'bg-blue'}">${escapeHtml(wf.label)}</span>`;})()}
+                            <button onclick="deleteSubjectFull('${s.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button></div>
                     </div>
                 `;
             });
@@ -7051,6 +7054,107 @@
             return rec;
         }
 
+
+        // V38: فتح إداري مستقل للغيابات من رئيس القسم.
+        // لا يستهلك فرصة التراجع الخاصة بالأستاذ، ولا يغير أي سجل غياب.
+        function getAdminAttendanceWorkflowStatus(subject) {
+            if(!subject)return {code:'missing',label:'المادة غير موجودة',canReopen:false};
+            const professorId=String(subject.professorId||'');
+            const prof=(state.professors||[]).find(p=>String(p.id)===professorId);
+            if(!professorId||!prof)return {code:'unassigned',label:'لا يوجد أستاذ معين',canReopen:false};
+            const latestCompleted=getLatestCompletedSubmission(subject.id,professorId);
+            const workflow=getAttendanceWorkflowState(subject.id,professorId,false);
+            if(!latestCompleted)return {code:'not-sent',label:'لم يرسل الغيابات بعد',canReopen:false,workflow,professor:prof};
+            if(workflow.locked===false){
+                const adminOpen=workflow.mode==='editing_after_admin_reopen';
+                return {code:adminOpen?'admin-open':'open',label:adminOpen?'مفتوحة بقرار رئيس القسم':'مفتوحة للتعديل',canReopen:false,workflow,professor:prof,latest:latestCompleted};
+            }
+            return {code:'locked',label:'مقفلة بعد الإرسال',canReopen:true,workflow,professor:prof,latest:latestCompleted};
+        }
+
+        async function reopenProfessorAttendanceByAdmin(subjectId) {
+            if(!requireAppRole('admin'))return false;
+            const subject=(state.subjects||[]).find(s=>String(s.id)===String(subjectId));
+            if(!subject){alert('المادة غير موجودة.');return false;}
+            const professorId=String(subject.professorId||'');
+            const professor=(state.professors||[]).find(p=>String(p.id)===professorId);
+            if(!professor){alert('لا يمكن فتح الغيابات لأن المادة غير مرتبطة بأستاذ.');return false;}
+            const status=getAdminAttendanceWorkflowStatus(subject);
+            if(!status.latest){alert(`الأستاذ «${professor.name}» لم يرسل غيابات مادة «${subject.name}» بعد، لذلك لا يوجد إرسال مقفل لإعادة فتحه.`);return false;}
+            if(status.workflow?.locked===false){
+                alert(status.workflow?.mode==='editing_after_admin_reopen'?'✅ الغيابات مفتوحة بالفعل بقرار رئيس القسم.':'✅ الغيابات مفتوحة بالفعل للتعديل لدى الأستاذ.');
+                return true;
+            }
+            if(!confirm(`إعادة فتح غيابات مادة «${subject.name}» للأستاذ «${professor.name}»؟
+
+سيتمكن الأستاذ من إجراء عدد غير محدود من التعديلات، وستبقى المادة مفتوحة حتى يعيد إرسال الغيابات بنفسه.
+
+لن تُحذف أو تتغير أي سجلات غياب حالية، ولن تُستهلك فرصة التراجع الخاصة بالأستاذ.`))return false;
+
+            const id=attendanceWorkflowRecordId(subject.id,professorId);
+            let local=getAttendanceWorkflowState(subject.id,professorId,true);
+            const now=Date.now();
+            let remote=null;
+            if(database){
+                try{
+                    const snap=await withTimeout(database.ref(`/appSettings/${firebaseRecordKey(id)}`).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة قراءة حالة الغيابات');
+                    remote=snap.val();
+                }catch(err){console.warn('تعذر قراءة حالة الغيابات السحابية قبل الفتح الإداري:',err);}
+            }
+            const revision=Math.max(Number(local?.revision)||0,Number(remote?.revision)||0)+1;
+            const undoConsumed=!!(local?.undoConsumed||remote?.undoConsumed||hasLegacySubmissionUndoEverUsed(subject.id,professorId));
+            const record={
+                ...(remote&&typeof remote==='object'?remote:{}),
+                ...(local&&typeof local==='object'?local:{}),
+                id,kind:'attendanceWorkflow',subjectId:String(subject.id),professorId,
+                locked:false,mode:'editing_after_admin_reopen',undoConsumed,
+                adminReopened:true,adminReopenedAt:now,
+                adminReopenedById:String(state.currentUser?.id||'admin'),
+                adminReopenedByName:sanitizeText(state.currentUser?.name||'رئيس القسم',120),
+                adminReopenCount:Math.max(Number(local?.adminReopenCount)||0,Number(remote?.adminReopenCount)||0)+1,
+                reopenedFromSubmissionId:String(status.latest?.id||''),
+                lastSubmissionId:String(status.latest?.id||''),
+                revision,updatedAt:now,
+                updatedById:String(state.currentUser?.id||'admin'),
+                updatedByName:sanitizeText(state.currentUser?.name||'رئيس القسم',120)
+            };
+            state.appSettings=(state.appSettings||[]).filter(x=>String(x?.id||'')!==id);
+            state.appSettings.push(record);
+            recordAudit('إعادة فتح غيابات أستاذ بقرار رئيس القسم',{
+                subjectId:subject.id,subject:subject.name,professorId,professor:professor.name,
+                reopenedFromSubmissionId:status.latest?.id||'',workflowRevision:revision,
+                undoConsumedPreserved:undoConsumed
+            });
+            state.notifications.push({
+                id:makeId('note'),
+                msg:`🔓 أعاد رئيس القسم فتح غيابات مادة ${subject.name} للأستاذ ${professor.name} للتعديل حتى إعادة الإرسال`,
+                time:new Date().toLocaleString('ar-IQ'),professorId,subjectId:subject.id,
+                adminReopen:true
+            });
+
+            const localSaved=await persistLocalState('admin-reopen-attendance',true);
+            let cloudSaved=false;
+            if(database){
+                try{
+                    const ref=database.ref(`/appSettings/${firebaseRecordKey(id)}`);
+                    await withTimeout(ref.set(record),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فتح الغيابات سحابياً');
+                    const verify=(await withTimeout(ref.once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق من فتح الغيابات')).val();
+                    cloudSaved=!!verify && verify.locked===false && String(verify.mode)==='editing_after_admin_reopen' && Number(verify.revision)===revision;
+                    if(cloudSaved){
+                        const base=mapsById(lastSyncedCollections.appSettings||[]);base.set(String(id),sanitizeRecord(verify));lastSyncedCollections.appSettings=Array.from(base.values());
+                    }
+                }catch(err){console.warn('تعذر تثبيت الفتح الإداري سحابياً وسيعاد بالمزامنة:',err);scheduleCloudRetry();}
+            }
+            pushToFirebase({silent:true}).catch(console.error);
+            renderAll();
+            if(cloudSaved) alert(`✅ تم فتح غيابات مادة «${subject.name}» للأستاذ «${professor.name}».
+ستبقى مفتوحة حتى يعيد الأستاذ الإرسال.`);
+            else if(localSaved) alert(`🟠 تم فتح الغيابات على هذا الجهاز. ستتم مزامنة قرار الفتح تلقائياً عند استقرار الاتصال.
+لن تُقفل حتى يعيد الأستاذ الإرسال.`);
+            else alert('❌ تعذر حفظ قرار فتح الغيابات. لم يتم تغيير بيانات الغياب نفسها.');
+            return cloudSaved||localSaved;
+        }
+
         function hasSubmissionUndoEverUsed(subjectId,professorId) {
             const rec=getAttendanceWorkflowState(subjectId,professorId,false);
             return rec ? !!rec.undoConsumed : hasLegacySubmissionUndoEverUsed(subjectId,professorId);
@@ -7084,8 +7188,9 @@
             if(!prof)return {code:'unassigned',label:'المادة بلا أستاذ',cls:'submission-unassigned'};
             const workflow=getAttendanceWorkflowState(subject.id,prof.id,false);
             const latestCompleted=getLatestCompletedSubmission(subject.id,prof.id);
-            if(workflow.mode==='editing_after_undo' && workflow.locked===false){
-                return {code:'reopened',label:'المادة مفتوحة للتعديل بعد التراجع — عدّل بحرية ثم أعد الإرسال',cls:'submission-dirty',latest:latestCompleted,workflow};
+            if(workflow.locked===false && (workflow.mode==='editing_after_undo'||workflow.mode==='editing_after_admin_reopen')){
+                const adminOpen=workflow.mode==='editing_after_admin_reopen';
+                return {code:'reopened',label:adminOpen?'🔓 أعاد رئيس القسم فتح المادة للتعديل — عدّل بحرية ثم أعد الإرسال':'المادة مفتوحة للتعديل بعد التراجع — عدّل بحرية ثم أعد الإرسال',cls:'submission-dirty',latest:latestCompleted,workflow,adminOpen};
             }
             if(!latestCompleted)return {code:'pending',label:'لم يؤكد الإكمال',cls:'submission-pending',workflow};
             const current=getSubjectAttendanceFingerprint(subject.id);
@@ -7129,6 +7234,7 @@
             if(note){
                 if(locked&&!undoUsed)note.textContent='🔒 تم إغلاق الغيابات بعد الإرسال. إذا وجدت خطأ فلديك فرصة تراجع واحدة فقط لفتح المادة وتعديلها ثم إعادة الإرسال.';
                 else if(locked&&undoUsed)note.textContent='🔒 تم إغلاق الغيابات بعد الإرسال، وقد استُخدمت فرصة التراجع الوحيدة لهذه المادة.';
+                else if(st.code==='reopened'&&st.workflow?.mode==='editing_after_admin_reopen')note.textContent='🔓 أعاد رئيس القسم فتح الغيابات للتعديل. يمكنك إجراء جميع التعديلات المطلوبة، وستبقى المادة مفتوحة حتى تضغط «إعادة إرسال الغيابات بعد التعديل».';
                 else if(st.code==='reopened')note.textContent='↩️ تم استخدام فرصة التراجع الوحيدة. عدّل الغيابات المطلوبة ثم أعد التأكيد والإرسال.';
                 else note.textContent=whatsappConfigured?'⚠️ مهم: الغيابات لا تُعد واصلة لمسؤول الغيابات بمجرد الحفظ. بعد فتح واتساب يجب أن تضغط «إرسال» بنفسك.':'⚠️ مهم: رقم واتساب مسؤول الغيابات غير مفعّل. الحفظ داخل النظام لا يعني وصول الغيابات إليه عبر واتساب.';
             }
