@@ -426,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V43</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V43.1</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -916,7 +916,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '43.0-release-candidate';
+        const APP_VERSION = '43.1-save-loop-fix';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -2160,11 +2160,18 @@
                 try {
                     if(legacyCloudCollections.size)await migrateLegacyCollectionsIfNeeded(Object.fromEntries([...legacyCloudCollections].map(name=>[name,[]])));
                     const conflicts = await commitFirebaseChanges(changes);
-                    const { data:freshData, loadedNames, failures } = await readCloudCollections();
-                    if (failures.length) throw new Error('تعذر التحقق الكامل من البيانات بعد الحفظ');
-                    // ادمج القراءة اللاحقة للحفظ مع أي نقرات/تعديلات حدثت أثناء انتظار الشبكة.
-                    // الاستبدال المباشر هنا كان يستطيع إسقاط سجلات غياب أضيفت بينما كانت دفعة سابقة قيد الرفع.
-                    loadedNames.forEach(name => applyRemoteCollection(name, freshData[name]));
+                    // V43.1: لا نعيد تنزيل جميع مجموعات Firebase بعد كل عملية حفظ.
+                    // commitFirebaseChanges يتحقق من السجل المستهدف، والمستمعات child_* تستقبل أي تغيير خارجي.
+                    // نحدّث خط الأساس محلياً فقط للتغييرات التي لم تتعارض.
+                    const conflictKeys=new Set(conflicts.map(c=>`${c.name}::${c.id}`));
+                    for(const change of changes){
+                        if(conflictKeys.has(`${change.name}::${change.id}`)) continue;
+                        const base=mapsById(lastSyncedCollections[change.name]||[]);
+                        if(change.after) base.set(String(change.id), sanitizeRecord(change.after));
+                        else base.delete(String(change.id));
+                        lastSyncedCollections[change.name]=Array.from(base.values());
+                        delete syncConflicts[syncConflictKey(change.name,change.id)];
+                    }
                     if (conflicts.length) {
                         // لا نفقد نسخة هذا الجهاز: نعيد التعديلات المتعارضة كمسودة محلية معلقة.
                         conflicts.forEach(change => {
@@ -2363,7 +2370,7 @@
             if (document.visibilityState === 'hidden') {
                 saveUiState();
                 scheduleLocalPersistence(0);
-            } else if (Date.now() - lastCloudSyncAt > 30000) connectAndSyncCloud();
+            } else if (!cloudConnected && Date.now() - lastCloudSyncAt > 30000) connectAndSyncCloud();
         });
         window.addEventListener('pagehide', () => { if (state.initialLoadDone) { saveUiState(); scheduleLocalPersistence(0); } });
         window.addEventListener('beforeunload', () => { if (state.initialLoadDone) saveUiState(); });
@@ -2378,7 +2385,7 @@
         });
         setInterval(() => {
             // لا نعيد تسلسل الحالة كاملة كل 30 ثانية؛ الحفظ الحدثي موجود أصلاً بعد كل تعديل.
-            if (state.initialLoadDone && document.visibilityState==='visible' && !state.isSyncing) persistLocalState('interval-light');
+            // الحفظ المحلي يتم بعد التعديلات مباشرة؛ لا نعيد بناء snapshot كامل دورياً بلا تغيير.
             if (document.visibilityState==='visible' && !cloudConnected && !cloudSyncPromise) connectAndSyncCloud();
         }, 120000);
 
