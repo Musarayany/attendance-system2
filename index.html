@@ -426,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V43.3</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V43.4</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -917,7 +917,7 @@
         let cloudRetryTimer = null;
         let cloudConnected = false;
         let attendanceReadScope = null;
-        const APP_VERSION = '43.3-report-performance-fix';
+        const APP_VERSION = '43.4-whatsapp-user-action-fix';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -9026,10 +9026,52 @@
             await localPromise;
         }
 
+        // A real link tapped AFTER durable submission keeps app launch tied to user action.
+        // Preparing a link never claims that WhatsApp opened or a message was sent.
+        function showSubmissionWhatsAppReady(url) {
+            if (!/^https:\/\/wa\.me\/\d{8,15}\?text=/.test(String(url || ''))) return false;
+            document.getElementById('submissionWhatsAppReady')?.remove();
+            const previousFocus = document.activeElement;
+            const overlay = document.createElement('div');
+            overlay.id = 'submissionWhatsAppReady';
+            overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px;direction:rtl';
+            const panel = document.createElement('div');
+            panel.setAttribute('role','dialog');
+            panel.setAttribute('aria-modal','true');
+            panel.setAttribute('aria-labelledby','submissionWhatsAppReadyTitle');
+            panel.style.cssText = 'background:white;color:#18392b;border-radius:16px;padding:24px;max-width:440px;width:100%;text-align:center;font-family:Tahoma,Arial';
+            const heading = document.createElement('h3');
+            heading.id = 'submissionWhatsAppReadyTitle';
+            heading.textContent = '✅ تم حفظ الغيابات وتثبيتها في السحابة';
+            const message = document.createElement('p');
+            message.textContent = 'اضغط الزر لفتح رسالة واتساب، ثم اضغط إرسال داخل واتساب. لا تحتاج إلى إعادة تأكيد الغيابات.';
+            const link = document.createElement('a');
+            link.href = url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = '📱 فتح واتساب';
+            link.style.cssText = 'display:block;background:#15803d;color:white;padding:16px;border-radius:10px;text-decoration:none;font-size:18px;font-weight:bold;margin:18px 0';
+            const close = document.createElement('button');
+            close.type = 'button';
+            close.textContent = 'إغلاق والعودة للغيابات';
+            const dismiss = () => { overlay.remove(); if (previousFocus?.isConnected) previousFocus.focus({preventScroll:true}); };
+            close.onclick = dismiss;
+            panel.addEventListener('keydown', event => {
+                if (event.key === 'Escape') { event.preventDefault(); dismiss(); }
+                if (event.key === 'Tab' && ((event.shiftKey && document.activeElement === link) || (!event.shiftKey && document.activeElement === close))) {
+                    event.preventDefault(); (event.shiftKey ? close : link).focus();
+                }
+            });
+            panel.append(heading,message,link,close);
+            overlay.append(panel);
+            document.body.append(overlay);
+            link.focus({preventScroll:true});
+            return true;
+        }
+
         async function sendToOfficer() {
             if (!requireAppRole('professor') || submissionMutationBusy) return false;
             submissionMutationBusy=true;
-            let whatsappWindow=null;
             try {
                 const sub = getProfessorSubject();
                 if (!sub || !subjectBelongsToCurrentProfessor(sub)) { alert('لا توجد مادة مرتبطة بهذا الحساب'); return false; }
@@ -9047,13 +9089,11 @@
                 const isResendPreview=!!previewPrevious;
                 const actionLabel=isResendPreview?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات';
                 const whatsappNumber = getOfficerWhatsAppNumber();
-                if (!confirm(`هل تؤكد ${actionLabel} لمادة «${sub.name}» حتى تاريخ ${getLocalDateISO()}؟\n\nعدد الطلبة الحاليين: ${previewStudents.length}\nالحالات التشغيلية للمحاضرات: ${previewRecords.length}${whatsappNumber?'\n\nبعد تثبيت الحفظ سيفتح واتساب تلقائياً، ويجب الضغط على «إرسال» داخله يدوياً.':''}`)) return false;
+                if (!confirm(`هل تؤكد ${actionLabel} لمادة «${sub.name}» حتى تاريخ ${getLocalDateISO()}؟\n\nعدد الطلبة الحاليين: ${previewStudents.length}\nالحالات التشغيلية للمحاضرات: ${previewRecords.length}${whatsappNumber?'\n\nبعد تثبيت الحفظ سيظهر زر «فتح واتساب». اضغطه، ثم اضغط «إرسال» داخل واتساب.':''}`)) return false;
 
-                // احجز نافذة واتساب الآن، أثناء نفس نقرة المستخدم، قبل انتظار أي عملية تخزين.
-                if (whatsappNumber) whatsappWindow=reserveWhatsAppWindow();
                 const savedView=captureProfessorViewState();
 
-                // انتظر فقط بعد حجز النافذة، ثم ابنِ الإرسال من أحدث حالة فعلية.
+                // ثبّت أحدث حالة قبل تجهيز رابط الرسالة؛ فتح التطبيق يتم بنقرة جديدة بعد الحفظ.
                 await attendancePersistenceQueue.catch(()=>false);
                 const students = getStudentsForProfessor();
                 const realRecords = getSubjectOperationalAttendanceRecords(sub.id);
@@ -9088,13 +9128,11 @@
                 if (state.submissions.length > 5000) state.submissions = state.submissions.slice(-5000);
                 const workflowRecord=setAttendanceWorkflowState(sub,{locked:true,mode:'submitted',lastSubmissionId:String(submission.id),lastSubmittedAt:Number(submission.createdAt)||Date.now()});
                 state.notifications.push({ id: makeId('note'), msg: `${isResend?'🔄':'✅'} الأستاذ ${state.currentUser.name} ${isResend?'أعاد إرسال':'أكد إكمال'} غيابات مادة ${sub.name} داخل النظام`, time: now.toLocaleString('ar-IQ'), professorId:state.currentUser.id, subjectId:sub.id, submissionId:submission.id });
-                recordAudit(isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات وتجهيز واتساب لمسؤول الغيابات', { subject: sub.name, students: students.length, records: realRecords.length, submissionId: submission.id, previousSubmissionId:submission.resendOfSubmissionId, revisionNumber:submission.revisionNumber, workflowRevision:Number(workflowRecord?.revision)||0, whatsappPrepared: !!whatsappNumber, whatsappPopupReserved:!!whatsappWindow });
+                recordAudit(isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات وتجهيز واتساب لمسؤول الغيابات', { subject: sub.name, students: students.length, records: realRecords.length, submissionId: submission.id, previousSubmissionId:submission.resendOfSubmissionId, revisionNumber:submission.revisionNumber, workflowRevision:Number(workflowRecord?.revision)||0, whatsappPrepared: !!whatsappNumber });
 
                 const ok = await saveAll();
                 renderProfessorSubmissionStatus(sub);
                 if (!ok) {
-                    closeReservedWhatsAppWindow(whatsappWindow);
-                    whatsappWindow=null;
                     alert('⚠️ تم تسجيل التأكيد محلياً لكن تعذر تثبيته في السحابة. ستعاد المزامنة تلقائياً؛ لم تُفتح رسالة واتساب حتى لا تُرسل نسخة غير مثبتة سحابياً.');
                     return false;
                 }
@@ -9111,33 +9149,9 @@
 
                 const message = buildOfficerWhatsAppMessage(sub, submission, students);
                 const url = buildWhatsAppUrl(whatsappNumber, message);
-                let opened = navigateReservedWhatsAppWindow(whatsappWindow,url);
-                let sameTabFallback=false;
-                if (!opened) {
-                    // لا نعتمد على window.open جديد بعد await لأنه سيُحظر في بعض المتصفحات.
-                    // الانتقال في نفس التبويب fallback موثوق ولا يحتاج إذن popup.
-                    try {
-                        submission.whatsappFallbackMode='same-tab';
-                        sameTabFallback=true;
-                        opened=true;
-                    } catch(e) {}
+                if (!showSubmissionWhatsAppReady(url)) {
+                    alert('تم تثبيت الغيابات، لكن تعذر تجهيز رابط واتساب. تحقق من رقم مسؤول الغيابات.');
                 }
-                if (opened) {
-                    submission.whatsappOpenedAt=Date.now();
-                    submission.whatsappOpenCount=(Number(submission.whatsappOpenCount)||0)+1;
-                    submission.whatsappOpenMode=sameTabFallback?'same-tab':'reserved-window';
-                    await persistLocalState('submission-whatsapp-opened-v39',true).catch(()=>false);
-                    pushToFirebase({silent:true}).catch(console.error);
-                    if(sameTabFallback){
-                        showAttendanceToast('📱 سيفتح واتساب في هذه الصفحة لأن المتصفح منع النافذة الجديدة.','success');
-                        setTimeout(()=>{ try { window.location.href=url; } catch(e) {} },80);
-                    } else {
-                        alert(`${isResend?'🔄 تم تثبيت النسخة المعدلة وفتح واتساب من جديد.':'✅ تم توثيق اكتمال الغيابات وفتح واتساب.'}\n\n⚠️ يجب الضغط على «إرسال» داخل واتساب؛ فتح النافذة وحده لا يعني وصول الرسالة لمسؤول الغيابات.`);
-                    }
-                    return true;
-                }
-                try { await navigator.clipboard.writeText(message); } catch (e) {}
-                alert('✅ تم تثبيت الغيابات داخل النظام.\n⚠️ تعذر فتح واتساب على هذا الجهاز. تم تجهيز الرسالة ويمكن استخدام زر «إعادة فتح آخر رسالة واتساب».');
                 return true;
             } finally {
                 submissionMutationBusy=false;
