@@ -426,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V44.2</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V44.3</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -916,7 +916,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '44.2-transfer-firebase-fix';
+        const APP_VERSION = '44.3-transfer-aware-attendance';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -3714,9 +3714,32 @@
             return state.attendances.filter(att=>!isEnrollmentRecord(att)&&String(att.studentId)===String(studentId)&&String(att.subjectId)===String(subjectId)&&String(att.date)===String(date)&&attendanceRecordSessionKey(att)===key);
         }
 
+        function attendanceRecordMatchesCurrentEnrollment(record, student, subject) {
+            if(!record || !student || !subject)return true;
+            const currentGroup=normalizeGroupName(professorGroupNameForStudent(student,subject),'');
+            const recordedGroup=normalizeGroupName(
+                record.lectureGroup || record.groupName || record.scheduleGroup ||
+                record.practicalGroup || record.theoreticalGroup || '',
+                ''
+            );
+            // سجل من مجموعة سابقة يبقى تاريخياً ولا يتحول إلى تعارض بعد نقل الطالب.
+            if(recordedGroup && currentGroup && recordedGroup!==currentGroup)return false;
+            return true;
+        }
+
         function findCrossSubjectAttendanceConflicts(studentId, subjectId, date, sessionTime) {
             const key=attendanceSessionKey(sessionTime);
-            return state.attendances.filter(att=>!isEnrollmentRecord(att)&&att?.superseded!==true&&String(att.studentId)===String(studentId)&&String(att.subjectId)!==String(subjectId)&&String(att.date)===String(date)&&attendanceRecordSessionKey(att)===key);
+            const student=state.students.find(st=>String(st.id)===String(studentId));
+            return state.attendances.filter(att=>{
+                if(isEnrollmentRecord(att) || att?.superseded===true)return false;
+                if(String(att.studentId)!==String(studentId))return false;
+                if(String(att.subjectId)===String(subjectId))return false;
+                if(String(att.date)!==String(date))return false;
+                if(attendanceRecordSessionKey(att)!==key)return false;
+                const otherSubject=state.subjects.find(s=>String(s.id)===String(att.subjectId));
+                if(student && otherSubject && !attendanceRecordMatchesCurrentEnrollment(att,student,otherSubject))return false;
+                return true;
+            });
         }
 
         function attendanceProvenance(meta={}) {
