@@ -426,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V43.5</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V43.6</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -759,7 +759,7 @@
                             <input type="text" id="quickSessionTime" value="جدول / يدوي / استثنائي" readonly aria-readonly="true" style="width:155px;background:#f1f5f9;color:#475569;">
                             <button onclick="toggleQuickMode()" class="quick-mode-toggle" id="quickModeToggle">⚡ وضع سريع</button>
                         </div>
-                        <small>ساعات المادة يحددها رئيس القسم فقط. إذا لم تكن المحاضرة مجدولة، تستخدم أزرار الحضور والغياب تاريخ/وقت التسجيل اليدوي، أو تعتمد جلسة استثنائية بعد تأكيد الأستاذ.</small>
+                        <small>ساعات المادة يحددها رئيس القسم فقط. إذا لم تكن المحاضرة مجدولة، تستخدم أزرار الحضور والغياب التاريخ والوقت المحددين فوق بطاقات الطلبة، أو تعتمد جلسة استثنائية بعد تأكيد الأستاذ.</small>
                     </div>
                     <div class="card">
                         <h4>📷 مسح باركود الطالب</h4>
@@ -776,16 +776,7 @@
                         <select id="profStudentSelect" onchange="syncManualAttendanceDefaults()"></select>
                         <label>ساعات المادة المعتمدة من رئيس القسم</label>
                         <input type="number" id="profAbsentHours" value="1" readonly aria-readonly="true" tabindex="-1" style="background:#e2e8f0;color:#334155;font-weight:900;cursor:not-allowed;">
-                        <label>تاريخ المحاضرة / عرض المجاميع</label>
-                        <div id="profHistoricalSessionPanel" hidden style="padding:8px;background:#eff6ff;border-radius:8px;margin-bottom:8px;">
-                            <label for="profHistoricalSession">🔓 اختيار محاضرة سابقة للتعديل</label>
-                            <select id="profHistoricalSession" onchange="selectProfessorHistoricalSession(this.value)"></select>
-                            <small>اختر المحاضرة، ثم عدّل حضور أو غياب الطالب وأعد إرسال الغيابات. لمحاضرة غير مدرجة، حدد التاريخ والوقت أدناه.</small>
-                        </div>
-                        <input type="date" id="profAbsentDate" onchange="onProfessorAttendanceDateChanged()">
-                        <small style="display:block;margin-top:-4px;margin-bottom:6px;color:#475569;">اختر تاريخ اليوم أو تاريخ محاضرة سابقة؛ ستفتح فقط المجاميع التي لديها محاضرة منشورة في ذلك التاريخ.</small>
-                        <label>وقت المحاضرة</label>
-                        <input type="time" id="profSessionTime" onchange="onProfessorAttendanceTimeChanged()">
+                        <small>يستخدم التسجيل الفردي تاريخ ووقت المحاضرة المحددين فوق بطاقات الشعب والطلاب.</small>
                         <label>نوع الغياب</label>
                         <select id="profExcused">
                             <option value="0">بدون عذر</option>
@@ -806,8 +797,22 @@
                     </div>
                     <div class="card">
                         <h4>👥 الشعب والطلاب</h4>
+                        <div id="profHistoricalSessionPanel" hidden style="padding:12px;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;margin-bottom:10px;">
+                            <label for="profHistoricalSession" style="font-size:14px;font-weight:bold;">🔓 فتح محاضرة سابقة على بطاقات الطلبة</label>
+                            <select id="profHistoricalSession" onchange="selectProfessorHistoricalSession(this.value)"></select>
+                            <p id="profHistoricalSessionSummary" role="status" aria-live="polite" style="margin:6px 0;font-weight:bold;color:#1e40af;"></p>
+                            <small>اختر المحاضرة مرة واحدة. ستظهر حالات الطلبة على البطاقات أدناه؛ استخدم «حضور الكل» أو «غياب الكل» لكل مجموعة، أو عدّل الحالات المطلوبة، ثم أعد إرسال الغيابات.</small>
+                            <button type="button" onclick="showProfessorTodayAttendance()" class="btn-info btn-sm" style="margin-top:8px;">↩ العودة إلى محاضرات اليوم</button>
+                        </div>
+                        <div style="padding:10px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:9px;margin-bottom:10px;">
+                            <label for="profAbsentDate">تاريخ المحاضرة المعروضة على البطاقات</label>
+                            <input type="date" id="profAbsentDate" onchange="onProfessorAttendanceDateChanged()">
+                            <label for="profSessionTime">وقت المحاضرة</label>
+                            <input type="time" id="profSessionTime" onchange="onProfessorAttendanceTimeChanged()">
+                            <small>أوامر الحضور والغياب على البطاقات تتبع هذا التاريخ والوقت. يمكن تحديدهما هنا لمحاضرة سابقة غير مدرجة، عند وجود إذن رئيس القسم.</small>
+                        </div>
                         <button id="removeAllLatestSubjectAbsencesBtn" onclick="removeAllLatestSubjectAbsences()" class="btn-secondary" style="width:100%;margin-bottom:6px;">🗑️ إزالة غياب الكل من آخر محاضرة فيها غياب</button>
-                        <small style="margin-bottom:6px;">يعمل على آخر محاضرة مسجلة فعلياً لهذه المادة. بعد التراجع عن الإرسال يبقى متاحاً حتى تعيد الإرسال.</small>
+                        <small id="removeAllSubjectAbsencesNote" style="margin-bottom:6px;">يعمل على آخر محاضرة مسجلة فعلياً لهذه المادة. بعد التراجع عن الإرسال يبقى متاحاً حتى تعيد الإرسال.</small>
                         <div id="profGroupsContainer" style="margin-top:8px;"></div>
                     </div>
                     <div class="card">
@@ -922,7 +927,7 @@
         let cloudRetryTimer = null;
         let cloudConnected = false;
         let attendanceReadScope = null;
-        const APP_VERSION = '43.5-historical-attendance-fix';
+        const APP_VERSION = '43.6-group-history-edit';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -7623,6 +7628,7 @@
         function selectProfessorSubject(subjectId) {
             const allowed = getProfessorSubjects().some(s => s.id === subjectId);
             if (!allowed) return;
+            clearProfessorHistoricalSelection();
             state.currentProfessorSubjectId = subjectId;
             const manualTime=document.getElementById('profSessionTime'); if(manualTime)manualTime.value='';
             const manualStudent=document.getElementById('profStudentSelect'); if(manualStudent)manualStudent.value='';
@@ -7631,6 +7637,7 @@
         }
 
         function onProfessorAttendanceDateChanged() {
+            clearProfessorHistoricalSelection();
             if(state.currentUser?.role!=='professor')return;
             const dateInput=document.getElementById('profAbsentDate');
             const timeInput=document.getElementById('profSessionTime');
@@ -7652,9 +7659,11 @@
         }
 
         function onProfessorAttendanceTimeChanged() {
+            clearProfessorHistoricalSelection();
             if(state.currentUser?.role!=='professor')return;
             const savedView=captureProfessorViewState();
             renderProfessorGroups(getStudentsForProfessor());
+            renderProfessorSubmissionStatus(getProfessorSubject());
             restoreProfessorViewState(savedView,'');
         }
 
@@ -7946,13 +7955,39 @@
                 isAdminReopenStillActive(subject,String(state.currentUser.id));
         }
 
+        function clearProfessorHistoricalSelection() {
+            const select=document.getElementById('profHistoricalSession');
+            if(select){delete select.dataset.sessionKey;delete select.dataset.subjectId;}
+        }
+
+        function getSelectedProfessorHistoricalSession(subject) {
+            if(!canUseAdminHistoricalAttendance(subject))return null;
+            const select=document.getElementById('profHistoricalSession');
+            if(!select || select.dataset.subjectId!==String(subject.id))return null;
+            let pair;try{pair=JSON.parse(select.dataset.sessionKey||'');}catch(e){return null;}
+            if(!Array.isArray(pair)||pair[0]!==getProfessorAttendanceWorkDate()||pair[1]!==normalizeSessionTime(document.getElementById('profSessionTime')?.value||''))return null;
+            return {ok:true,date:pair[0],sessionTime:pair[1],subjectId:String(subject.id),displayTime:`${pair[0]} · ${pair[1]}`,fromRecordedAttendance:true};
+        }
+
+        function showProfessorTodayAttendance() {
+            if(state.currentUser?.role!=='professor')return;
+            clearProfessorHistoricalSelection();
+            document.getElementById('profAbsentDate').value=getLocalDateISO();
+            document.getElementById('profSessionTime').value='';
+            const subject=getProfessorSubject(),view=captureProfessorViewState();
+            renderProfessorGroups(getStudentsForProfessor());
+            renderProfessorAttendance(subject?.id);
+            renderProfessorSubmissionStatus(subject);
+            restoreProfessorViewState(view,'');
+        }
+
         function renderProfessorHistoricalSessions(subject) {
             const panel=document.getElementById('profHistoricalSessionPanel');
             const select=document.getElementById('profHistoricalSession');
             if(!panel||!select)return;
             const allowed=canUseAdminHistoricalAttendance(subject);
             panel.hidden=!allowed; select.disabled=!allowed;
-            if(!allowed){select.innerHTML='';return;}
+            if(!allowed){select.innerHTML='';clearProfessorHistoricalSelection();return;}
             const sessions=new Map(),today=getLocalDateISO();
             (state.attendances||[]).forEach(a=>{
                 if(String(a.subjectId)!==String(subject.id)||isEnrollmentRecord(a)||a.superseded===true||a.cancelled===true||!isValidAttendanceDate(a.date)||a.date>today)return;
@@ -7965,6 +8000,9 @@
             select.innerHTML='<option value="">اختر تاريخ ووقت المحاضرة السابقة</option>'+[...sessions.entries()]
                 .sort((a,b)=>(b[1].date+b[1].time).localeCompare(a[1].date+a[1].time))
                 .map(([key,v])=>`<option value="${escapeHtml(key)}" ${key===selected?'selected':''}>${escapeHtml(v.date+' — '+v.time)}</option>`).join('');
+            const opened=getSelectedProfessorHistoricalSession(subject);
+            const summary=document.getElementById('profHistoricalSessionSummary');
+            if(summary)summary.textContent=opened?`المحاضرة المفتوحة للتعديل الجماعي: ${opened.date} الساعة ${opened.sessionTime} — ${subject.name}`:'اختر محاضرة لعرض حضور وغياب جميع طلبتها على البطاقات.';
         }
 
         function selectProfessorHistoricalSession(value) {
@@ -7972,6 +8010,8 @@
             if(!canUseAdminHistoricalAttendance(subject))return;
             let pair;try{pair=JSON.parse(value);}catch(e){return;}
             if(!Array.isArray(pair)||!isValidAttendanceDate(pair[0])||pair[0]>getLocalDateISO()||!normalizeSessionTime(pair[1]))return;
+            const select=document.getElementById('profHistoricalSession');
+            if(select){select.dataset.subjectId=String(subject.id);select.dataset.sessionKey=JSON.stringify(pair);}
             document.getElementById('profAbsentDate').value=pair[0];
             document.getElementById('profSessionTime').value=normalizeSessionTime(pair[1]);
             const view=captureProfessorViewState();
@@ -8012,7 +8052,11 @@
             if(removeAllButton){
                 removeAllButton.disabled=!!locked;
                 removeAllButton.setAttribute('aria-disabled',locked?'true':'false');
-                removeAllButton.title=locked?'الغيابات مقفلة بعد الإرسال؛ استخدم التراجع إن كان متاحاً.':'إزالة غياب جميع الطلبة من آخر محاضرة مسجلة فعلياً لهذه المادة.';
+                const opened=getSelectedProfessorHistoricalSession(subject);
+                removeAllButton.textContent=opened?'🗑️ إزالة غياب الكل من المحاضرة المختارة':'🗑️ إزالة غياب الكل من آخر محاضرة فيها غياب';
+                removeAllButton.title=locked?'الغيابات مقفلة بعد الإرسال؛ استخدم التراجع إن كان متاحاً.':opened?`إزالة الغياب من ${opened.displayTime}`:'إزالة غياب جميع الطلبة من آخر محاضرة مسجلة فعلياً لهذه المادة.';
+                const removalNote=document.getElementById('removeAllSubjectAbsencesNote');
+                if(removalNote)removalNote.textContent=opened?`يطبق على المحاضرة المختارة فقط: ${opened.date} الساعة ${opened.sessionTime}.`:'يعمل على آخر محاضرة مسجلة فعلياً لهذه المادة.';
             }
             if(undoButton){undoButton.style.display=locked&&!undoUsed?'block':'none';undoButton.disabled=!(locked&&!undoUsed);}
             if(note){
@@ -8440,6 +8484,10 @@
             const lectures=getScheduledAttendanceLectures(subject,groupName,desiredDate);
             const requestedTime=normalizeSessionTime(document.getElementById('profSessionTime')?.value||'');
             const recorded=getRecordedSessionForGroupDate(subject,groupName,desiredDate,requestedTime);
+            const selectedHistorical=getSelectedProfessorHistoricalSession(subject);
+            if(selectedHistorical && !recorded && !lectures.some(l=>formatMinutes24(l.startMinutes)===requestedTime)) {
+                return {ok:false,code:'group-not-in-selected-session',reason:'هذه المجموعة ليست مرتبطة بالمحاضرة السابقة المختارة.',date:desiredDate,groupName};
+            }
             if(desiredDate<today && canUseAdminHistoricalAttendance(subject)) {
                 if(recorded)return {...recorded,contextSource:'recorded-history',historicalEvidence:true};
                 if(requestedTime) {
@@ -8517,6 +8565,7 @@
             students.forEach(st => { const g = professorGroupNameForStudent(st,sub); if(!groups[g]) groups[g]=[]; groups[g].push(st); });
             const groupLabel = sub?.groupType === 'عملي' ? 'المجموعة العملية' : 'الشعبة النظرية';
             const submissionLocked = isProfessorSubjectLockedAfterSubmission(sub);
+            const historicalSelection=getSelectedProfessorHistoricalSession(sub);
             let html = submissionLocked ? `<div style="margin-bottom:8px;padding:8px;border-radius:9px;background:#fef2f2;color:#991b1b;font-size:11px;font-weight:900;">🔒 الغيابات مغلقة بعد الإرسال. استخدم زر التراجع إن كان ما يزال متاحاً.</div><div class="groups-grid">` : `<div class="groups-grid">`;
             for (const groupName of Object.keys(groups).sort((a,b)=>a.localeCompare(b,'ar'))) {
                 const groupStudents = groups[groupName];
@@ -8545,7 +8594,7 @@
                     const isPresent=!!sessionRecord&&!hasAbsence;
                     const studentGroupContext = sub?.groupType==='عملي' ? `📖 ${studentTheoreticalGroup(st)}` : (studentPracticalGroup(st)?`🔬 ${studentPracticalGroup(st)}`:'🔬 غير موزع');
                     const encodedStudent=encodeURIComponent(String(st.id));
-                    if (state.quickMode) {
+                    if (state.quickMode || historicalSelection) {
                         html += `<div class="student-quick-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-label">${escapeHtml(st.name)}</span> <span class="student-status-icon">${statusIcon}</span><span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="present" aria-pressed="${isPresent?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present ${isPresent?'attendance-selected':hasAbsence?'attendance-dimmed':''}">✅ حاضر</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="absent" aria-pressed="${hasAbsence?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent ${hasAbsence?'attendance-selected':isPresent?'attendance-dimmed':''}">❌ غائب</button></div></div>`;
                     } else {
                         const todayBadge = hasAbsence ? '<span data-attendance-session-badge="1" class="badge bg-red" style="font-size:8px;">غائب في هذه المحاضرة</span>' : isPresent ? '<span data-attendance-session-badge="1" class="badge bg-green" style="font-size:8px;">حاضر في هذه المحاضرة</span>' : '<span data-attendance-session-badge="1" class="badge" style="font-size:8px;background:#e2e8f0;color:#475569;">لم تُسجل حالته</span>';
@@ -8831,11 +8880,12 @@
             const sub=getProfessorSubject();
             if(!sub||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح لهذا الحساب بتعديل غياب هذه المادة.');return;}
             if(!canProfessorEditAttendanceForSubject(sub))return;
-            const context=getLatestAbsentSessionContextForSubject(sub);
+            const selectedHistorical=getSelectedProfessorHistoricalSession(sub);
+            const context=selectedHistorical||getLatestAbsentSessionContextForSubject(sub);
             if(!context){showAttendanceToast('لا توجد أي محاضرة مسجلة فيها غياب لهذه المادة.','warning');return;}
             const records=getAbsentRecordsForSession(sub,context.date,context.sessionTime,null);
             if(!records.length){showAttendanceToast('لا توجد غيابات فعلية في آخر محاضرة مسجلة.','warning');return;}
-            if(!confirm(`إزالة غياب جميع الطلبة من آخر محاضرة فيها غياب لمادة «${sub.name}»؟
+            if(!confirm(`إزالة غياب جميع الطلبة من ${selectedHistorical?'المحاضرة المختارة':'آخر محاضرة فيها غياب'} لمادة «${sub.name}»؟
 
 التاريخ: ${context.date}
 الوقت: ${context.sessionTime}
