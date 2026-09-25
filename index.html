@@ -426,7 +426,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V44.3</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -801,6 +801,8 @@
                     </div>
                     <div class="card">
                         <h4>👥 الشعب والطلاب</h4>
+                        <input id="profStudentSearch" type="search" placeholder="🔎 ابحث عن طالب بالاسم..." oninput="filterProfessorStudentCards(this.value)" autocomplete="off" style="width:100%;margin-bottom:7px;">
+                        <div style="font-size:10px;color:#64748b;margin-bottom:7px;">الأسماء مرتبة أبجدياً، ويظهر أمام كل طالب انتماؤه النظري والعملي.</div>
                         <button id="removeAllLatestSubjectAbsencesBtn" onclick="removeAllLatestSubjectAbsences()" class="btn-secondary" style="width:100%;margin-bottom:6px;">🗑️ إزالة غياب الكل من آخر محاضرة فيها غياب</button>
                         <small style="margin-bottom:6px;">يعمل على آخر محاضرة مسجلة فعلياً لهذه المادة. بعد التراجع عن الإرسال يبقى متاحاً حتى تعيد الإرسال.</small>
                         <div id="profGroupsContainer" style="margin-top:8px;"></div>
@@ -916,7 +918,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '44.3-transfer-aware-attendance';
+        const APP_VERSION = '45.0-professor-ui-history-permission';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -3812,6 +3814,11 @@
                 recordAudit('حماية سجل قديم تغير وقته',{originalId:canonicalTarget,recoveredId:preserved.id});
             }
             const records=findAttendanceRecordsForSession(studentId,subject.id,context.date,context.sessionTime);
+            const isHistorical=String(context.date||'')<getLocalDateISO();
+            if(isHistorical && records.length===0 && state.currentUser?.role==='professor' &&
+               !hasHistoricalAttendanceCreatePermission(subject,context.date,state.currentUser.id)){
+                throw new Error('لا توجد صلاحية من رئيس القسم لإنشاء غياب/حضور جديد بهذا التاريخ القديم.');
+            }
             const ordered=[...records].sort((a,b)=>attendanceRecordRevision(b)-attendanceRecordRevision(a) || String(b.id||'').localeCompare(String(a.id||'')));
             const previous=chooseLatestAttendanceRecord(records);
             const canonicalId=attendanceCanonicalId(studentId,subject.id,context.date,context.sessionTime);
@@ -5632,7 +5639,7 @@
                 const typeIcon = sub.groupType === 'نظري' ? '📖' : sub.groupType === 'عملي' ? '🔬' : '📖🔬';
                 const typeClass = sub.groupType === 'نظري' ? 'bg-blue' : sub.groupType === 'عملي' ? 'bg-green' : 'bg-purple';
                 html +=
-                    (()=>{const wf=getAdminAttendanceWorkflowStatus(sub);const sid=encodeURIComponent(String(sub.id));return `<tr><td>${idx + 1}</td><td>${sub.name}</td><td><span class="badge ${typeClass}">${typeIcon} ${sub.groupType}</span></td><td>${getSubjectWeeklyHours(sub)}</td><td>${prof ? prof.name : 'غير معين'}</td><td>${sub.ects || '-'}</td><td><div style="display:flex;gap:4px;align-items:center;justify-content:center;flex-wrap:wrap;"><span class="badge ${wf.code==='locked'?'bg-red':wf.code==='admin-open'||wf.code==='open'?'bg-green':'bg-blue'}">${escapeHtml(wf.label)}</span>${wf.canReopen?`<button type="button" class="btn-warning btn-sm" onclick="reopenProfessorAttendanceByAdmin(decodeURIComponent('${sid}'))">🔓 إعادة فتح للتعديل</button>`:''}</div></td></tr>`;})();
+                    (()=>{const wf=getAdminAttendanceWorkflowStatus(sub);const sid=encodeURIComponent(String(sub.id));return `<tr><td>${idx + 1}</td><td>${sub.name}</td><td><span class="badge ${typeClass}">${typeIcon} ${sub.groupType}</span></td><td>${getSubjectWeeklyHours(sub)}</td><td>${prof ? prof.name : 'غير معين'}</td><td>${sub.ects || '-'}</td><td><div style="display:flex;gap:4px;align-items:center;justify-content:center;flex-wrap:wrap;"><span class="badge ${wf.code==='locked'?'bg-red':wf.code==='admin-open'||wf.code==='open'?'bg-green':'bg-blue'}">${escapeHtml(wf.label)}</span>${wf.canReopen?`<button type="button" class="btn-warning btn-sm" onclick="reopenProfessorAttendanceByAdmin(decodeURIComponent('${sid}'))">🔓 إعادة فتح للتعديل</button>`:''}<button type="button" class="btn-info btn-sm" onclick="manageHistoricalAttendancePermission(decodeURIComponent('${sid}'))">🗓️ إذن تسجيل قديم</button></div></td></tr>`;})();
             });
             html += `</table></div></div>`;
             container.innerHTML = html;
@@ -5810,7 +5817,7 @@
                             <button onclick="saveSubjectHoursFromInput(decodeURIComponent('${encodeURIComponent(String(s.id))}'),'levelSubjectHours_${encodeURIComponent(String(s.id))}')" class="btn-sm btn-success" style="padding:3px 7px;font-size:10px;">💾 حفظ الساعات</button>
                             <button onclick="editSubjectWeeks('${s.id}')" class="btn-sm btn-warning" style="min-width:25px; padding:1px 4px; font-size:10px;" title="تعديل أسابيع التدريس">📐</button>
                             <button onclick="editSubjectProfessor('${s.id}')" class="btn-sm btn-warning" style="min-width:25px; padding:1px 4px; font-size:10px;">👤</button>
-                            ${(()=>{const wf=getAdminAttendanceWorkflowStatus(s);return wf.canReopen?`<button type="button" onclick="reopenProfessorAttendanceByAdmin(decodeURIComponent('${encodeURIComponent(String(s.id))}'))" class="btn-sm btn-info" style="padding:2px 6px;font-size:10px;" title="${escapeHtml(wf.label)}">🔓 إعادة فتح الغيابات</button>`:`<span class="badge ${wf.code==='admin-open'||wf.code==='open'?'bg-green':wf.code==='locked'?'bg-red':'bg-blue'}" title="حالة إرسال الغيابات">${escapeHtml(wf.label)}</span>`;})()}
+                            ${(()=>{const wf=getAdminAttendanceWorkflowStatus(s);return wf.canReopen?`<button type="button" onclick="reopenProfessorAttendanceByAdmin(decodeURIComponent('${encodeURIComponent(String(s.id))}'))" class="btn-sm btn-info" style="padding:2px 6px;font-size:10px;" title="${escapeHtml(wf.label)}">🔓 إعادة فتح الغيابات</button>`:`<span class="badge ${wf.code==='admin-open'||wf.code==='open'?'bg-green':wf.code==='locked'?'bg-red':'bg-blue'}" title="حالة إرسال الغيابات">${escapeHtml(wf.label)}</span>`;})()}<button type="button" onclick="manageHistoricalAttendancePermission(decodeURIComponent('${encodeURIComponent(String(s.id))}'))" class="btn-sm btn-info" style="padding:2px 6px;font-size:10px;">🗓️ إذن تسجيل قديم</button>
                             <button onclick="deleteSubjectFromLevel('${s.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button>
                         </div>
                     </div>
@@ -5973,7 +5980,7 @@
                             <input id="fullSubjectHours_${encodeURIComponent(String(s.id))}" type="number" min="0.5" max="20" step="0.5" value="${getSubjectWeeklyHours(s)}" style="width:72px;padding:4px 6px;font-size:10px;">
                             <button onclick="saveSubjectHoursFromInput(decodeURIComponent('${encodeURIComponent(String(s.id))}'),'fullSubjectHours_${encodeURIComponent(String(s.id))}')" class="btn-sm btn-success" style="padding:3px 7px;font-size:10px;">💾 حفظ الساعات</button>
                             <button onclick="editSubjectWeeks('${s.id}')" class="btn-sm btn-warning" style="padding:1px 5px;font-size:10px;">📐 الأسابيع</button>
-                            ${(()=>{const wf=getAdminAttendanceWorkflowStatus(s);return wf.canReopen?`<button type="button" onclick="reopenProfessorAttendanceByAdmin(decodeURIComponent('${encodeURIComponent(String(s.id))}'))" class="btn-sm btn-info" style="padding:2px 6px;font-size:10px;">🔓 إعادة فتح الغيابات</button>`:`<span class="badge ${wf.code==='admin-open'||wf.code==='open'?'bg-green':wf.code==='locked'?'bg-red':'bg-blue'}">${escapeHtml(wf.label)}</span>`;})()}
+                            ${(()=>{const wf=getAdminAttendanceWorkflowStatus(s);return wf.canReopen?`<button type="button" onclick="reopenProfessorAttendanceByAdmin(decodeURIComponent('${encodeURIComponent(String(s.id))}'))" class="btn-sm btn-info" style="padding:2px 6px;font-size:10px;">🔓 إعادة فتح الغيابات</button>`:`<span class="badge ${wf.code==='admin-open'||wf.code==='open'?'bg-green':wf.code==='locked'?'bg-red':'bg-blue'}">${escapeHtml(wf.label)}</span>`;})()}<button type="button" onclick="manageHistoricalAttendancePermission(decodeURIComponent('${encodeURIComponent(String(s.id))}'))" class="btn-sm btn-info" style="padding:2px 6px;font-size:10px;">🗓️ إذن تسجيل قديم</button>
                             <button onclick="deleteSubjectFull('${s.id}')" class="btn-sm btn-danger" style="min-width:25px; padding:1px 4px; font-size:10px;">🗑️</button></div>
                     </div>
                 `;
@@ -7779,6 +7786,68 @@
         }
 
 
+
+        // V45: إذن مستقل لإنشاء حضور/غياب بتاريخ قديم. لا يمنح تلقائياً للأستاذ.
+        function historicalAttendancePermissionId(subjectId,professorId){
+            const clean=v=>String(v||'').replace(/[^A-Za-z0-9_-]/g,'_');
+            return `historicalAttendancePermission__${clean(subjectId)}__${clean(professorId)}`;
+        }
+        function getHistoricalAttendancePermission(subject,professorId=null){
+            if(!subject)return null;
+            const pid=String(professorId||subject.professorId||'');
+            const id=historicalAttendancePermissionId(subject.id,pid);
+            return (state.appSettings||[]).find(x=>x&&x.id===id&&x.kind==='historicalAttendancePermission')||null;
+        }
+        function hasHistoricalAttendanceCreatePermission(subject,date,professorId=null){
+            if(!subject||!isValidAttendanceDate(String(date||'')))return false;
+            const rec=getHistoricalAttendancePermission(subject,professorId);
+            if(!rec||rec.enabled!==true)return false;
+            const d=String(date);
+            const from=String(rec.fromDate||'0000-01-01');
+            const to=String(rec.toDate||'9999-12-31');
+            return d>=from&&d<=to;
+        }
+        async function manageHistoricalAttendancePermission(subjectId){
+            if(!requireAppRole('admin'))return false;
+            const subject=(state.subjects||[]).find(s=>String(s.id)===String(subjectId));
+            if(!subject){alert('المادة غير موجودة.');return false;}
+            const professor=(state.professors||[]).find(p=>String(p.id)===String(subject.professorId||''));
+            if(!professor){alert('المادة غير مرتبطة بأستاذ.');return false;}
+            const existing=getHistoricalAttendancePermission(subject,professor.id);
+            if(existing?.enabled===true){
+                const keep=confirm(`يوجد إذن تسجيل بتاريخ قديم للأستاذ «${professor.name}» في مادة «${subject.name}» من ${existing.fromDate} إلى ${existing.toDate}.\n\nموافق = إبقاء الإذن وتعديل المدة\nإلغاء = سحب الإذن`);
+                if(!keep){
+                    existing.enabled=false; existing.revokedAt=Date.now(); existing.updatedAt=Date.now();
+                    existing.revokedById=String(state.currentUser?.id||'admin');
+                    recordAudit('سحب إذن التسجيل بتاريخ قديم',{subjectId:subject.id,subject:subject.name,professorId:professor.id,professor:professor.name});
+                    await persistLocalState('revoke-historical-attendance-permission',true);
+                    pushToFirebase({silent:true}).catch(console.error); renderAll();
+                    alert('✅ تم سحب إذن التسجيل بتاريخ قديم.'); return true;
+                }
+            }
+            const today=getLocalDateISO();
+            const defaultFrom=existing?.fromDate||today;
+            const defaultTo=existing?.toDate||today;
+            const from=prompt(`تاريخ بداية الإذن للأستاذ «${professor.name}»\nالصيغة YYYY-MM-DD`,defaultFrom);
+            if(from===null)return false;
+            const to=prompt('تاريخ نهاية الإذن\nالصيغة YYYY-MM-DD',defaultTo);
+            if(to===null)return false;
+            if(!isValidAttendanceDate(from)||!isValidAttendanceDate(to)||from>to||to>today){
+                alert('❌ مدة الإذن غير صالحة. يجب أن تكون تواريخ صحيحة، والنهاية ليست في المستقبل.'); return false;
+            }
+            const id=historicalAttendancePermissionId(subject.id,professor.id);
+            const now=Date.now();
+            const rec={...(existing||{}),id,kind:'historicalAttendancePermission',subjectId:String(subject.id),professorId:String(professor.id),
+                enabled:true,fromDate:from,toDate:to,grantedAt:now,updatedAt:now,
+                grantedById:String(state.currentUser?.id||'admin'),grantedByName:sanitizeText(state.currentUser?.name||'رئيس القسم',120)};
+            state.appSettings=(state.appSettings||[]).filter(x=>String(x?.id||'')!==id); state.appSettings.push(rec);
+            recordAudit('منح إذن التسجيل بتاريخ قديم',{subjectId:subject.id,subject:subject.name,professorId:professor.id,professor:professor.name,fromDate:from,toDate:to});
+            await persistLocalState('historical-attendance-permission',true);
+            pushToFirebase({silent:true}).catch(console.error); renderAll();
+            alert(`✅ تم منح الإذن من ${from} إلى ${to}.\nهذا الإذن يسمح بإنشاء تسجيلات قديمة ضمن هذه المدة فقط.`);
+            return true;
+        }
+
         // V38: فتح إداري مستقل للغيابات من رئيس القسم.
         // لا يستهلك فرصة التراجع الخاصة بالأستاذ، ولا يغير أي سجل غياب.
         function getAdminAttendanceWorkflowStatus(subject) {
@@ -8246,6 +8315,7 @@
                 <p style="font-size:12px;"><strong>إجمالي ساعات المادة للحساب:</strong> ${getSubjectCourseHours(sub)} س (${getSubjectTeachingWeeks(sub)} أسبوع)</p>
                 <p style="font-size:12px;"><strong>الأستاذ:</strong> ${prof ? prof.name : '--'}</p>
                 <p style="font-size:11px; color:#4a5568; margin-top:4px;">👨‍🎓 عدد الطلاب المرتبطين: ${students.length}</p>
+                ${(()=>{const hp=getHistoricalAttendancePermission(sub,state.currentUser?.id);return hp?.enabled===true?`<p style="font-size:10px;color:#166534;font-weight:900;">🗓️ إذن رئيس القسم للتسجيل القديم: ${escapeHtml(hp.fromDate)} ← ${escapeHtml(hp.toDate)}</p>`:`<p style="font-size:10px;color:#991b1b;">🗓️ إنشاء تسجيل جديد بتاريخ قديم غير متاح إلا بإذن رئيس القسم.</p>`;})()}
                 <p style="font-size:10px;color:#64748b;">${sub.groupType === 'عملي' ? '🔬 العرض حسب المجاميع العملية' : '📖 العرض حسب الشعب النظرية'}</p>
                 <div class="prof-own-schedule"><div class="prof-own-schedule-title"><span>🗓️ محاضراتي الأسبوعية من برنامج الجدول</span><span style="font-size:9px;color:#64748b">تتحدث تلقائياً عند نشر جدول جديد</span></div><div class="prof-own-schedule-body">${prof?renderProfessorSchedulePanel(prof,{open:true,title:'الجدول الأسبوعي الكامل'}):'<div class="prof-schedule-empty">لا يوجد أستاذ مرتبط.</div>'}</div></div>
             `;
@@ -8486,7 +8556,7 @@
             const submissionLocked = isProfessorSubjectLockedAfterSubmission(sub);
             let html = submissionLocked ? `<div style="margin-bottom:8px;padding:8px;border-radius:9px;background:#fef2f2;color:#991b1b;font-size:11px;font-weight:900;">🔒 الغيابات مغلقة بعد الإرسال. استخدم زر التراجع إن كان ما يزال متاحاً.</div><div class="groups-grid">` : `<div class="groups-grid">`;
             for (const groupName of Object.keys(groups).sort((a,b)=>a.localeCompare(b,'ar'))) {
-                const groupStudents = groups[groupName];
+                const groupStudents = [...groups[groupName]].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ar',{sensitivity:'base'}));
                 const context=resolveBulkAttendanceContext(sub,groupName,false);
                 const encodedGroup=encodeURIComponent(groupName);
                 const chipClass=context.ok?'':(context.code==='future'?'waiting':'unavailable');
@@ -8510,7 +8580,7 @@
                     const sessionRecord = context.ok?findAttendanceForSession(st.id,sub?.id,context.date,context.sessionTime):null;
                     const hasAbsence = Number(sessionRecord?.hours) > 0;
                     const isPresent=!!sessionRecord&&!hasAbsence;
-                    const studentGroupContext = sub?.groupType==='عملي' ? `📖 ${studentTheoreticalGroup(st)}` : (studentPracticalGroup(st)?`🔬 ${studentPracticalGroup(st)}`:'🔬 غير موزع');
+                    const studentGroupContext = `📖 الشعبة ${studentTheoreticalGroup(st)||'غير محددة'} · 🔬 العملي ${studentPracticalGroup(st)||'غير موزع'}`;
                     const encodedStudent=encodeURIComponent(String(st.id));
                     if (state.quickMode) {
                         html += `<div class="student-quick-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-label">${escapeHtml(st.name)}</span> <span class="student-status-icon">${statusIcon}</span><span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="present" aria-pressed="${isPresent?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present ${isPresent?'attendance-selected':hasAbsence?'attendance-dimmed':''}">✅ حاضر</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="absent" aria-pressed="${hasAbsence?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent ${hasAbsence?'attendance-selected':isPresent?'attendance-dimmed':''}">❌ غائب</button></div></div>`;
@@ -8522,6 +8592,16 @@
                 html += `</div></div>`;
             }
             html += `</div>`; container.innerHTML = html;
+        }
+
+        function filterProfessorStudentCards(value){
+            const q=String(value||'').trim().toLocaleLowerCase('ar');
+            const container=document.getElementById('profGroupsContainer');
+            if(!container)return;
+            container.querySelectorAll('[data-student-id]').forEach(row=>{
+                const name=String(row.querySelector('.student-label')?.textContent||row.querySelector('.student-name')?.textContent||'').toLocaleLowerCase('ar');
+                row.style.display=(!q||name.includes(q))?'':'none';
+            });
         }
 
         function getProfessorStudentAttendanceVisual(student, sub, context=null) {
