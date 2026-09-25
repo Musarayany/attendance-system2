@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.1</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.2</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -856,6 +856,7 @@
                     </div>
                     <div class="card">
                         <h4>📊 سجل الغيابات والحالة التراكمية</h4>
+                        <input id="profAttendanceSearch" type="search" placeholder="🔎 ابحث عن طالب في سجل الغيابات..." oninput="renderProfessorAttendance(getProfessorSubject()?.id)" autocomplete="off" style="width:100%;margin-bottom:7px;">
                         <div id="profAttendanceTable"></div>
                     </div>
                 </div>
@@ -965,7 +966,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '45.1-professor-ui-redesign';
+        const APP_VERSION = '45.2-history-cumulative-ui';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -8964,8 +8965,38 @@
         function quickAbsentAll(groupName) { return quickApplyAll(groupName,'absent'); }
         function quickPresentAll(groupName) { return quickApplyAll(groupName,'present'); }
 
+        function getProfessorStudentAbsenceDates(studentId,subjectId){
+            const subject=state.subjects.find(s=>String(s.id)===String(subjectId));
+            return getLogicalAttendanceRecords(state.attendances)
+                .filter(a=>String(a.subjectId)===String(subjectId)&&String(a.studentId)===String(studentId)&&Number(a.hours)>0)
+                .sort((a,b)=>{
+                    const d=String(b.date||'').localeCompare(String(a.date||''));
+                    return d || String(normalizeSessionTime(b.sessionTime)||'').localeCompare(String(normalizeSessionTime(a.sessionTime)||''));
+                })
+                .map(a=>({
+                    date:String(a.date||''),
+                    time:normalizeSessionTime(a.sessionTime)||'قديم',
+                    hours:getAttendanceEffectiveHours(a,subject),
+                    excused:Number(a.excused)===1
+                }));
+        }
+
+        function toggleProfessorAbsenceDates(studentId,subjectId,button){
+            const row=document.getElementById(`profAbsDates_${String(studentId).replace(/[^A-Za-z0-9_-]/g,'_')}`);
+            if(!row)return;
+            const opening=row.style.display==='none'||!row.style.display;
+            document.querySelectorAll('[id^="profAbsDates_"]').forEach(r=>{if(r!==row)r.style.display='none';});
+            document.querySelectorAll('.prof-absence-dates-btn').forEach(b=>{if(b!==button)b.textContent='📅 التواريخ';});
+            row.style.display=opening?'table-row':'none';
+            if(button)button.textContent=opening?'▲ إخفاء':'📅 التواريخ';
+        }
+
         function renderProfessorAttendance(subjectId) {
             const div = document.getElementById('profAttendanceTable');
+            if(!div)return;
+            const searchInput=document.getElementById('profAttendanceSearch');
+            const searchValue=String(searchInput?.value||'');
+            const q=searchValue.trim().toLocaleLowerCase('ar');
             const allAttendances = getLogicalAttendanceRecords(state.attendances).filter(a => String(a.subjectId) === String(subjectId) && Number(a.hours) > 0);
             if (allAttendances.length === 0) {
                 div.innerHTML = '<p style="color:#a0aec0; text-align:center; padding:8px;">📭 لا توجد غيابات مسجلة</p>';
@@ -8973,63 +9004,59 @@
             }
             const subject = state.subjects.find(s => String(s.id) === String(subjectId));
             const totalHours = subject ? getSubjectCourseHours(subject) : 1;
-            const studentIds = [...new Set(allAttendances.map(a => a.studentId))];
-            const studentTotals = {};
-            studentIds.forEach(id => {
-                const studentAtts = allAttendances.filter(a => String(a.studentId) === String(id));
-                const totalAbsent = studentAtts.reduce((sum, a) => sum + getAttendanceEffectiveHours(a,subject), 0);
-                const unexcusedAbsent = studentAtts.filter(a => Number(a.excused) === 0).reduce((sum, a) => sum + getAttendanceEffectiveHours(a,subject), 0);
-                const pctUnexcused = (unexcusedAbsent / totalHours) * 100;
-                const pctTotal = (totalAbsent / totalHours) * 100;
-                const status = getStatus(pctUnexcused, pctTotal);
-                studentTotals[id] = { totalAbsent, unexcusedAbsent, pctUnexcused, pctTotal, status };
-            });
-            const sortedAttendances = [...allAttendances].sort((a, b) => b.date.localeCompare(a.date));
-            let html = `<div class="table-wrapper"><table>
-                <tr>
-                    <th>#</th>
-                    <th>الطالب</th>
-                    <th>التاريخ</th>
-                    <th>الوقت</th>
-                    <th>س</th>
-                    <th>النوع</th>
-                    <th>حالة السجل</th>
-                    <th>الحالة التراكمية</th>
-                    <th>التحكم</th>
-                </tr>`;
-            sortedAttendances.forEach((att, idx) => {
-                const student = state.students.find(s => String(s.id) === String(att.studentId));
-                const studentName = student ? student.name : 'غير معروف';
-                const excusedText = Number(att.excused) === 1 ? 'بعذر' : 'بدون عذر';
-                const excusedBadge = Number(att.excused) === 1 ? 'bg-green' : 'bg-red';
-                const effectiveHours = getAttendanceEffectiveHours(att,subject);
-                const unexcused = Number(att.excused) === 0 ? effectiveHours : 0;
-                const pctUnexcusedSingle = (unexcused / totalHours) * 100;
-                const pctTotalSingle = (effectiveHours / totalHours) * 100;
-                const statusSingle = getStatus(pctUnexcusedSingle, pctTotalSingle);
-                const statusBadgeSingle = statusSingle === 'جيد' ? 'bg-green' : statusSingle === 'تنبيه' ? 'bg-blue' : statusSingle === 'إنذار أولي' ?
-                    'bg-yellow' : statusSingle === 'إنذار نهائي' ? 'bg-orange' : 'bg-red';
-                const total = studentTotals[att.studentId] || studentTotals[String(att.studentId)];
-                const statusCumulative = total ? total.status : 'جيد';
-                const statusBadgeCumulative = statusCumulative === 'جيد' ? 'bg-green' : statusCumulative ===
-                    'تنبيه' ? 'bg-blue' : statusCumulative === 'إنذار أولي' ? 'bg-yellow' : statusCumulative === 'إنذار نهائي' ? 'bg-orange' : 'bg-red';
-                html += `<tr>
-                    <td>${idx + 1}</td>
-                    <td>${escapeHtml(studentName)}</td>
-                    <td>${escapeHtml(att.date)}</td>
-                    <td>${escapeHtml(normalizeSessionTime(att.sessionTime) || 'قديم')}</td>
-                    <td>${effectiveHours}</td>
-                    <td><span class="badge ${excusedBadge}">${excusedText}</span></td>
-                    <td><span class="badge ${statusBadgeSingle}">${statusSingle}</span></td>
-                    <td><span class="badge ${statusBadgeCumulative}">${statusCumulative}</span></td>
-                    <td>
-                        <button class="btn-sm btn-warning" onclick="editAttendance('${att.id}')" style="min-width:25px; padding:1px 4px; font-size:9px;">✏️</button>
-                        <button class="btn-sm btn-danger" onclick="deleteAttendance('${att.id}')" style="min-width:25px; padding:1px 4px; font-size:9px;">🗑️</button>
+
+            // جدول تراكمي: صف واحد لكل طالب، مرتب أبجدياً.
+            const studentIds = [...new Set(allAttendances.map(a => String(a.studentId)))];
+            const rows=studentIds.map(id=>{
+                const student=state.students.find(s=>String(s.id)===id);
+                const studentAtts=allAttendances.filter(a=>String(a.studentId)===id);
+                const totalAbsent=studentAtts.reduce((sum,a)=>sum+getAttendanceEffectiveHours(a,subject),0);
+                const unexcusedAbsent=studentAtts.filter(a=>Number(a.excused)===0).reduce((sum,a)=>sum+getAttendanceEffectiveHours(a,subject),0);
+                const pctUnexcused=(unexcusedAbsent/totalHours)*100;
+                const pctTotal=(totalAbsent/totalHours)*100;
+                const status=getStatus(pctUnexcused,pctTotal);
+                return {id,student,name:student?.name||'غير معروف',studentAtts,totalAbsent,unexcusedAbsent,pctUnexcused,pctTotal,status};
+            }).filter(r=>!q||String(r.name).toLocaleLowerCase('ar').includes(q))
+              .sort((a,b)=>String(a.name).localeCompare(String(b.name),'ar',{sensitivity:'base'}));
+
+            if(!rows.length){
+                div.innerHTML='<p style="color:#a0aec0;text-align:center;padding:8px;">لا توجد نتيجة مطابقة للبحث.</p>';
+                return;
+            }
+
+            let html=`<div style="font-size:10px;color:#64748b;margin-bottom:5px;">${rows.length} طالب — مرتب أبجدياً. زر «التواريخ» يعرض غيابات الطالب في هذه المادة.</div>
+            <div class="table-wrapper"><table>
+                <tr><th>#</th><th>الطالب</th><th>الشعبة / العملي</th><th>مرات الغياب</th><th>ساعات الغياب</th><th>بدون عذر</th><th>النسبة</th><th>الحالة التراكمية</th><th>التفاصيل</th></tr>`;
+
+            rows.forEach((r,idx)=>{
+                const statusBadge=r.status==='جيد'?'bg-green':r.status==='تنبيه'?'bg-blue':r.status==='إنذار أولي'?'bg-yellow':r.status==='إنذار نهائي'?'bg-orange':'bg-red';
+                const theory=r.student?studentTheoreticalGroup(r.student):'';
+                const practical=r.student?studentPracticalGroup(r.student):'';
+                const dates=getProfessorStudentAbsenceDates(r.id,subjectId);
+                const safeId=String(r.id).replace(/[^A-Za-z0-9_-]/g,'_');
+                html+=`<tr>
+                    <td>${idx+1}</td>
+                    <td style="font-weight:900;">${escapeHtml(r.name)}</td>
+                    <td style="font-size:10px;">📖 ${escapeHtml(theory||'غير محددة')}<br>🔬 ${escapeHtml(practical||'غير موزع')}</td>
+                    <td>${dates.length}</td>
+                    <td>${r.totalAbsent}</td>
+                    <td>${r.unexcusedAbsent}</td>
+                    <td>${Number(r.pctTotal||0).toFixed(1)}%</td>
+                    <td><span class="badge ${statusBadge}">${escapeHtml(r.status)}</span></td>
+                    <td><button type="button" class="btn-sm btn-info prof-absence-dates-btn" onclick="toggleProfessorAbsenceDates('${escapeHtml(String(r.id))}','${escapeHtml(String(subjectId))}',this)">📅 التواريخ</button></td>
+                </tr>
+                <tr id="profAbsDates_${safeId}" style="display:none;">
+                    <td colspan="9" style="background:#f8fafc;padding:8px;">
+                        <div style="font-weight:900;margin-bottom:5px;">📅 تواريخ غياب ${escapeHtml(r.name)}</div>
+                        ${dates.length?`<div style="display:flex;gap:5px;flex-wrap:wrap;">${dates.map(d=>`<span class="badge ${d.excused?'bg-green':'bg-red'}" style="padding:5px 7px;">${escapeHtml(d.date)} · ${escapeHtml(d.time)} · ${d.hours}س ${d.excused?'بعذر':'بدون عذر'}</span>`).join('')}</div>`:'<span style="color:#64748b;">لا توجد غيابات.</span>'}
                     </td>
                 </tr>`;
             });
-            html += `</table></div>`;
-            div.innerHTML = html;
+            html+='</table></div>';
+            div.innerHTML=html;
+
+            // renderProfessorAttendance may be called from other UI updates; preserve what the professor typed.
+            if(searchInput && searchInput.value!==searchValue)searchInput.value=searchValue;
         }
 
         async function removeCurrentSessionAbsence(studentId) {
