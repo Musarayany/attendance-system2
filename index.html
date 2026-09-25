@@ -419,14 +419,61 @@
         .attendance-roster-table tbody td.student-name-cell{text-align:right;padding-right:1.2mm;font-size:6.5pt;font-weight:700;white-space:nowrap;text-overflow:ellipsis}
         .attendance-export-footer{display:flex;justify-content:space-between;align-items:center;margin-top:1.5mm;font-size:5.5pt;color:#475569}
 
-</style>
+
+        /* V45.1 — واجهة حضور الأستاذ: مضغوطة، واضحة، وقابلة للتمرير داخل كل شعبة */
+        #profGroupsContainer .groups-grid{display:block!important;}
+        #profGroupsContainer .group-card{
+            margin:10px 0!important;border:1px solid #cbd5e1!important;border-radius:12px!important;
+            overflow:hidden!important;background:#fff!important;box-shadow:0 2px 8px rgba(15,23,42,.06)!important;
+        }
+        #profGroupsContainer .group-header{
+            position:sticky;top:0;z-index:4;background:#f8fafc!important;border-bottom:1px solid #e2e8f0!important;
+            padding:9px 10px!important;display:flex!important;gap:8px!important;align-items:center!important;
+            justify-content:space-between!important;flex-wrap:wrap!important;
+        }
+        #profGroupsContainer .group-title{display:flex!important;align-items:center!important;gap:5px!important;font-weight:900!important;}
+        #profGroupsContainer .group-name{font-size:13px!important;}
+        #profGroupsContainer .group-count{font-size:10px!important;color:#64748b!important;}
+        #profGroupsContainer .students-grid{
+            display:block!important;max-height:430px!important;overflow-y:auto!important;overscroll-behavior:contain!important;
+            scroll-behavior:auto!important;padding:4px 7px 8px!important;background:#fff!important;
+        }
+        #profGroupsContainer .student-quick-item,#profGroupsContainer .student-item{
+            display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;align-items:center!important;
+            gap:8px!important;min-height:52px!important;padding:7px 6px!important;margin:0!important;
+            border:0!important;border-bottom:1px solid #eef2f7!important;border-radius:0!important;background:#fff!important;
+        }
+        #profGroupsContainer .student-quick-item:last-child,#profGroupsContainer .student-item:last-child{border-bottom:0!important;}
+        #profGroupsContainer .student-name{display:block!important;min-width:0!important;font-size:12px!important;font-weight:800!important;line-height:1.45!important;}
+        #profGroupsContainer .student-label{font-size:13px!important;font-weight:900!important;}
+        #profGroupsContainer .prof-group-context{
+            display:block!important;margin-top:3px!important;font-size:9.5px!important;font-weight:700!important;color:#475569!important;
+            white-space:normal!important;
+        }
+        #profGroupsContainer .student-seq{
+            display:inline-flex!important;align-items:center!important;justify-content:center!important;width:23px!important;height:23px!important;
+            margin-left:5px!important;border-radius:50%!important;background:#e2e8f0!important;color:#334155!important;font-size:9px!important;font-weight:900!important;
+        }
+        #profGroupsContainer .btn-group{display:flex!important;gap:4px!important;flex-wrap:nowrap!important;}
+        #profGroupsContainer .btn-present,#profGroupsContainer .btn-absent{padding:7px 8px!important;font-size:10px!important;white-space:nowrap!important;}
+        #profGroupsContainer .group-collapse-btn{padding:4px 7px!important;font-size:10px!important;min-width:auto!important;}
+        #profGroupsContainer .group-card.prof-collapsed .students-grid{display:none!important;}
+        #profGroupsContainer .group-card.prof-collapsed .group-bulk-actions{display:none!important;}
+        #profStudentSearch{position:sticky;top:0;z-index:6;background:#fff!important;border:2px solid #cbd5e1!important;border-radius:10px!important;padding:10px!important;font-size:12px!important;}
+        @media(max-width:600px){
+            #profGroupsContainer .students-grid{max-height:55vh!important;}
+            #profGroupsContainer .student-quick-item,#profGroupsContainer .student-item{grid-template-columns:minmax(0,1fr) auto!important;}
+            #profGroupsContainer .btn-present,#profGroupsContainer .btn-absent{padding:7px 6px!important;font-size:9px!important;}
+        }
+
+    </style>
 </head>
 <body>
 
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.1</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -918,7 +965,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '45.0-professor-ui-history-permission';
+        const APP_VERSION = '45.1-professor-ui-redesign';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -8286,6 +8333,7 @@
         }
 
         function renderProfessor(options={}) {
+            const previousSearch=document.getElementById('profStudentSearch')?.value||'';
             const preservedView=options.preserveView===false?null:captureProfessorViewState(options.highlightStudentId||'');
             const sub = getProfessorSubject();
             const infoDiv = document.getElementById('profSubjectInfo');
@@ -8321,7 +8369,7 @@
             `;
             renderProfessorGroups(students);
             stuSelect.innerHTML = '<option value="">-- اختر --</option>';
-            students.forEach(st => {
+            [...students].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ar',{sensitivity:'base'})).forEach(st => {
                 const opt = document.createElement('option');
                 opt.value = st.id;
                 opt.innerText = st.name + ' (' + professorGroupNameForStudent(st, sub) + ')';
@@ -8339,6 +8387,8 @@
             }
             renderProfessorAttendance(sub.id);
             renderProfessorSubmissionStatus(sub);
+            const searchBox=document.getElementById('profStudentSearch');
+            if(searchBox&&previousSearch){searchBox.value=previousSearch;filterProfessorStudentCards(previousSearch);}
             restoreProfessorViewState(preservedView,options.highlightStudentId||'');
         }
 
@@ -8569,8 +8619,8 @@
                 const currentAbsentCount=Number(bulkCancelContext?.absentCount)||0;
                 const cancelAllDisabled=(!submissionLocked&&!groupScheduleLocked)?'':'disabled aria-disabled="true"';
                 const actionTitle=escapeHtml(submissionLocked?'الغيابات مغلقة بعد الإرسال؛ استخدم فرصة التراجع إن كانت متاحة.':(groupScheduleLocked?(context.reason||'ليس لديهم محاضرة في التاريخ المختار'):`تسجيل أو تعديل محاضرة ${context.displayTime}`));
-                html += `<div class="group-card"><div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length})</span></div>
-                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button><button data-attendance-control="1" ${cancelAllDisabled} title="${currentAbsentCount?`إزالة غياب ${currentAbsentCount} طالب من ${escapeHtml(bulkCancelContext.displayTime||'آخر محاضرة مسجلة')}`:'اضغط للبحث عن آخر محاضرة مسجلة فيها غياب لهذه المجموعة'}" data-cancel-all-group="${escapeHtml(encodedGroup)}" onclick="removeAllCurrentSessionAbsences(decodeURIComponent('${encodedGroup}'))" class="btn-secondary btn-sm" style="font-size:10px;">🗑️ إزالة غياب الكل${currentAbsentCount?` (${currentAbsentCount})`:''}</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
+                html += `<div class="group-card"><div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length} طالب)</span><button type="button" class="btn-secondary group-collapse-btn" onclick="toggleProfessorGroup(this)" aria-expanded="true">▲ إخفاء الطلبة</button></div>
+                    <div class="group-bulk-actions" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button><button data-attendance-control="1" ${cancelAllDisabled} title="${currentAbsentCount?`إزالة غياب ${currentAbsentCount} طالب من ${escapeHtml(bulkCancelContext.displayTime||'آخر محاضرة مسجلة')}`:'اضغط للبحث عن آخر محاضرة مسجلة فيها غياب لهذه المجموعة'}" data-cancel-all-group="${escapeHtml(encodedGroup)}" onclick="removeAllCurrentSessionAbsences(decodeURIComponent('${encodedGroup}'))" class="btn-secondary btn-sm" style="font-size:10px;">🗑️ إزالة غياب الكل${currentAbsentCount?` (${currentAbsentCount})`:''}</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
                 groupStudents.forEach(st => {
                     const atts = attendanceByStudent.get(String(st.id))||[];
                     const totalAbsent = atts.reduce((s,a)=>s+getAttendanceEffectiveHours(a,sub),0);
@@ -8583,15 +8633,23 @@
                     const studentGroupContext = `📖 الشعبة ${studentTheoreticalGroup(st)||'غير محددة'} · 🔬 العملي ${studentPracticalGroup(st)||'غير موزع'}`;
                     const encodedStudent=encodeURIComponent(String(st.id));
                     if (state.quickMode) {
-                        html += `<div class="student-quick-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-label">${escapeHtml(st.name)}</span> <span class="student-status-icon">${statusIcon}</span><span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="present" aria-pressed="${isPresent?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present ${isPresent?'attendance-selected':hasAbsence?'attendance-dimmed':''}">✅ حاضر</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="absent" aria-pressed="${hasAbsence?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent ${hasAbsence?'attendance-selected':isPresent?'attendance-dimmed':''}">❌ غائب</button></div></div>`;
+                        html += `<div class="student-quick-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-seq">${groupStudents.indexOf(st)+1}</span><span class="student-label">${escapeHtml(st.name)}</span> <span class="student-status-icon">${statusIcon}</span><span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="present" aria-pressed="${isPresent?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present ${isPresent?'attendance-selected':hasAbsence?'attendance-dimmed':''}">✅ حاضر</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="absent" aria-pressed="${hasAbsence?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent ${hasAbsence?'attendance-selected':isPresent?'attendance-dimmed':''}">❌ غائب</button></div></div>`;
                     } else {
                         const todayBadge = hasAbsence ? '<span data-attendance-session-badge="1" class="badge bg-red" style="font-size:8px;">غائب في هذه المحاضرة</span>' : isPresent ? '<span data-attendance-session-badge="1" class="badge bg-green" style="font-size:8px;">حاضر في هذه المحاضرة</span>' : '<span data-attendance-session-badge="1" class="badge" style="font-size:8px;background:#e2e8f0;color:#475569;">لم تُسجل حالته</span>';
-                        html += `<div class="student-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name">👨‍🎓 ${escapeHtml(st.name)} <span class="student-status-icon">${statusIcon}</span> ${todayBadge}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="student-actions" style="display:flex;gap:4px;flex-wrap:wrap;"><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="markStudentAbsent(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-warning" style="font-size:10px;">📝</button><span data-remove-absence-slot="1">${hasAbsence?`<button data-attendance-control="1" ${(submissionLocked||groupScheduleLocked)?'disabled aria-disabled="true"':''} title="${submissionLocked?'الغيابات مغلقة بعد الإرسال':groupScheduleLocked?(context.reason||'المجموعة غير متاحة في هذا التاريخ'):'إزالة غياب هذه المحاضرة'}" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:''}</span></div></div>`;
+                        html += `<div class="student-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-seq">${groupStudents.indexOf(st)+1}</span>👨‍🎓 ${escapeHtml(st.name)} <span class="student-status-icon">${statusIcon}</span> ${todayBadge}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="student-actions" style="display:flex;gap:4px;flex-wrap:wrap;"><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="markStudentAbsent(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-warning" style="font-size:10px;">📝</button><span data-remove-absence-slot="1">${hasAbsence?`<button data-attendance-control="1" ${(submissionLocked||groupScheduleLocked)?'disabled aria-disabled="true"':''} title="${submissionLocked?'الغيابات مغلقة بعد الإرسال':groupScheduleLocked?(context.reason||'المجموعة غير متاحة في هذا التاريخ'):'إزالة غياب هذه المحاضرة'}" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:''}</span></div></div>`;
                     }
                 });
                 html += `</div></div>`;
             }
             html += `</div>`; container.innerHTML = html;
+        }
+
+        function toggleProfessorGroup(button){
+            const card=button?.closest?.('.group-card');
+            if(!card)return;
+            const collapsed=card.classList.toggle('prof-collapsed');
+            button.textContent=collapsed?'▼ عرض الطلبة':'▲ إخفاء الطلبة';
+            button.setAttribute('aria-expanded',collapsed?'false':'true');
         }
 
         function filterProfessorStudentCards(value){
