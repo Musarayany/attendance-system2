@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.2</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.3</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -848,6 +848,7 @@
                     </div>
                     <div class="card">
                         <h4>👥 الشعب والطلاب</h4>
+                        <div style="font-size:10px;font-weight:900;color:#1e3a8a;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:7px;margin-bottom:7px;">⏱️ التسجيل متاح للأستاذ من بدء المحاضرة وحتى 24 ساعة بعد انتهائها. بعد ذلك يحتاج إذناً خاصاً من رئيس القسم.</div>
                         <input id="profStudentSearch" type="search" placeholder="🔎 ابحث عن طالب بالاسم..." oninput="filterProfessorStudentCards(this.value)" autocomplete="off" style="width:100%;margin-bottom:7px;">
                         <div style="font-size:10px;color:#64748b;margin-bottom:7px;">الأسماء مرتبة أبجدياً، ويظهر أمام كل طالب انتماؤه النظري والعملي.</div>
                         <button id="removeAllLatestSubjectAbsencesBtn" onclick="removeAllLatestSubjectAbsences()" class="btn-secondary" style="width:100%;margin-bottom:6px;">🗑️ إزالة غياب الكل من آخر محاضرة فيها غياب</button>
@@ -966,7 +967,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '45.2-history-cumulative-ui';
+        const APP_VERSION = '45.3-24h-attendance-window';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -3676,6 +3677,48 @@
               .sort((a,b)=>Number(a.startMinutes)-Number(b.startMinutes));
         }
 
+        const PROFESSOR_ATTENDANCE_GRACE_MS = 24 * 60 * 60 * 1000;
+
+        function baghdadLectureEpoch(dateISO, minutesFromMidnight){
+            const mins=Math.max(0,Number(minutesFromMidnight)||0);
+            const hh=String(Math.floor(mins/60)).padStart(2,'0');
+            const mm=String(mins%60).padStart(2,'0');
+            const ts=Date.parse(`${dateISO}T${hh}:${mm}:00+03:00`);
+            return Number.isFinite(ts)?ts:0;
+        }
+
+        function getProfessorAttendanceWindowForLecture(dateISO, lecture){
+            if(!lecture||!dateISO)return {allowed:false,reason:'بيانات المحاضرة غير مكتملة.'};
+            const start=baghdadLectureEpoch(dateISO,Number(lecture.startMinutes)||0);
+            const duration=Math.max(1,Number(lecture.durationMinutes)||60);
+            const end=start+duration*60*1000;
+            const deadline=end+PROFESSOR_ATTENDANCE_GRACE_MS;
+            const now=Date.now();
+            const allowed=now>=start && now<=deadline;
+            const remaining=Math.max(0,deadline-now);
+            const hours=Math.floor(remaining/3600000);
+            const minutes=Math.floor((remaining%3600000)/60000);
+            return {
+                allowed,start,end,deadline,remaining,
+                label:allowed?`متاح للأستاذ لمدة ${hours}س ${minutes}د إضافية`:'انتهت مهلة الـ24 ساعة بعد نهاية المحاضرة',
+                deadlineText:new Date(deadline).toLocaleString('ar-IQ',{timeZone:'Asia/Baghdad',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
+            };
+        }
+
+        function professorHas24hAttendanceAccess(subject,groupName,dateISO,sessionTime=''){
+            if(state.currentUser?.role!=='professor')return false;
+            const lectures=getScheduledAttendanceLectures(subject,groupName,dateISO);
+            if(!lectures.length)return false;
+            const normalized=normalizeSessionTime(sessionTime||'');
+            let lecture=null;
+            if(normalized){
+                const mins=Number(normalized.slice(0,2))*60+Number(normalized.slice(3,5));
+                lecture=lectures.find(l=>Number(l.startMinutes)===mins)||null;
+            }
+            if(!lecture)lecture=lectures[lectures.length-1];
+            return getProfessorAttendanceWindowForLecture(dateISO,lecture).allowed;
+        }
+
         function buildQuickAttendanceContext(subject, groupName, silent=false) {
             if(!subjectBelongsToCurrentProfessor(subject))return {ok:false,code:'unauthorized',reason:'هذه المادة ليست مرتبطة بحساب الأستاذ الحالي.'};
             const clock=getBaghdadClock();
@@ -3688,13 +3731,16 @@
                 return {ok:false,code:'future',reason:`محاضرة ${groupName} تبدأ الساعة ${formatScheduleMinutes(next.startMinutes)} ولم يبدأ وقتها بعد.`,lecture:next};
             }
             const current=started.find(l=>clock.minutes<Number(l.startMinutes)+(Number(l.durationMinutes)||60));
-            const lecture=current||started[started.length-1];
+            const lecture=current||[...started].reverse().find(l=>getProfessorAttendanceWindowForLecture(clock.dateISO,l).allowed)||started[started.length-1];
+            const access=getProfessorAttendanceWindowForLecture(clock.dateISO,lecture);
+            if(!access.allowed)return {ok:false,code:'expired-24h',reason:`انتهت مهلة تسجيل الغيابات لهذه المحاضرة. كانت متاحة للأستاذ حتى ${access.deadlineText}.`,lecture,date:clock.dateISO,groupName};
             return {
-                ok:true,code:current?'current':'past',date:clock.dateISO,groupName,
+                ok:true,code:current?'current':'grace-24h',date:clock.dateISO,groupName,
                 sessionTime:formatMinutes24(lecture.startMinutes),sessionKey:attendanceSessionKey(formatMinutes24(lecture.startMinutes)),
                 lectureId:String(lecture.id||''),lecture,subjectId:String(subject.id),professorId:String(subject.professorId||''),
                 scheduleVersionId:String(lecture._scheduleVersionId||''),schedulePublishedAt:Number(lecture._schedulePublishedAt)||Number(getScheduleLink()?.createdAt)||null,
-                displayTime:lectureTimeRangeText(lecture)
+                displayTime:lectureTimeRangeText(lecture),attendanceDeadline:access.deadline,attendanceDeadlineText:access.deadlineText,
+                attendanceWindowLabel:access.label
             };
         }
 
@@ -3863,9 +3909,11 @@
             }
             const records=findAttendanceRecordsForSession(studentId,subject.id,context.date,context.sessionTime);
             const isHistorical=String(context.date||'')<getLocalDateISO();
-            if(isHistorical && records.length===0 && state.currentUser?.role==='professor' &&
-               !hasHistoricalAttendanceCreatePermission(subject,context.date,state.currentUser.id)){
-                throw new Error('لا توجد صلاحية من رئيس القسم لإنشاء غياب/حضور جديد بهذا التاريخ القديم.');
+            if(isHistorical && records.length===0 && state.currentUser?.role==='professor'){
+                const withinNormal24h=professorHas24hAttendanceAccess(subject,context.groupName||professorGroupNameForStudent(student,subject),context.date,context.sessionTime);
+                if(!withinNormal24h && !hasHistoricalAttendanceCreatePermission(subject,context.date,state.currentUser.id)){
+                    throw new Error('انتهت مهلة الـ24 ساعة لهذه المحاضرة، ولا توجد صلاحية من رئيس القسم لإنشاء غياب/حضور جديد بهذا التاريخ القديم.');
+                }
             }
             const ordered=[...records].sort((a,b)=>attendanceRecordRevision(b)-attendanceRecordRevision(a) || String(b.id||'').localeCompare(String(a.id||'')));
             const previous=chooseLatestAttendanceRecord(records);
@@ -8051,6 +8099,10 @@
             return !!workflow.locked;
         }
 
+        function canHeadEditAttendanceAnyTime(){
+            return state.currentUser?.role==='admin';
+        }
+
         function canProfessorEditAttendanceForSubject(subject,showMessage=true) {
             if(!subjectBelongsToCurrentProfessor(subject)){if(showMessage)alert('هذه المادة ليست مرتبطة بحساب الأستاذ الحالي.');return false;}
             if(!isProfessorSubjectLockedAfterSubmission(subject))return true;
@@ -8582,13 +8634,19 @@
 
             const sessionTime=formatMinutes24(lecture.startMinutes);
             const isCurrent=desiredDate===today && clock.minutes>=Number(lecture.startMinutes) && clock.minutes<Number(lecture.startMinutes)+(Number(lecture.durationMinutes)||60);
+            const access=getProfessorAttendanceWindowForLecture(desiredDate,lecture);
+            const specialOldPermission=state.currentUser?.role==='professor' && hasHistoricalAttendanceCreatePermission(subject,desiredDate,state.currentUser.id);
+            if(state.currentUser?.role==='professor' && !access.allowed && !specialOldPermission){
+                return {ok:false,code:'expired-24h',reason:`انتهت مهلة الأستاذ: يسمح بالتسجيل حتى 24 ساعة بعد نهاية المحاضرة. انتهت المهلة في ${access.deadlineText}.`,date:desiredDate,groupName,lecture};
+            }
             return {
-                ok:true,code:isCurrent?'current':(desiredDate===today?'past':'past-date'),
+                ok:true,code:isCurrent?'current':(access.allowed?'grace-24h':'admin-authorized-old'),
                 date:desiredDate,groupName,sessionTime,sessionKey:attendanceSessionKey(sessionTime),
                 lectureId:String(lecture.id||''),lecture,subjectId:String(subject.id),professorId:String(subject.professorId||''),
                 scheduleVersionId:String(lecture._scheduleVersionId||version?.id||''),
                 schedulePublishedAt:Number(lecture._schedulePublishedAt)||Number(version?.publishedAt)||null,
                 displayTime:`${desiredDate} · ${lectureTimeRangeText(lecture)}`,
+                attendanceDeadline:access.deadline,attendanceDeadlineText:access.deadlineText,attendanceWindowLabel:access.label,
                 contextSource:'schedule-history',scheduleVerified:true,isCurrent,historicalSchedule:desiredDate<today
             };
         }
@@ -8611,8 +8669,8 @@
                 const context=resolveBulkAttendanceContext(sub,groupName,false);
                 const encodedGroup=encodeURIComponent(groupName);
                 const chipClass=context.ok?'':(context.code==='future'?'waiting':'unavailable');
-                const chipPrefix=context.code==='current'?'● المحاضرة جارية':context.code==='recorded-history'?'↶ جلسة تاريخية مثبتة':context.code==='past-date'?'↶ حسب جدول ذلك التاريخ':'✓ متاحة';
-                const chipText=context.ok?`${chipPrefix} · ${context.displayTime}`:(context.code==='future'?`⏳ لم تبدأ بعد · ${formatScheduleMinutes(context.lecture?.startMinutes)}`:(context.reason||'ليس لديهم محاضرة اليوم'));
+                const chipPrefix=context.code==='current'?'● المحاضرة جارية':context.code==='grace-24h'?'⏱️ متاحة ضمن مهلة 24 ساعة':context.code==='recorded-history'?'↶ جلسة تاريخية مثبتة':context.code==='admin-authorized-old'?'🔓 متاحة بإذن رئيس القسم':'✓ متاحة';
+                const chipText=context.ok?`${chipPrefix} · ${context.displayTime}${context.attendanceDeadlineText?` · حتى ${context.attendanceDeadlineText}`:''}`:(context.code==='future'?`⏳ لم تبدأ بعد · ${formatScheduleMinutes(context.lecture?.startMinutes)}`:(context.reason||'ليس لديهم محاضرة اليوم'));
                 // V40: المجموعة بلا محاضرة في التاريخ المختار تبقى ظاهرة ولكن جميع أدواتها مقفلة.
                 const groupScheduleLocked=!context.ok;
                 const disabled=(!submissionLocked&&!groupScheduleLocked)?'':'disabled aria-disabled="true"';
