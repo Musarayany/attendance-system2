@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.4</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.6</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -976,7 +976,8 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
-        const APP_VERSION = '45.4-quick-old-attendance-permission';
+        let attendanceReadScope = null;
+        const APP_VERSION = '45.6-student-cloud-save-fix';
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -3789,6 +3790,7 @@
 
         // يعرض/يحسب كل محاضرة مرة واحدة فقط. السجلات القديمة التي بلا وقت تبقى منفصلة حفاظاً على التاريخ.
         function getLogicalAttendanceRecords(records=state.attendances) {
+            if (attendanceReadScope && records === state.attendances && attendanceReadScope.logical) return attendanceReadScope.logical;
             const passthrough=[];
             const sessions=new Map();
             const deletedStudentIds=getOfficiallyDeletedStudentIds();
@@ -3801,13 +3803,28 @@
                 const current=sessions.get(key);
                 if(!current || attendanceRecordRevision(att)>=attendanceRecordRevision(current)) sessions.set(key,att);
             });
-            return [...passthrough,...sessions.values()];
+            const result=[...passthrough,...sessions.values()];
+            if(attendanceReadScope && records===state.attendances) attendanceReadScope.logical=result;
+            return result;
         }
 
         function getLogicalAttendanceForStudentSubject(studentId,subjectId) {
-            return getLogicalAttendanceRecords(state.attendances).filter(att=>
-                String(att.studentId)===String(studentId) && String(att.subjectId)===String(subjectId)
-            );
+            if(attendanceReadScope){
+                if(!attendanceReadScope.pairs){
+                    const pairs=new Map();
+                    getLogicalAttendanceRecords(state.attendances).forEach(att=>{
+                        const key=JSON.stringify([String(att.studentId),String(att.subjectId)]);
+                        if(!pairs.has(key))pairs.set(key,[]);
+                        pairs.get(key).push(att);
+                    });
+                    attendanceReadScope.pairs=pairs;
+                }
+                return (attendanceReadScope.pairs.get(JSON.stringify([String(studentId),String(subjectId)]))||[]).slice();
+            }
+            // Outside a render, restrict candidates before duplicate resolution.
+            return getLogicalAttendanceRecords(state.attendances.filter(att=>
+                String(att.studentId)===String(studentId)&&String(att.subjectId)===String(subjectId)
+            ));
         }
 
         function findAttendanceForSession(studentId, subjectId, date, sessionTime) {
@@ -3815,8 +3832,22 @@
         }
 
         function findAttendanceRecordsForSession(studentId, subjectId, date, sessionTime) {
-            const key=attendanceSessionKey(sessionTime);
-            return state.attendances.filter(att=>!isEnrollmentRecord(att)&&String(att.studentId)===String(studentId)&&String(att.subjectId)===String(subjectId)&&String(att.date)===String(date)&&attendanceRecordSessionKey(att)===key);
+            const skey=attendanceSessionKey(sessionTime);
+            const composite=JSON.stringify([String(studentId),String(subjectId),String(date),skey]);
+            if(attendanceReadScope){
+                if(!attendanceReadScope.sessions){
+                    const index=new Map();
+                    (state.attendances||[]).forEach(att=>{
+                        if(isEnrollmentRecord(att))return;
+                        const key=JSON.stringify([String(att.studentId),String(att.subjectId),String(att.date),attendanceRecordSessionKey(att)]);
+                        if(!index.has(key))index.set(key,[]);
+                        index.get(key).push(att);
+                    });
+                    attendanceReadScope.sessions=index;
+                }
+                return (attendanceReadScope.sessions.get(composite)||[]).slice();
+            }
+            return state.attendances.filter(att=>!isEnrollmentRecord(att)&&String(att.studentId)===String(studentId)&&String(att.subjectId)===String(subjectId)&&String(att.date)===String(date)&&attendanceRecordSessionKey(att)===skey);
         }
 
         function attendanceRecordMatchesCurrentEnrollment(record, student, subject) {
@@ -5473,18 +5504,85 @@
             return html;
         }
 
+        async function persistNewStudentCritical(student, enrollmentLinkIds=[]) {
+            if(!database || !cloudInitialReadComplete || !state.currentUser){
+                scheduleCloudRetry();
+                return {ok:false,reason:'cloud-not-ready'};
+            }
+            const sid=String(student?.id||'');
+            if(!sid)return {ok:false,reason:'missing-student-id'};
+            const updates={};
+            updates[`students/${firebaseRecordKey(sid)}`]=sanitizeRecord(student);
+            (enrollmentLinkIds||[]).forEach(id=>{
+                const rec=(state.attendances||[]).find(a=>String(a.id)===String(id));
+                if(rec)updates[`attendances/${firebaseRecordKey(rec.id)}`]=sanitizeRecord(rec);
+            });
+            updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;
+            updates.schemaVersion=SCHEMA_VERSION;
+            try{
+                await withTimeout(database.ref('/').update(updates),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة رفع الطالب إلى السحابة');
+                const verify=await withTimeout(database.ref(`/students/${firebaseRecordKey(sid)}`).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق من الطالب');
+                const remote=verify.val();
+                if(!remote || String(remote.id||sid)!==sid)throw new Error('لم يظهر الطالب في السحابة بعد الحفظ');
+                const studentBase=mapsById(lastSyncedCollections.students||[]);
+                studentBase.set(sid,sanitizeRecord(remote));
+                lastSyncedCollections.students=Array.from(studentBase.values());
+                if(enrollmentLinkIds?.length){
+                    const attendanceBase=mapsById(lastSyncedCollections.attendances||[]);
+                    enrollmentLinkIds.forEach(id=>{
+                        const rec=(state.attendances||[]).find(a=>String(a.id)===String(id));
+                        if(rec)attendanceBase.set(String(id),sanitizeRecord(rec));
+                    });
+                    lastSyncedCollections.attendances=Array.from(attendanceBase.values());
+                }
+                cloudConnected=true;
+                lastCloudSyncAt=Date.now();
+                setSyncStatus('✅ تم التحقق من حفظ الطالب في السحابة','#2f855a');
+                setStartupStatus('✅ متصل بالسحابة','online');
+                await persistLocalState('new-student-cloud-verified',true);
+                return {ok:true};
+            }catch(err){
+                console.error('تعذر الحفظ السحابي المباشر للطالب:',err);
+                cloudConnected=false;
+                await persistLocalState('new-student-cloud-failed',true);
+                scheduleCloudRetry();
+                return {ok:false,reason:err?.message||'cloud-save-failed'};
+            }
+        }
+
         async function addStudentToGroup(level, groupName, groupType) {
             if (!requireAppRole('admin')) return false;
             const studentName = sanitizeText(prompt(`إضافة طالب جديد إلى الشعبة النظرية ${groupName}:`) || '');
             if (!studentName) return;
             const id = makeId('st');
-            state.students.push({ id, barcode:id, name:studentName, level:Number(level), theoreticalGroup:groupName, practicalGroup:'',
-                group:groupName, section:groupName, groupType:'نظري', phone:'', guardianPhone:'' });
+            const student={ id, barcode:id, name:studentName, level:Number(level), theoreticalGroup:groupName, practicalGroup:'',
+                group:groupName, section:groupName, groupType:'نظري', phone:'', guardianPhone:'' };
+            state.students.push(student);
+
+            // نلتقط روابط التسجيل الجديدة لهذا الطالب فقط حتى لا نحول إضافة طالب إلى مزامنة عامة ضخمة.
+            const beforeLinks=new Set((state.attendances||[]).filter(a=>isEnrollmentRecord(a)&&String(a.studentId)===String(id)).map(a=>String(a.id)));
             const links = ensureActiveSubjectLinks(id);
+            const newLinkIds=(state.attendances||[])
+                .filter(a=>isEnrollmentRecord(a)&&String(a.studentId)===String(id)&&!beforeLinks.has(String(a.id)))
+                .map(a=>String(a.id));
+
             recordAudit('إضافة طالب إلى شعبة نظرية', { studentId:id, student:studentName, level, theoreticalGroup:groupName, linksAdded:links.added });
-            const ok = await saveAll();
+
+            // احفظ محلياً أولاً، ثم ارفع الطالب ومساراته الجديدة مباشرة وتحقق من وجوده في Firebase.
+            const localSaved=await persistLocalState('new-student-before-cloud',true);
+            const direct=await persistNewStudentCritical(student,newLinkIds);
+
+            // سجل التدقيق وبقية التغييرات غير الحرجة تبقى في محرك المزامنة التفاضلي ولا تؤخر نجاح إضافة الطالب.
+            if(direct.ok) pushToFirebase({silent:true});
             showLevelGroups(level);
-            alert(ok ? `✅ تم إضافة ${studentName} إلى الشعبة النظرية ${groupName}. يمكن الآن توزيعه عملياً من داخل الشعبة.` : '⚠️ أضيف الطالب محلياً لكن تعذر الحفظ في السحابة.');
+            if(direct.ok){
+                alert(`✅ تم إضافة ${studentName} إلى الشعبة النظرية ${groupName} والتحقق من حفظه في السحابة. يمكن الآن توزيعه عملياً من داخل الشعبة.`);
+                return true;
+            }
+            alert(localSaved
+                ? `⚠️ أضيف ${studentName} وحُفظ محلياً، لكن لم يتم التحقق من حفظه في السحابة الآن.\nالسبب: ${direct.reason||'تعذر الاتصال'}\nسيحاول البرنامج المزامنة تلقائياً. لا تُعد إضافة الطالب مرة ثانية.`
+                : `⛔ تعذر تأكيد حفظ ${studentName} محلياً وسحابياً. أبق الصفحة مفتوحة وخذ نسخة احتياطية.`);
+            return false;
         }
 
         async function removeStudentFromGroup(studentId) {
@@ -10189,6 +10287,26 @@
         });
 
         // يبدأ من النسخة المحلية فوراً؛ الاتصال السحابي لا يعطل الدخول أو فتح الجدول.
+        // V45.5: performance scope. During one render, the 11k+ attendance array is
+        // resolved/indexed once and reused. The cache is discarded immediately after render,
+        // so writes and Firebase updates cannot leave stale attendance data behind.
+        function withAttendanceReadScope(fn, receiver, args) {
+            if (attendanceReadScope) return fn.apply(receiver,args);
+            attendanceReadScope={pairs:null,logical:null,sessions:null};
+            try { return fn.apply(receiver,args); }
+            finally { attendanceReadScope=null; }
+        }
+        [
+            'countStudentStatuses','getStatusRowsForLevel','getSelectedStudentsWithData',
+            'getStudentAttendanceSummary','renderAll','renderAdmin','renderOfficer','renderProfessor',
+            'renderLevels','renderOfficerLevels','renderStatisticsDashboard','renderOfficerReport',
+            'renderFilteredStatusDetails','renderProfessorGroups','renderProfessorAttendance',
+            'refreshProfessorAttendanceSummariesOnly','renderStudentSelection'
+        ].forEach(name=>{
+            const original=globalThis[name];
+            if(typeof original==='function') globalThis[name]=function(...args){return withAttendanceReadScope(original,this,args);};
+        });
+
         applicationBootstrapPromise = bootstrapApplication();
 
     </script>
