@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.7</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.8</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -977,7 +977,8 @@
         let cloudRetryTimer = null;
         let cloudConnected = false;
         let attendanceReadScope = null;
-        const APP_VERSION = '45.7-safe-auto-conflict-resolution';
+        const APP_VERSION = '45.8-student-record-integrity';
+        const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
         const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -1684,6 +1685,11 @@
             return null;
         }
 
+        function firebaseTransportValue(value) {
+            if (value === null || typeof value !== 'object') return value;
+            return JSON.parse(JSON.stringify(value));
+        }
+
         function sanitizeRecord(record) {
             if (!record || typeof record !== 'object') return record;
             const copy = sanitizeNestedValue(record, '', 0);
@@ -1712,6 +1718,7 @@
             normalizeCollection(arr, collectionName).forEach((record, index) => {
                 const id = record.id || `legacy_${collectionName}_${index}`;
                 const key = String(id).replace(/[.#$\[\]\/]/g, '_');
+                if(out[key]&&String(out[key].id)!==String(id))throw new Error('تعارض معرفات في مسار سحابي واحد؛ أوقف الترحيل لحماية السجلات.');
                 out[key] = { ...record, id };
             });
             return out;
@@ -1828,6 +1835,17 @@
             const l=local===undefined?undefined:local;
             const r=remote===undefined?undefined:remote;
 
+            // Linked fields describe one enrollment/session, not independent settings.
+            const identityKeys=name==='attendances'?['id','studentId','subjectId']:['id'];
+            if(b&&[l,r].some(v=>v&&identityKeys.some(k=>b[k]!==undefined&&!conflictValueEqual(v[k],b[k]))))return {safe:false,reason:'record-identity-change'};
+            const atomicKeys=name==='students'?['level','theoreticalGroup','practicalGroup','group','section','groupType']:
+                name==='attendances'?['studentId','subjectId','date','sessionTime','sessionKey','lectureId','lectureGroup','professorId','hours','excused','explicitState','cancelled','superseded']:[];
+            if(b&&l&&r&&atomicKeys.length){
+                const pick=v=>atomicKeys.map(k=>v[k]);
+                const bp=pick(b),lp=pick(l),rp=pick(r);
+                if(!conflictValueEqual(lp,bp)&&!conflictValueEqual(rp,bp)&&!conflictValueEqual(lp,rp))return {safe:false,reason:'linked-fields-conflict'};
+            }
+
             if(conflictValueEqual(l,r))return {safe:true,value:l,reason:'same-result'};
             if(conflictValueEqual(l,b))return {safe:true,value:r,reason:'remote-only'};
             if(conflictValueEqual(r,b))return {safe:true,value:l,reason:'local-only'};
@@ -1859,6 +1877,7 @@
         }
 
         function replaceStateRecordFromCloud(name,id,value){
+            if(value&&['students','attendances'].includes(name)&&isStudentOfficiallyDeleted(name==='students'?id:value.studentId))return;
             const map=mapsById(state[name]||[]);
             if(value===undefined || value===null)map.delete(String(id));
             else map.set(String(id),sanitizeRecord(value));
@@ -1870,6 +1889,24 @@
             if(value===undefined || value===null)base.delete(String(id));
             else base.set(String(id),sanitizeRecord(value));
             lastSyncedCollections[name]=Array.from(base.values());
+        }
+
+        function acknowledgeFirebaseRecord(name,id,before,sent,saved){
+            const current=mapsById(lastSyncedCollections[name]||[]).get(String(id));
+            if(sameRecord(current,before)||sameRecord(current,sent)||sameRecord(current,saved))updateSyncBaseRecord(name,id,saved);
+        }
+
+        function rebaseLocalAfterCommit(name,id,sent,saved){
+            const current=mapsById(state[name]||[]).get(String(id));
+            const baseline=mapsById(lastSyncedCollections[name]||[]).get(String(id));
+            if(!sameRecord(baseline,saved))return; // A later remote event already won.
+            if(['students','attendances'].includes(name)&&isStudentOfficiallyDeleted(name==='students'?id:(current||saved)?.studentId))return;
+            if(sameRecord(current,sent)||sameRecord(current,saved)){
+                replaceStateRecordFromCloud(name,id,saved);return;
+            }
+            const decision=safeThreeWayRecordMerge(name,sent,current,saved);
+            if(decision.safe){replaceStateRecordFromCloud(name,id,decision.value);delete syncConflicts[syncConflictKey(name,id)];}
+            else preserveRemoteConflict(name,id,current,sent,saved);
         }
 
         function rememberAutoConflictResolution(name,id,local,remote,merged,reason){
@@ -1887,34 +1924,40 @@
             let resolved=0;
             // تسلسلياً لتقليل الضغط على Firebase؛ هذه العملية تعمل فقط عند وجود تعارضات معلقة.
             for(const [key,c] of entries){
+                const owner=c.name==='students'?c.id:(c.after||c.before||c.remote)?.studentId;
+                if(['students','attendances'].includes(c.name)&&isStudentOfficiallyDeleted(owner)){delete syncConflicts[key];continue;}
                 try{
                     const ref=database.ref(`/${c.name}/${firebaseRecordKey(c.id)}`);
                     const snap=await withTimeout(ref.once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فحص التعارض');
                     const remoteRaw=snap.val();
                     const remote=remoteRaw===null?undefined:remoteRaw;
-                    const local=mapsById(state[c.name]||[]).get(String(c.id));
+                    const liveLocal=mapsById(state[c.name]||[]).get(String(c.id));
+                    const local=liveLocal===undefined?undefined:JSON.parse(JSON.stringify(liveLocal));
                     const before=c.before===null?undefined:c.before;
                     const decision=safeThreeWayRecordMerge(c.name,before,local,remote);
                     if(!decision.safe)continue;
 
+                    inFlightFirebaseChanges.set(key,{after:decision.value});
                     const result=await withTimeout(ref.transaction(current=>{
                         const cur=current===null?undefined:current;
+                        if(cur&&String(cur.id||c.id)!==String(c.id))return;
+                        if(['students','attendances'].includes(c.name)&&isStudentOfficiallyDeleted(owner))return;
                         // إذا تغيرت السحابة منذ القراءة، لا نخاطر بالحسم على لقطة قديمة.
                         if(!sameRecord(cur,remote))return;
-                        return decision.value===undefined?null:decision.value;
+                        return decision.value===undefined?null:firebaseTransportValue(decision.value);
                     },undefined,false),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة دمج التعارض');
                     if(!result.committed)continue;
 
                     const saved=result.snapshot.val();
                     const normalizedSaved=saved===null?undefined:sanitizeRecord(saved);
-                    replaceStateRecordFromCloud(c.name,c.id,normalizedSaved);
-                    updateSyncBaseRecord(c.name,c.id,normalizedSaved);
+                    acknowledgeFirebaseRecord(c.name,c.id,remote,local,normalizedSaved);
+                    rebaseLocalAfterCommit(c.name,c.id,local,normalizedSaved);
                     rememberAutoConflictResolution(c.name,c.id,local,remote,normalizedSaved,decision.reason);
-                    delete syncConflicts[key];
+                    if(sameRecord(mapsById(state[c.name]||[]).get(String(c.id)),normalizedSaved))delete syncConflicts[key];
                     resolved++;
                 }catch(err){
                     console.warn('تعذر الحسم الآمن التلقائي لتعارض:',c?.name,c?.id,err);
-                }
+                } finally {inFlightFirebaseChanges.delete(key);}
             }
             if(resolved){
                 await persistLocalState('auto-safe-conflicts',true);
@@ -1939,6 +1982,8 @@
                             if (isStudentOfficiallyDeleted(sid)) return;
                         }
                         const ref=database.ref(`/${change.name}/${firebaseRecordKey(change.id)}`);
+                        const pendingKey=syncConflictKey(change.name,change.id);
+                        inFlightFirebaseChanges.set(pendingKey,change);
                         try {
                             // Warm the exact path; an uncached transaction can otherwise initially receive null.
                             await withTimeout(ref.once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق قبل الحفظ');
@@ -1947,14 +1992,17 @@
                             const result=await withTimeout(ref.transaction(remoteValue=>{
                                 const remote=remoteValue===null?undefined:remoteValue;
                                 remoteSeen=remote;
+                                if(remote&&String(remote.id||change.id)!==String(change.id))return;
+                                if(change.after&&String(change.after.id||change.id)!==String(change.id))return;
                                 if (sameRecord(remote,change.before) || sameRecord(remote,change.after)){
                                     autoDecision=null;
-                                    return change.after===undefined?null:change.after;
+                                    return change.after===undefined?null:firebaseTransportValue(change.after);
                                 }
                                 const decision=safeThreeWayRecordMerge(change.name,change.before,change.after,remote);
                                 if(!decision.safe){autoDecision=null;return;}
                                 autoDecision=decision;
-                                return decision.value===undefined?null:decision.value;
+                                inFlightFirebaseChanges.set(pendingKey,{...change,after:decision.value});
+                                return decision.value===undefined?null:firebaseTransportValue(decision.value);
                             },undefined,false),CLOUD_OPERATION_TIMEOUT_MS,`انتهت مهلة حفظ ${change.name}`);
                             if (!result.committed) {
                                 const conflict={...change,before:change.before??null,after:change.after??null,remote:result.snapshot.val(),detectedAt:Date.now()};
@@ -1964,15 +2012,16 @@
                             } else {
                                 const savedRaw=result.snapshot.val();
                                 const saved=savedRaw===null?undefined:sanitizeRecord(savedRaw);
-                                updateSyncBaseRecord(change.name,change.id,saved);
+                                acknowledgeFirebaseRecord(change.name,change.id,change.before,change.after,saved);
                                 // إذا كان الدمج قد جمع تعديلات جهازين، يجب أن تصبح النسخة المدمجة هي النسخة المحلية أيضاً.
                                 if(autoDecision){
-                                    replaceStateRecordFromCloud(change.name,change.id,saved);
+                                    rebaseLocalAfterCommit(change.name,change.id,change.after,saved);
                                     rememberAutoConflictResolution(change.name,change.id,change.after,remoteSeen,saved,autoDecision.reason);
-                                    delete syncConflicts[syncConflictKey(change.name,change.id)];
+                                    if(sameRecord(mapsById(state[change.name]||[]).get(String(change.id)),saved))delete syncConflicts[syncConflictKey(change.name,change.id)];
                                 }
                             }
                         } catch (err) { errors.push(err); blockRelatedSubject(change); }
+                        finally { inFlightFirebaseChanges.delete(pendingKey); }
                     }));
                 }
             }
@@ -2019,7 +2068,7 @@
                 });
                 const changed=local.size!==remote.size||[...remote.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
                 state[name]=Array.from(remote.values());
-                lastSyncedCollections[name]=remoteArr;
+                lastSyncedCollections[name]=JSON.parse(JSON.stringify(remoteArr));
                 purgeOfficiallyDeletedStudentsFromState();
                 return changed;
             }
@@ -2038,7 +2087,7 @@
                 });
                 const changed=local.size!==remote.size||[...remote.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
                 state[name]=Array.from(remote.values());
-                lastSyncedCollections[name]=remoteArr;
+                lastSyncedCollections[name]=JSON.parse(JSON.stringify(remoteArr));
                 return changed;
             }
 
@@ -2099,14 +2148,18 @@
                     }
                     if (l && r) {
                         // أهم قاعدة: ما دام السجل عُدّل محلياً ولم يصبح جزءاً من خط الأساس، لا يمكن للقطة سحابية أن ترجعه.
-                        if(localDirty){ remote.set(id,l); return; }
+                        if(localDirty){
+                            const decision=safeThreeWayRecordMerge(name,b,l,r);
+                            if(!decision.safe)preserveRemoteConflict(name,id,l,b,r);
+                            remote.set(id,decision.safe?decision.value:l);return;
+                        }
                         const localRev = attendanceRecordRevision(l);
                         const remoteRev = attendanceRecordRevision(r);
                         if (localRev > remoteRev) remote.set(id, l);
                         return;
                     }
                     if (l && !r) {
-                        if(localDirty) remote.set(id,l); // سجل جديد/تعديل محلي لم يُرفع بعد.
+                        if(localDirty){if(b)preserveRemoteConflict(name,id,l,b,undefined);remote.set(id,l);}
                         // إذا كان السجل المحلي مطابقاً لخط الأساس وحُذف سحابياً، نقبل الحذف السحابي.
                         return;
                     }
@@ -2156,7 +2209,7 @@
                 const changed = local.size !== mergedMap.size || [...mergedMap.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
                 state[name] = Array.from(mergedMap.values());
                 // نحتفظ باللقطة الخام كخط أساس حتى تُرفع تعديلات هذا الجهاز وتنظيف التكرارات فعلياً.
-                lastSyncedCollections[name] = remoteArr;
+                lastSyncedCollections[name] = JSON.parse(JSON.stringify(remoteArr));
                 return changed;
             }
 
@@ -2191,13 +2244,15 @@
                 // V41: سجل تاريخ الجدول لا يُحذف إذا كان هذا الجهاز لا يملكه محلياً.
                 if(name==='scheduleLinks' && String(id).startsWith('schedule_history__') && !String(id).startsWith('schedule_history_gap__') && !l)return;
                 if (!sameRecord(l, b)) {
-                    if (l) remote.set(id, l);
-                    else remote.delete(id);
+                    const r=remote.get(id),decision=safeThreeWayRecordMerge(name,b,l,r);
+                    if(!decision.safe)preserveRemoteConflict(name,id,l,b,r);
+                    const merged=decision.safe?decision.value:l;
+                    if(merged)remote.set(id,merged);else remote.delete(id);
                 }
             });
             const changed = local.size !== remote.size || [...remote.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
             state[name] = Array.from(remote.values());
-            lastSyncedCollections[name] = remoteArr;
+            lastSyncedCollections[name] = JSON.parse(JSON.stringify(remoteArr));
             if (name === 'appSettings') purgeOfficiallyDeletedStudentsFromState();
             return changed;
         }
@@ -2215,7 +2270,7 @@
                 await withTimeout(ref.once('value'));
                 await withTimeout(ref.transaction(current=>{
                     if (!Array.isArray(current)) return;
-                    return collectionToMap(normalizeCollection(current,name),name);
+                    return firebaseTransportValue(collectionToMap(normalizeCollection(current,name),name));
                 },undefined,false),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة ترحيل البيانات القديمة');
                 legacyCloudCollections.delete(name);
             }
@@ -2355,29 +2410,8 @@
                 try {
                     if(legacyCloudCollections.size)await migrateLegacyCollectionsIfNeeded(Object.fromEntries([...legacyCloudCollections].map(name=>[name,[]])));
                     const conflicts = await commitFirebaseChanges(changes);
-                    // V43.1: لا نعيد تنزيل جميع مجموعات Firebase بعد كل عملية حفظ.
-                    // commitFirebaseChanges يتحقق من السجل المستهدف، والمستمعات child_* تستقبل أي تغيير خارجي.
-                    // نحدّث خط الأساس محلياً فقط للتغييرات التي لم تتعارض.
-                    const conflictKeys=new Set(conflicts.map(c=>`${c.name}::${c.id}`));
-                    for(const change of changes){
-                        if(conflictKeys.has(`${change.name}::${change.id}`)) continue;
-                        const base=mapsById(lastSyncedCollections[change.name]||[]);
-                        if(change.after) base.set(String(change.id), sanitizeRecord(change.after));
-                        else base.delete(String(change.id));
-                        lastSyncedCollections[change.name]=Array.from(base.values());
-                        delete syncConflicts[syncConflictKey(change.name,change.id)];
-                    }
                     if (conflicts.length) {
                         // لا نفقد نسخة هذا الجهاز: نعيد التعديلات المتعارضة كمسودة محلية معلقة.
-                        conflicts.forEach(change => {
-                            const map = mapsById(state[change.name] || []);
-                            const currentValue=map.get(String(change.id));
-                            // إذا عدّل المستخدم السجل مرة أخرى أثناء انتظار الشبكة، تبقى النسخة الأحدث محلياً.
-                            if (change.after) {
-                                if (!currentValue || sameRecord(currentValue, change.after)) map.set(String(change.id), change.after);
-                            } else if (!currentValue) map.delete(String(change.id));
-                            state[change.name] = Array.from(map.values());
-                        });
                         setSyncStatus(`⚠️ يوجد ${conflicts.length} تعارض محفوظ محليا؛ ستبقى النسختان دون فقد`, '#b45309');
                         if (!options.silent) alert(`⚠️ عُدّل ${conflicts.length} سجل من جهاز آخر في الوقت نفسه. حُفظ تعديل هذا الجهاز محليا ولم يُفقد، بينما بقيت النسخة السحابية الأحدث للحماية.`);
                         await persistLocalState('conflict', true);
@@ -2387,10 +2421,12 @@
                     cloudConnected = true;
                     lastCloudSyncAt = Date.now();
                     const localCopySaved=await persistLocalState('cloud-save', true);
-                    setSyncStatus(localCopySaved?'✅ تم الحفظ محليا وسحابيا':'⚠️ تم الحفظ سحابياً فقط؛ تعذر الحفظ على الجهاز',localCopySaved?'#2f855a':'#b45309');
+                    const pendingCount=buildFirebaseChanges().length,conflictCount=Object.keys(syncConflicts).length;
+                    const allConfirmed=pendingCount===0&&conflictCount===0;
+                    setSyncStatus(!allConfirmed?`🟠 تبقى ${pendingCount} تغييرات معلقة و${conflictCount} تعارضات للمراجعة`:localCopySaved?'✅ تم الحفظ محليا وسحابيا':'⚠️ تم الحفظ سحابياً فقط؛ تعذر الحفظ على الجهاز',allConfirmed&&localCopySaved?'#2f855a':'#b45309');
                     setStartupStatus('✅ متصل بالسحابة', 'online');
                     updateSyncConflictButton();
-                    return Object.keys(syncConflicts).length === 0 && buildFirebaseChanges().length === 0;
+                    return allConfirmed;
                 } catch (err) {
                     console.error('خطأ في الحفظ:', err);
                     cloudConnected = false;
@@ -2416,82 +2452,105 @@
             }, Math.max(40,Number(delay)||120));
         }
 
+        function preserveRemoteConflict(name,id,local,before,remote) {
+            const key=syncConflictKey(name,id);
+            syncConflicts[key]=JSON.parse(JSON.stringify({name,id,before:before??null,
+                after:local??null,remote:remote??null,detectedAt:Date.now()}));
+        }
+
+        function applyRemoteChild(name, raw, idFromKey) {
+            if(!state.initialLoadDone)return;
+            const incoming=raw==null?undefined:sanitizeRecord(raw);
+            const id=String(incoming?.id||idFromKey||'');
+            if(!id)return;
+            if(incoming)incoming.id=id;
+            if(name==='deletedStudents'){
+                const values=mapsById(lastSyncedCollections[name]||[]);if(incoming)values.set(id,incoming);else values.delete(id);
+                applyRemoteCollection(name,Array.from(values.values()));
+                scheduleLocalPersistence(0);scheduleIncrementalUiRefresh(name,90);return;
+            }
+            const list=Array.isArray(state[name])?state[name]:(state[name]=[]);
+            const idx=list.findIndex(x=>String(x?.id||'')===id);
+            const local=idx<0?undefined:list[idx];
+            if(['students','attendances'].includes(name)){
+                const sid=name==='students'?id:String(incoming?.studentId||local?.studentId||'');
+                if(sid&&isStudentOfficiallyDeleted(sid))return;
+            }
+            const base=mapsById(lastSyncedCollections[name]||[]);
+            const before=base.get(id),key=syncConflictKey(name,id);
+            if(name==='attendances'&&incoming&&!isEnrollmentRecord(incoming)&&incoming.superseded!==true&&attendanceRecordSessionKey(incoming)!=='legacy'){
+                const logicalKey=attendanceLogicalKeyFromRecord(incoming);
+                const other=list.find(r=>String(r.id)!==id&&r.superseded!==true&&attendanceLogicalKeyFromRecord(r)===logicalKey);
+                if(other){
+                    // Old clients can create another ID for this same session. Reuse the
+                    // logical merge so a pending correction wins over a second stale ID.
+                    base.set(id,incoming);
+                    applyRemoteCollection(name,Array.from(base.values()));
+                    scheduleLocalPersistence(700);scheduleIncrementalUiRefresh(name,180);updateSyncConflictButton();
+                    return;
+                }
+            }
+            const dirty=!sameRecord(local,before);
+            const pending=inFlightFirebaseChanges.get(key);
+            const ownEcho=!!pending&&sameRecord(incoming,pending.after);
+            const equal=sameRecord(local,incoming);
+            const olderAttendance=name==='attendances'&&local&&incoming&&!isEnrollmentRecord(local)&&
+                attendanceRecordRevision(incoming)<attendanceRecordRevision(local);
+            const concurrent=dirty&&!sameRecord(incoming,before)&&!equal&&!ownEcho;
+
+            if(equal)delete syncConflicts[key];
+            else if(concurrent||(!dirty&&olderAttendance)||syncConflicts[key]){
+                preserveRemoteConflict(name,id,local,before,incoming);
+            }
+            // A cloud echo of the preceding click must not undo the next click.
+            // A conflicting edit/removal is retained for explicit review, never adopted silently.
+            const keepLocal=dirty||!!syncConflicts[key];
+            if(!keepLocal&&!equal){
+                if(incoming){if(idx<0)list.push(incoming);else list[idx]=incoming;}
+                else if(idx>=0)list.splice(idx,1);
+            }
+            // Baselines must never share mutable records (including nested values) with state.
+            if(incoming)base.set(id,JSON.parse(JSON.stringify(incoming)));
+            else base.delete(id);
+            lastSyncedCollections[name]=Array.from(base.values());
+            scheduleLocalPersistence(name==='attendances'?700:350);
+            if(!equal||syncConflicts[key])scheduleIncrementalUiRefresh(name,name==='attendances'?180:90);
+            if(name==='appSettings'&&incoming?.type==='deletedStudent')purgeOfficiallyDeletedStudentsFromState();
+            updateSyncConflictButton();
+        }
+
         function listenToFirebase() {
             if (!database || cloudListenersStarted) return;
             cloudListenersStarted = true;
 
-            // V42.3: بعد التحميل الأولي لا نستمع إلى المجموعة كاملة بـ value.
-            // كل تغيير يصل كسجل واحد فقط، وهذا مهم خصوصاً attendances التي تحتوي آلاف السجلات.
-            const upsertRemoteChild = (name, raw, idFromKey) => {
-                if (!state.initialLoadDone) return;
-                const incoming = raw && typeof raw === 'object' ? sanitizeRecord(raw) : raw;
-                const id = String(incoming?.id || idFromKey || '');
-                if (!id) return;
-
-                if (['students','attendances'].includes(name)) {
-                    const sid = name === 'students' ? id : String(incoming?.studentId || '');
-                    if (sid && isStudentOfficiallyDeleted(sid)) return;
-                }
-
-                const list = Array.isArray(state[name]) ? state[name] : (state[name] = []);
-                const idx = list.findIndex(x => String(x?.id || '') === id);
-                if (idx >= 0 && sameRecord(list[idx], incoming)) return;
-                if (idx >= 0) list[idx] = incoming;
-                else list.push(incoming);
-
-                const base = mapsById(lastSyncedCollections[name] || []);
-                base.set(id, incoming);
-                lastSyncedCollections[name] = Array.from(base.values());
-                delete syncConflicts[syncConflictKey(name,id)];
-
-                scheduleLocalPersistence(name==='attendances' ? 700 : 350);
-                scheduleIncrementalUiRefresh(name, name==='attendances' ? 180 : 90);
-                updateSyncConflictButton();
-            };
-
-            const removeRemoteChild = (name, idFromKey) => {
-                if (!state.initialLoadDone) return;
-                const id=String(idFromKey||'');
-                if(!id)return;
-                const list=Array.isArray(state[name])?state[name]:(state[name]=[]);
-                const idx=list.findIndex(x=>String(x?.id||'')===id);
-                if(idx<0)return;
-                list.splice(idx,1);
-                const base=mapsById(lastSyncedCollections[name]||[]);
-                base.delete(id);
-                lastSyncedCollections[name]=Array.from(base.values());
-                delete syncConflicts[syncConflictKey(name,id)];
-                scheduleLocalPersistence(500);
-                scheduleIncrementalUiRefresh(name, name==='attendances' ? 180 : 90);
-                updateSyncConflictButton();
-            };
-
             CLOUD_SYNC_COLLECTIONS.forEach(name => {
                 const ref=database.ref('/'+name);
 
-                // Firebase يعيد إطلاق child_added لكل السجلات الموجودة عند تركيب المستمع.
-                // هذه السجلات حُمّلت مسبقاً في القراءة الأولية، لذا نتجاوزها بزمن O(1)
-                // بدلاً من البحث الخطي داخل آلاف سجلات الغياب لكل حدث.
-                const initialIds=new Set(
-                    (lastSyncedCollections[name]||[])
-                    .map(x=>String(x?.id||''))
-                    .filter(Boolean)
-                );
+                // Look up the initial version in O(1); an existing ID alone does not
+                // prove the record is unchanged since the first cloud read.
+                const initialRecords=mapsById(lastSyncedCollections[name]||[]);
 
                 ref.on('child_added', snap => {
                     const raw=snap.val();
                     const id=String(raw?.id || snap.key || '');
-                    if(id && initialIds.has(id)){
-                        initialIds.delete(id);
-                        return;
-                    }
-                    upsertRemoteChild(name,raw,snap.key);
+                    const original=initialRecords.get(id);
+                    initialRecords.delete(id);
+                    if(original&&sameRecord(original,raw))return;
+                    applyRemoteChild(name,raw,snap.key);
                 }, err=>console.error('خطأ child_added في '+name+':',err));
 
-                ref.on('child_changed', snap => upsertRemoteChild(name,snap.val(),snap.key),
+                ref.on('child_changed', snap => applyRemoteChild(name,snap.val(),snap.key),
                     err=>console.error('خطأ child_changed في '+name+':',err));
-                ref.on('child_removed', snap => removeRemoteChild(name,snap.key),
+                ref.on('child_removed', snap => applyRemoteChild(name,null,snap.val()?.id||snap.key),
                     err=>console.error('خطأ child_removed في '+name+':',err));
+                // One initial fence also catches deletions between the first read and
+                // attaching listeners. Inspect only IDs; do not materialize the collection.
+                ref.once('value').then(snap=>{
+                    initialRecords.forEach((record,id)=>{
+                        if(!snap.hasChild(firebaseRecordKey(id)))applyRemoteChild(name,null,id);
+                    });
+                    initialRecords.clear();
+                }).catch(err=>console.error('تعذر التحقق الأولي من '+name+':',err));
             });
         }
 
@@ -3647,11 +3706,12 @@
 
         // حفظ حرج خاص بنقل طالب واحد: يكتب حقول المجموعة لهذا الطالب وروابطه التشغيلية فقط.
         // لا يكتب مصفوفة students/attendances كاملة، لذلك لا يمكن أن يلمس سجلات بقية الطلبة.
-        async function persistStudentTransferCritical(student, beforeLinkedRecords = []) {
+        async function persistStudentTransferCritical(student, beforeLinkedRecords = [], beforeStudent = null) {
             const sid = String(student?.id || '');
             if (!sid) throw new Error('معرف الطالب غير صالح');
             const localSaved = await persistLocalState('student-group-transfer-v39', true);
             if (!database || !cloudInitialReadComplete) {
+                if(!localSaved)throw new Error('تعذر حفظ النقل محلياً ولا يوجد اتصال سحابي. أبق الصفحة مفتوحة وخذ نسخة احتياطية.');
                 scheduleCloudRetry();
                 return { localSaved, cloudSaved:false, verified:false, reason:'offline' };
             }
@@ -3665,6 +3725,21 @@
             const updates = {};
             const studentRef = database.ref(`/students/${studentKey}`);
             const remoteBefore = (await withTimeout(studentRef.once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة قراءة الطالب قبل النقل')).val();
+            const deletedRemote=(await withTimeout(database.ref(`/deletedStudents/${studentKey}`).once('value'))).val();
+            if(deletedRemote&&String(deletedRemote.studentId||deletedRemote.id)!==sid)throw new Error('مسار علامة الحذف يخص معرفاً آخر؛ أوقف النقل لحماية السجلات.');
+            if(deletedRemote&&deletedRemote.active!==false){
+                const markers=mapsById(state.deletedStudents||[]);markers.set(sid,{...sanitizeRecord(deletedRemote),id:sid,studentId:sid});
+                state.deletedStudents=Array.from(markers.values());updateSyncBaseRecord('deletedStudents',sid,markers.get(sid));
+                purgeOfficiallyDeletedStudentsFromState();
+            }
+            if(isStudentOfficiallyDeleted(sid)||(deletedRemote&&String(deletedRemote.studentId||deletedRemote.id)===sid&&deletedRemote.active!==false))throw new Error('الطالب محذوف نهائياً؛ أوقف النقل ولا تعيد إنشاء سجله.');
+            if(remoteBefore&&String(remoteBefore.id||sid)!==sid)throw new Error('مسار الطالب السحابي يخص معرفاً آخر؛ أوقف النقل لحماية الطالب الآخر.');
+            const expected=beforeStudent||mapsById(lastSyncedCollections.students||[]).get(sid);
+            if(remoteBefore&&expected&&(studentTheoreticalGroup(remoteBefore)!==studentTheoreticalGroup(expected)||studentPracticalGroup(remoteBefore)!==studentPracticalGroup(expected))&&
+                (studentTheoreticalGroup(remoteBefore)!==studentTheoreticalGroup(student)||studentPracticalGroup(remoteBefore)!==studentPracticalGroup(student))){
+                preserveRemoteConflict('students',sid,student,expected,remoteBefore);
+                throw new Error('تغير توزيع الطالب من جهاز آخر أثناء النقل. حُفظت النسختان للمراجعة.');
+            }
             if (remoteBefore && typeof remoteBefore === 'object') {
                 const prefix = `students/${studentKey}/`;
                 updates[prefix+'theoreticalGroup'] = student.theoreticalGroup;
@@ -3683,8 +3758,13 @@
                 if (sameRecord(before, after)) return;
                 updates[`attendances/${firebaseRecordKey(id)}`] = after ? sanitizeRecord(after) : null;
             });
+            for(const id of linkIds){
+                if(!Object.prototype.hasOwnProperty.call(updates,`attendances/${firebaseRecordKey(id)}`))continue;
+                const remoteLink=(await withTimeout(database.ref(`/attendances/${firebaseRecordKey(id)}`).once('value'))).val();
+                if(remoteLink&&(String(remoteLink.studentId)!==sid||String(remoteLink.id||id)!==String(id)||!isEnrollmentRecord(remoteLink)||Number(remoteLink.hours)>0))throw new Error('أوقف النقل: أحد مسارات الربط يخص طالباً آخر أو سجلاً تاريخياً.');
+            }
             if (!Object.keys(updates).length) return {localSaved,cloudSaved:true,verified:true,reason:'noop'};
-            await withTimeout(database.ref('/').update(updates), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ نقل الطالب');
+            await withTimeout(database.ref('/').update(firebaseTransportValue(updates)), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ نقل الطالب');
             const verifyStudent = (await withTimeout(studentRef.once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة التحقق من نقل الطالب')).val();
             const verified = !!verifyStudent &&
                 normalizeGroupName(verifyStudent.theoreticalGroup || verifyStudent.group || verifyStudent.section || '', '') === studentTheoreticalGroup(student) &&
@@ -3754,14 +3834,18 @@
         // هوية منطقية ثابتة للمحاضرة: طالب + مادة + تاريخ + وقت.
         // تمنع إنشاء سجلين مختلفين لنفس المحاضرة عند العمل من أكثر من جهاز/نسخة.
         function attendanceLogicalSessionKey(studentId, subjectId, date, sessionTime) {
-            return [String(studentId||''),String(subjectId||''),String(date||''),attendanceSessionKey(sessionTime)].join('|');
+            return attendanceIdentityKey(studentId,subjectId,date,attendanceSessionKey(sessionTime));
+        }
+
+        function attendanceIdentityKey(studentId,subjectId,date,sessionKey){
+            return [studentId,subjectId,date,sessionKey].map(v=>String(v??'').replace(/%/g,'%25').replace(/\|/g,'%7C')).join('|');
         }
 
         function attendanceLogicalKeyFromRecord(attendance) {
             if(!attendance || isEnrollmentRecord(attendance)) return '';
             const sessionKey=attendanceRecordSessionKey(attendance);
             if(sessionKey==='legacy') return `legacy|${String(attendance.id||'')}`;
-            return [String(attendance.studentId||''),String(attendance.subjectId||''),String(attendance.date||''),sessionKey].join('|');
+            return attendanceIdentityKey(attendance.studentId,attendance.subjectId,attendance.date,sessionKey);
         }
 
         function firebaseSafeAttendancePart(value) {
@@ -3790,15 +3874,21 @@
 
         function lectureMatchesSubjectForAttendance(lecture, subject, professor=null) {
             if(!lecture||!subject)return false;
+            const hasStage=!!lecture.stageName || (lecture.stageIndex!==undefined&&lecture.stageIndex!==null&&Number.isFinite(Number(lecture.stageIndex)));
+            if(hasStage&&Number(subject.level)!==scheduleStageLevel(lecture.stageName,Number(lecture.stageIndex)||0))return false;
+            const owner=professor||state.professors.find(p=>String(p.id)===String(subject.professorId));
+            const ownerIds=owner?professorIdentityIdSet(owner):new Set([String(subject.professorId||'')]);
+            if(lecture.professorId&&!ownerIds.has(String(lecture.professorId)))return false;
+            if(!lecture.professorId&&lecture.teacherName&&owner&&!professorLoginAliases(owner).some(n=>normalizeMatchText(n)===normalizeMatchText(lecture.teacherName)))return false;
             const lecturePractical=String(lecture.type||'').includes('عملي');
             const subjectType=String(subject.groupType||'نظري');
             if(subjectType==='عملي'&&!lecturePractical)return false;
             if(subjectType==='نظري'&&lecturePractical)return false;
             const ids=new Set([String(subject.id||''),String(subject.timetableSourceId||'')].filter(Boolean));
             if(lecture.subjectId)return ids.has(String(lecture.subjectId));
-            const matched=matchSubjectForStructuredLecture(lecture,professor);
+            const matched=matchSubjectForStructuredLecture(lecture,owner);
             if(matched&&(String(matched.id)===String(subject.id)||(subject.timetableSourceId&&String(matched.timetableSourceId||'')===String(subject.timetableSourceId))))return true;
-            return normalizeMatchText(lecture.subjectName||'')===normalizeMatchText(subject.name||'');
+            return false; // A shared name is insufficient when stage/teacher/group is ambiguous.
         }
 
         function lectureAttendanceGroup(lecture, subject) {
@@ -3933,9 +4023,9 @@
                 if(isEnrollmentRecord(att) || att?.superseded===true) return;
                 const sessionKey=attendanceRecordSessionKey(att);
                 if(sessionKey==='legacy') { passthrough.push(att); return; }
-                const key=[String(att.studentId||''),String(att.subjectId||''),String(att.date||''),sessionKey].join('|');
+                const key=attendanceIdentityKey(att.studentId,att.subjectId,att.date,sessionKey);
                 const current=sessions.get(key);
-                if(!current || attendanceRecordRevision(att)>=attendanceRecordRevision(current)) sessions.set(key,att);
+                if(!current || (attendanceRecordRevision(att)>attendanceRecordRevision(current)||(attendanceRecordRevision(att)===attendanceRecordRevision(current)&&String(att.id).localeCompare(String(current.id))>0))) sessions.set(key,att);
             });
             const result=[...passthrough,...sessions.values()];
             if(attendanceReadScope && records===state.attendances) attendanceReadScope.logical=result;
@@ -3962,7 +4052,7 @@
         }
 
         function findAttendanceForSession(studentId, subjectId, date, sessionTime) {
-            return chooseLatestAttendanceRecord(findAttendanceRecordsForSession(studentId, subjectId, date, sessionTime));
+            return chooseLatestAttendanceRecord(findAttendanceRecordsForSession(studentId, subjectId, date, sessionTime).filter(r=>r.superseded!==true));
         }
 
         function findAttendanceRecordsForSession(studentId, subjectId, date, sessionTime) {
@@ -4046,6 +4136,9 @@
         function validateAttendanceWriteIntegrity(studentId, subject, context) {
             const student=state.students.find(st=>String(st.id)===String(studentId));
             if(!student)return {ok:false,reason:'الطالب غير موجود في قاعدة الطلبة.'};
+            if(isStudentOfficiallyDeleted(studentId))return {ok:false,reason:'الطالب محذوف نهائياً.'};
+            if(!subject||!state.subjects.some(s=>String(s.id)===String(subject.id)))return {ok:false,reason:'المادة غير موجودة.'};
+            if(!isValidAttendanceDate(context?.date)||!normalizeSessionTime(context?.sessionTime))return {ok:false,reason:'تاريخ المحاضرة أو وقتها غير صالح.'};
             if(!studentMatchesSubject(student,subject))return {ok:false,reason:'الطالب لا ينتمي إلى المرحلة/الشعبة/المجموعة الخاصة بهذه المادة.'};
 
             const expectedGroup=normalizeGroupName(professorGroupNameForStudent(student,subject),'');
@@ -4084,7 +4177,7 @@
             const records=findAttendanceRecordsForSession(studentId,subject.id,context.date,context.sessionTime);
             const isHistorical=String(context.date||'')<getLocalDateISO();
             if(isHistorical && records.length===0 && state.currentUser?.role==='professor'){
-                const withinNormal24h=professorHas24hAttendanceAccess(subject,context.groupName||professorGroupNameForStudent(student,subject),context.date,context.sessionTime);
+                const withinNormal24h=professorHas24hAttendanceAccess(subject,context.groupName||professorGroupNameForStudent(state.students.find(st=>String(st.id)===String(studentId)),subject),context.date,context.sessionTime);
                 if(!withinNormal24h && !hasHistoricalAttendanceCreatePermission(subject,context.date,state.currentUser.id)){
                     throw new Error('انتهت مهلة الـ24 ساعة لهذه المحاضرة، ولا توجد صلاحية من رئيس القسم لإنشاء غياب/حضور جديد بهذا التاريخ القديم.');
                 }
@@ -4416,9 +4509,10 @@
             if (!database) return { ok:false, reason:'offline', remoteAttendanceCount:0 };
             const sid=String(student.id);
             const updates={};
+            const previousMarker=(await withTimeout(database.ref(`/deletedStudents/${firebaseSafeKey(sid)}`).once('value'))).val();
+            if(previousMarker&&String(previousMarker.studentId||previousMarker.id)!==sid)throw new Error('تعارض معرفات في مسار الحذف؛ لم تحذف بيانات أي طالب.');
             updates[`deletedStudents/${firebaseSafeKey(sid)}`]=tombstone;
-            updates[`students/${firebaseSafeKey(sid)}`]=null;
-            (localLinkedRecords || []).forEach(att=>{ if(att?.id) updates[`attendances/${firebaseSafeKey(att.id)}`]=null; });
+            // Select deletion paths from their actual remote owner, not stale local IDs.
 
             // اقرأ السحابة نفسها حتى نحذف أي سجل قديم للطالب غير موجود في ذاكرة هذا الجهاز.
             const [studentSnap, attendanceSnap] = await Promise.all([
@@ -4436,7 +4530,7 @@
             });
             updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;
             updates.schemaVersion=SCHEMA_VERSION;
-            await withTimeout(database.ref('/').update(updates), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة الحذف النهائي');
+            await withTimeout(database.ref('/').update(firebaseTransportValue(updates)), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة الحذف النهائي');
 
             // تحقق من السحابة بعد العملية: لا طالب ولا سجل غياب بهذا المعرف.
             const [verifyStudentSnap, verifyAttendanceSnap] = await Promise.all([
@@ -4463,7 +4557,7 @@
                 deletedRecords.forEach(rec=>{const sid=String(rec.studentId||rec.id||'');if(sid)updates[`deletedStudents/${firebaseSafeKey(sid)}`]={...rec,id:sid,studentId:sid,active:true};});
                 Object.entries(studentSnap.val()||{}).forEach(([key,rec])=>{if(rec&&deletedIds.has(String(rec.id||key)))updates[`students/${key}`]=null;});
                 Object.entries(attendanceSnap.val()||{}).forEach(([key,rec])=>{if(rec&&deletedIds.has(String(rec.studentId||'')))updates[`attendances/${key}`]=null;});
-                if(Object.keys(updates).length){updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;await withTimeout(database.ref('/').update(updates),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تنظيف سجلات الطلاب المحذوفين');}
+                if(Object.keys(updates).length){updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;await withTimeout(database.ref('/').update(firebaseTransportValue(updates)),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تنظيف سجلات الطلاب المحذوفين');}
                 return true;
             } catch(err){console.warn('تعذر تنظيف السجلات السحابية للطلاب المحذوفين:',err);return false;}
         }
@@ -4543,11 +4637,12 @@
             try {
                 cloudResult=await hardDeleteStudentFromFirebase(student,linkedRecords,tombstone);
                 // حدّث خط الأساس المحلي للمجموعات التي حُذفت ذرّياً كي لا يعيد طابور الحفظ إنشاءها.
-                lastSyncedCollections.students=normalizeCollection(lastSyncedCollections.students||[],'students').filter(st=>String(st.id)!==sid);
-                lastSyncedCollections.attendances=normalizeCollection(lastSyncedCollections.attendances||[],'attendances').filter(att=>String(att.studentId)!==sid);
-                const dsMap=mapsById(normalizeCollection(lastSyncedCollections.deletedStudents||[],'deletedStudents'));
-                dsMap.set(sid,tombstone); lastSyncedCollections.deletedStudents=Array.from(dsMap.values());
-                await persistLocalState('hard-delete-student-cloud-confirmed-v36', true);
+                if(cloudResult.ok){
+                    lastSyncedCollections.students=normalizeCollection(lastSyncedCollections.students||[],'students').filter(st=>String(st.id)!==sid);
+                    lastSyncedCollections.attendances=normalizeCollection(lastSyncedCollections.attendances||[],'attendances').filter(att=>String(att.studentId)!==sid);
+                    updateSyncBaseRecord('deletedStudents',sid,tombstone);
+                    await persistLocalState('hard-delete-student-cloud-confirmed-v36', true);
+                }else scheduleCloudRetry();
                 pushToFirebase({silent:true}).catch(console.error); // مزامنة سجل التدقيق فقط وما تبقى من تغييرات آمنة.
             } catch(err) {
                 console.error('تعذر إكمال الحذف الذري سحابياً:',err);
@@ -5072,8 +5167,8 @@
                 return false;
             }
             try {
-                await withTimeout(database.ref('/lectureReminderSchedule').set(map), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة رفع جدول التذكيرات');
-                await withTimeout(database.ref('/lectureReminderConfig/global').set({...config,updatedAt:firebase.database.ServerValue.TIMESTAMP}), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ إعدادات التذكيرات');
+                await withTimeout(database.ref('/lectureReminderSchedule').set(firebaseTransportValue(map)), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة رفع جدول التذكيرات');
+                await withTimeout(database.ref('/lectureReminderConfig/global').set(firebaseTransportValue({...config,updatedAt:firebase.database.ServerValue.TIMESTAMP})), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ إعدادات التذكيرات');
                 renderLectureReminderStatus(stats);
                 if(showAlert) alert(`✅ تمت مزامنة ${stats.total} محاضرة.\nالجاهزة للإرسال: ${stats.ready}\nغير المطابقة: ${stats.unmatched}\nبدون رقم: ${stats.missingPhone}\nبدون موافقة: ${stats.noConsent}`);
                 return true;
@@ -5654,7 +5749,7 @@
             updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;
             updates.schemaVersion=SCHEMA_VERSION;
             try{
-                await withTimeout(database.ref('/').update(updates),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة رفع الطالب إلى السحابة');
+                await withTimeout(database.ref('/').update(firebaseTransportValue(updates)),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة رفع الطالب إلى السحابة');
                 const verify=await withTimeout(database.ref(`/students/${firebaseRecordKey(sid)}`).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق من الطالب');
                 const remote=verify.val();
                 if(!remote || String(remote.id||sid)!==sid)throw new Error('لم يظهر الطالب في السحابة بعد الحفظ');
@@ -5724,7 +5819,6 @@
             if (!confirm('⚠️ هل تريد إزالة الطالب من شعبته النظرية؟\nسيزال أيضاً من مجموعته العملية، لكن جميع الغيابات التاريخية ستبقى محفوظة.')) return;
             const student = state.students.find(s => s.id === studentId);
             if (!student) { alert('الطالب غير موجود'); return; }
-            ensureStudentGroupingModel();
             const before = { level:student.level, theoreticalGroup:studentTheoreticalGroup(student), practicalGroup:studentPracticalGroup(student) };
             const historicalRecords = countHistoricalAttendanceRecords(studentId);
             student.theoreticalGroup = 'غير محدد'; student.practicalGroup = ''; student.group = 'غير محدد'; student.section = 'غير محدد'; student.groupType='نظري';
@@ -5739,6 +5833,7 @@
             const sid = String(studentId || '');
             const student = state.students.find(st => String(st.id) === sid);
             if (!student) { alert('الطالب غير موجود'); return false; }
+            if(Number(student.level)!==Number(level)||isStudentOfficiallyDeleted(sid)){alert('تغيرت بيانات الطالب؛ افتح مرحلته الحالية قبل النقل.');return false;}
             const oldTheory = studentTheoreticalGroup(student);
             const oldPractical = studentPracticalGroup(student);
             const availableTheories = [...new Set((state.students || [])
@@ -5765,7 +5860,7 @@
             const beforeLinkedRecords = beforeAttendancesSnapshot.filter(att => String(att.studentId || '') === sid);
             const safetyBefore = studentTransferSafetySignature(sid);
             const historicalRecords = countHistoricalAttendanceRecords(sid);
-
+            let transferPrepared=false;
             try {
                 student.theoreticalGroup = newTheory;
                 student.group = newTheory;
@@ -5785,6 +5880,7 @@
                 if (!currentStudent || studentTheoreticalGroup(currentStudent)!==newTheory || studentPracticalGroup(currentStudent)!==newPractical) {
                     throw new Error('لم تثبت الشعبة أو المجموعة العملية محلياً بعد النقل');
                 }
+                transferPrepared=true;
 
                 recordAudit('نقل طالب كامل بين الشعب النظرية', {
                     studentId:sid,student:student.name,
@@ -5795,7 +5891,7 @@
                     links
                 });
 
-                const saved = await persistStudentTransferCritical(student,beforeLinkedRecords);
+                const saved = await persistStudentTransferCritical(student,beforeLinkedRecords,beforeStudentsSnapshot.find(st=>String(st.id)===sid));
                 // بقية السجل (audit) يرفع بالطابور العام، لكن نجاح النقل لا يعتمد على تعارضات سجلات غير مرتبطة به.
                 pushToFirebase({silent:true}).catch(err=>{console.warn('تعذر رفع سجل التدقيق بعد النقل:',err);scheduleCloudRetry();});
                 renderAll();
@@ -5807,6 +5903,15 @@
                 return true;
             } catch(err) {
                 console.error('فشل نقل الطالب:',err);
+                if(transferPrepared){
+                    // The network may have accepted the transfer before an acknowledgement
+                    // failed. Never roll back whole collections after yielding to the network.
+                    purgeOfficiallyDeletedStudentsFromState();
+                    await persistLocalState('student-transfer-pending-v458',true).catch(()=>false);
+                    scheduleCloudRetry();renderAll();
+                    alert('⚠️ لم يكتمل تأكيد النقل السحابي. بقيت التعديلات الحالية للمراجعة وإعادة المزامنة، ولم تُستعد نسخة قديمة من بيانات بقية الطلبة.\nالسبب: '+(err.message||err));
+                    return false;
+                }
                 state.students = beforeStudentsSnapshot;
                 state.attendances = beforeAttendancesSnapshot;
                 await persistLocalState('student-transfer-rollback-v39',true).catch(()=>false);
@@ -5894,9 +5999,17 @@
             document.querySelectorAll('.theory-student-check').forEach(cb => cb.checked = checked);
         }
 
+        function validatePracticalAssignment(student,practicalGroup,level,theoreticalGroup){
+            if(!student||isStudentOfficiallyDeleted(student.id))return false;
+            if(Number(student.level)!==Number(level)||studentTheoreticalGroup(student)!==normalizeGroupName(theoreticalGroup,''))return false;
+            const next=normalizeGroupName(practicalGroup,'');
+            return !next||!(state.students||[]).some(s=>String(s.id)!==String(student.id)&&Number(s.level)===Number(level)&&studentPracticalGroup(s)===next&&studentTheoreticalGroup(s)!==studentTheoreticalGroup(student));
+        }
+
         async function setStudentPracticalGroup(studentId, practicalGroup, level, theoreticalGroup, rerender = true) {
             if (!requireAppRole('admin')) return false;
             const student = state.students.find(st=>st.id===studentId); if(!student) return false;
+            if(!validatePracticalAssignment(student,practicalGroup,level,theoreticalGroup)){alert('أوقف التوزيع: بيانات الشعبة تغيرت أو المجموعة العملية تتبع شعبة أخرى. أعد فتح الشعبة الصحيحة.');return false;}
             const before = studentPracticalGroup(student);
             const next = normalizeGroupName(practicalGroup, '');
             student.practicalGroup = next; student.groupType = next ? 'نظري+عملي' : 'نظري';
@@ -5919,6 +6032,7 @@
             if(!ids.length){alert('اختر طالباً واحداً على الأقل.');return;}
             const group=normalizeGroupName(document.getElementById('bulkPracticalGroupName').value,'');
             if(!group){alert('أدخل اسم المجموعة العملية.');return;}
+            if(ids.some(id=>!validatePracticalAssignment(state.students.find(s=>String(s.id)===String(id)),group,level,theoreticalGroup))){alert('أوقف التوزيع: بعض الطلبة أو المجموعة لا ينتمون إلى الشعبة المفتوحة.');return;}
             ids.forEach(id=>setStudentPracticalGroup(id,group,level,theoreticalGroup,false));
             const ok=await saveAll(); showTheoreticalGroupDetail(level,theoreticalGroup); alert(ok?`✅ تم تعيين ${ids.length} طالب إلى المجموعة العملية ${group}.`:'⚠️ تم التعديل محلياً وتعذر الحفظ.');
         }
@@ -5927,6 +6041,7 @@
             if (!requireAppRole('admin')) return false;
             const ids=[...document.querySelectorAll('.theory-student-check:checked')].map(cb=>cb.value);
             if(!ids.length){alert('اختر طالباً واحداً على الأقل.');return;}
+            if(ids.some(id=>!validatePracticalAssignment(state.students.find(s=>String(s.id)===String(id)),'',level,theoreticalGroup))){alert('تغيرت شعبة أحد الطلبة؛ أعد فتح القائمة قبل إلغاء التوزيع.');return;}
             if(!confirm(`إلغاء التوزيع العملي لـ ${ids.length} طالب؟ ستبقى شعبهم النظرية وغياباتهم السابقة محفوظة.`)) return;
             ids.forEach(id=>setStudentPracticalGroup(id,'',level,theoreticalGroup,false));
             const ok=await saveAll(); showTheoreticalGroupDetail(level,theoreticalGroup); alert(ok?'✅ تم إلغاء التوزيع العملي للمحددِين.':'⚠️ تم التعديل محلياً وتعذر الحفظ.');
@@ -7075,7 +7190,7 @@
                 const snap=await withTimeout(ref.once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فحص نسخة الجدول التاريخية');
                 let saved=snap.val();
                 if(!saved){
-                    await withTimeout(ref.set(record),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة حفظ نسخة الجدول التاريخية');
+                    await withTimeout(ref.set(firebaseTransportValue(record)),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة حفظ نسخة الجدول التاريخية');
                     saved=record;
                 }
                 const base=mapsById(lastSyncedCollections.scheduleLinks||[]);
@@ -7182,7 +7297,7 @@
                     const updates={};
                     updates[`scheduleLinks/${firebaseRecordKey(id)}`]=null;
                     updates[`scheduleLinks/${firebaseRecordKey(gap.id)}`]=gap;
-                    await withTimeout(database.ref('/').update(updates),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة حذف نسخة الجدول');
+                    await withTimeout(database.ref('/').update(firebaseTransportValue(updates)),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة حذف نسخة الجدول');
                     const verify=await withTimeout(database.ref(`/scheduleLinks/${firebaseRecordKey(id)}`).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق من حذف نسخة الجدول');
                     if(verify.exists())throw new Error('بقيت النسخة موجودة في السحابة بعد محاولة الحذف');
                 }catch(err){console.error(err);alert('❌ تعذر حذف النسخة سحابياً، لذلك لم تُحذف محلياً. حاول بعد استقرار الاتصال.');return false;}
@@ -8272,7 +8387,7 @@
             if(database){
                 try{
                     const ref=database.ref(`/appSettings/${firebaseRecordKey(id)}`);
-                    await withTimeout(ref.set(record),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فتح الغيابات سحابياً');
+                    await withTimeout(ref.set(firebaseTransportValue(record)),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فتح الغيابات سحابياً');
                     const verify=(await withTimeout(ref.once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق من فتح الغيابات')).val();
                     cloudSaved=!!verify && verify.locked===false && String(verify.mode)==='editing_after_admin_reopen' && Number(verify.revision)===revision;
                     if(cloudSaved){
@@ -10382,6 +10497,8 @@
 
         async function resolveSyncConflict(key,choice) {
             const conflict=syncConflicts[key];
+            const owner=conflict?.name==='students'?conflict.id:(conflict?.after||conflict?.before||conflict?.remote)?.studentId;
+            if(conflict&&['students','attendances'].includes(conflict.name)&&isStudentOfficiallyDeleted(owner)){delete syncConflicts[key];purgeOfficiallyDeletedStudentsFromState();updateSyncConflictButton();return false;}
             if(!conflict||!canResolveSyncConflict(conflict)||!['local','remote'].includes(choice))return false;
             if(!database||!cloudInitialReadComplete)throw new Error('يلزم الاتصال بالسحابة لقراءة أحدث نسخة قبل الاختيار.');
             const ref=database.ref(`/${conflict.name}/${firebaseRecordKey(conflict.id)}`);
@@ -10439,6 +10556,19 @@
         ].forEach(name=>{
             const original=globalThis[name];
             if(typeof original==='function') globalThis[name]=function(...args){return withAttendanceReadScope(original,this,args);};
+        });
+
+        // Serialize lifecycle actions per student; operations on different students remain independent.
+        const studentLifecycleBusy=new Set();
+        ['moveStudentGroup','deleteStudentOfficial','removeStudentFromGroup','setStudentPracticalGroup'].forEach(name=>{
+            const original=globalThis[name];
+            globalThis[name]=async function(studentId,...args){
+                const id=String(studentId||'');
+                if(studentLifecycleBusy.has(id)){alert('توجد عملية نقل أو حذف أو توزيع لهذا الطالب قيد الحفظ. انتظر اكتمالها.');return false;}
+                studentLifecycleBusy.add(id);
+                try{return await original.call(this,studentId,...args);}
+                finally{studentLifecycleBusy.delete(id);}
+            };
         });
 
         applicationBootstrapPromise = bootstrapApplication();
