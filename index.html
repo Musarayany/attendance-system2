@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.11</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.13</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -502,6 +502,21 @@
         <div id="tabButtonsContainer" class="tab-buttons"></div>
 
         <!-- ==================== تبويب رئيس القسم ==================== -->
+<dialog id="headAttendanceDialog" dir="rtl" style="width:min(950px,95vw);max-height:90vh;overflow:auto;border:2px solid #2563eb;border-radius:12px;" oncancel="event.preventDefault();closeHeadAttendance()">
+<h3>إدارة الحضور والغياب — رئيس القسم</h3><button onclick="closeHeadAttendance()">إغلاق</button>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px">
+<label>المرحلة<select id="headAttendanceLevel" onchange="refreshHeadAttendanceSubjects()"></select></label>
+<label>الأستاذ<select id="headAttendanceProfessor" onchange="refreshHeadAttendanceSubjects()"></select></label>
+<label>المادة<select id="headAttendanceSubject" onchange="refreshHeadAttendanceSessions()"></select></label>
+<label>التاريخ<input type="date" id="headAttendanceDate" onchange="refreshHeadAttendanceSessions()"></label>
+<label>المجموعة ووقت المحاضرة<select id="headAttendanceSession"></select></label></div>
+<button onclick="loadHeadAttendance()">عرض المحاضرة</button><p id="headAttendanceLoaded"></p>
+<p>تعديلك لا يفتح المحاضرة للأستاذ ولا يرسل واتساب باسمه.</p>
+<input id="headAttendanceSearch" placeholder="البحث باسم الطالب" oninput="renderHeadAttendanceRows()">
+<button onclick="document.querySelectorAll('#headAttendanceRows input[data-head-student]').forEach(e=>e.checked=true)">تحديد الظاهرين</button>
+<button onclick="bulkHeadAttendance('present')">تثبيت حضور المحددين</button><button onclick="bulkHeadAttendance('absent')">غياب المحددين</button><button onclick="bulkHeadAttendance('excused')">غياب بعذر للمحددين</button>
+<table><thead><tr><th>تحديد</th><th>الطالب</th><th>الحالة المطلوبة</th></tr></thead><tbody id="headAttendanceRows"></tbody></table>
+<button onclick="saveHeadAttendance()" class="btn-success">حفظ تعديلات رئيس القسم</button><p id="headAttendanceResult" aria-live="polite"></p></dialog>
         <div id="tab-admin" class="tab-content">
             <div class="card" style="background:#f0fdf4; border:2px solid #48bb78;">
                 <div class="flex-between">
@@ -510,6 +525,7 @@
                         <button onclick="exportBackup()" class="btn-backup btn-sm" style="min-width:60px;">💾 نسخة احتياطية</button>
                         <button onclick="document.getElementById('restoreBackupInput').click()" class="btn-import btn-sm" style="min-width:60px;">🔄 استعادة</button>
                         <input type="file" id="restoreBackupInput" accept=".json" style="display:none;" onchange="restoreBackup(event)">
+                        <button onclick="openHeadAttendance()" class="btn-primary btn-sm">📝 إدارة الحضور والغياب</button>
                         <button onclick="showAuditLog()" class="btn-info btn-sm" style="min-width:60px;">🧾 سجل التدقيق</button>
                         <button onclick="showAddLevelPanel()" class="btn-success btn-sm" style="min-width:110px;">👨‍🏫 الأساتذة والمواد</button>
                         <button onclick="reconcileProfessorIdentityData(true)" class="btn-info btn-sm" style="min-width:120px;">🧩 فحص ملفات الأساتذة</button>
@@ -986,7 +1002,7 @@
         let cloudRetryTimer = null;
         let cloudConnected = false;
         let attendanceReadScope = null;
-        const APP_VERSION = '45.11-transfer-visibility';
+        const APP_VERSION = '45.13-head-attendance';
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -4177,6 +4193,11 @@
             if(!subject||!state.subjects.some(s=>String(s.id)===String(subject.id)))return {ok:false,reason:'المادة غير موجودة.'};
             if(!isValidAttendanceDate(context?.date)||!normalizeSessionTime(context?.sessionTime))return {ok:false,reason:'تاريخ المحاضرة أو وقتها غير صالح.'};
             if(isProfessorLectureSubmitted(subject,{...context,groupName:context?.groupName||professorGroupNameForStudent(student,subject)}))return {ok:false,reason:'المحاضرة مقفلة بعد الإرسال؛ اطلب إعادة فتحها من رئيس القسم.'};
+            if(state.currentUser?.role==='admin' && context?.adminHistoricalExisting===true){
+                const prior=findAttendanceForSession(studentId,subject.id,context.date,context.sessionTime);
+                if(prior && String(prior.lectureGroup||'')===String(context.groupName||'') && (!context.subjectId||String(context.subjectId)===String(subject.id)))return {ok:true};
+                return {ok:false,reason:'لا يوجد سجل تاريخي مطابق يسمح بتعديل الطالب المنقول.'};
+            }
             if(!studentMatchesSubject(student,subject))return {ok:false,reason:'الطالب لا ينتمي إلى المرحلة/الشعبة/المجموعة الخاصة بهذه المادة.'};
 
             const prior=findAttendanceForSession(studentId,subject.id,context.date,context.sessionTime);
@@ -5607,6 +5628,121 @@
             const withPassword=profs.filter(p=>getProfessorUnifiedPassword(p).hasPassword).length;
             const duplicateGroups=profs.filter(p=>getProfessorIdentityCluster(p).length>1).length;
             el.innerHTML=`<span class="admin-health-chip">👨‍🏫 ${profs.length} أستاذ</span><span class="admin-health-chip">📱 ${withPhone}/${profs.length} هاتف</span><span class="admin-health-chip">🔑 ${withPassword}/${profs.length} كلمة مرور</span>${duplicateGroups?`<span class="admin-health-chip" style="background:#fff7ed;color:#9a3412;border-color:#fed7aa">🧩 ${duplicateGroups} هوية مكررة جرى توحيدها</span>`:''}`;
+        }
+
+        let headAttendanceView=null,headAttendanceDraft=new Map(),headAttendanceBusy=false;
+        function headAttendanceSnapshot(studentId,subjectId,date,time){
+            return JSON.stringify(stableComparable(state.attendances.filter(r=>!isEnrollmentRecord(r)&&String(r.studentId)===String(studentId)&&String(r.subjectId)===String(subjectId)&&r.date===date&&attendanceRecordSessionKey(r)===attendanceSessionKey(time)).sort((a,b)=>String(a.id).localeCompare(String(b.id)))));
+        }
+        function openHeadAttendance(){
+            if(!requireAppRole('admin'))return;
+            const box=document.getElementById('headAttendanceDialog');
+            const stage=document.getElementById('headAttendanceLevel');
+            stage.innerHTML='<option value="">كل المراحل</option>'+getConfiguredLevels().map(l=>`<option value="${Number(l)}">${escapeHtml(getLevelName(l))}</option>`).join('');
+            const teacher=document.getElementById('headAttendanceProfessor');
+            teacher.innerHTML='<option value="">كل الأساتذة</option>'+state.professors.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+            document.getElementById('headAttendanceDate').value=getLocalDateISO();
+            document.getElementById('headAttendanceDate').max=getLocalDateISO();
+            refreshHeadAttendanceSubjects();
+            if(!box.open)box.showModal();
+        }
+        function closeHeadAttendance(){
+            if(headAttendanceBusy)return;
+            if(headAttendanceDraft.size&&!confirm('توجد تعديلات لم تحفظ. إغلاق النافذة وإلغاء المسودة؟'))return;
+            headAttendanceDraft.clear();headAttendanceView=null;
+            document.getElementById('headAttendanceRows').innerHTML='';document.getElementById('headAttendanceDialog').close();
+        }
+        function refreshHeadAttendanceSubjects(){
+            const level=document.getElementById('headAttendanceLevel').value,prof=document.getElementById('headAttendanceProfessor').value;
+            const list=state.subjects.filter(s=>(!level||Number(s.level)===Number(level))&&(!prof||String(s.professorId)===prof));
+            document.getElementById('headAttendanceSubject').innerHTML=list.map(s=>`<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(s.groupType||'نظري')} — ${escapeHtml(s.group||s.section||'الكل')}</option>`).join('');
+            refreshHeadAttendanceSessions();
+        }
+        function getHeadAttendanceSessions(subject,date){
+            if(!subject||!isValidAttendanceDate(date)||date>getLocalDateISO())return [];
+            const sessions=new Map();
+            const add=(group,time,lecture=null)=>{time=normalizeSessionTime(time);if(!time)return;const key=JSON.stringify([group,time]);if(!sessions.has(key))sessions.set(key,{groupName:group,sessionTime:time,lecture});};
+            getLogicalAttendanceRecords().filter(r=>String(r.subjectId)===String(subject.id)&&r.date===date).forEach(r=>add(String(r.lectureGroup||''),r.sessionTime));
+            const groups=[...new Set(state.students.filter(st=>studentMatchesSubject(st,subject)).map(st=>professorGroupNameForStudent(st,subject)))];
+            groups.forEach(g=>getScheduledAttendanceLectures(subject,g,date).forEach(l=>{if(baghdadLectureEpoch(date,l.startMinutes)<=Date.now())add(g,formatMinutes24(l.startMinutes),l);}));
+            return [...sessions.values()].sort((a,b)=>a.sessionTime.localeCompare(b.sessionTime)||a.groupName.localeCompare(b.groupName,'ar'));
+        }
+        function refreshHeadAttendanceSessions(){
+            const sub=state.subjects.find(s=>String(s.id)===document.getElementById('headAttendanceSubject').value);
+            const date=document.getElementById('headAttendanceDate').value;
+            const rows=getHeadAttendanceSessions(sub,date);
+            document.getElementById('headAttendanceSession').innerHTML=rows.map(c=>`<option value="${escapeHtml(JSON.stringify([c.groupName,c.sessionTime]))}">${escapeHtml(c.groupName||'سجلات قديمة بلا مجموعة موثقة')} — ${escapeHtml(c.sessionTime)}</option>`).join('');
+        }
+        function buildHeadAttendanceView(subject,date,group,time){
+            if(!subject||!isValidAttendanceDate(date)||!normalizeSessionTime(time))throw new Error('حدد المادة والتاريخ والمحاضرة.');
+            const mins=Number(time.slice(0,2))*60+Number(time.slice(3,5));
+            if(baghdadLectureEpoch(date,mins)>Date.now())throw new Error('لا يمكن تعديل محاضرة مستقبلية.');
+            const existing=getLogicalAttendanceRecords().filter(r=>String(r.subjectId)===String(subject.id)&&r.date===date&&attendanceRecordSessionKey(r)===attendanceSessionKey(time)&&String(r.lectureGroup||'')===group);
+            const ids=new Set(existing.map(r=>String(r.studentId)));
+            if(date===getLocalDateISO()&&group)state.students.filter(st=>studentMatchesSubject(st,subject)&&professorGroupNameForStudent(st,subject)===group).forEach(st=>ids.add(String(st.id)));
+            const rows=[...ids].map(id=>{const student=state.students.find(st=>String(st.id)===id);if(!student||isStudentOfficiallyDeleted(id))return null;const record=existing.find(r=>String(r.studentId)===id);return {id,name:student.name,studentSnapshot:JSON.stringify(stableComparable(student)),snapshot:headAttendanceSnapshot(id,subject.id,date,time),record:record?JSON.parse(JSON.stringify(record)):null};}).filter(Boolean).sort((a,b)=>a.name.localeCompare(b.name,'ar'));
+            return {subjectId:String(subject.id),subjectSnapshot:JSON.stringify(stableComparable(subject)),date,groupName:group,sessionTime:time,rows};
+        }
+        function loadHeadAttendance(){
+            if(!requireAppRole('admin')||headAttendanceBusy)return;
+            if(headAttendanceDraft.size&&!confirm('إلغاء المسودة الحالية وفتح المحاضرة المختارة؟'))return;
+            try{
+                const sub=state.subjects.find(s=>String(s.id)===document.getElementById('headAttendanceSubject').value);
+                const [group,time]=JSON.parse(document.getElementById('headAttendanceSession').value||'[]');
+                headAttendanceView=buildHeadAttendanceView(sub,document.getElementById('headAttendanceDate').value,group,time);
+                headAttendanceDraft.clear();
+                const prof=state.professors.find(p=>String(p.id)===String(sub.professorId));
+                document.getElementById('headAttendanceLoaded').textContent=`المحاضرة المفتوحة: ${sub.name} / ${sub.groupType} / ${prof?.name||'غير معين'} / ${group||'بلا مجموعة موثقة'} / ${headAttendanceView.date} / ${time}`;
+                document.getElementById('headAttendanceResult').textContent=headAttendanceView.date<getLocalDateISO()?'تعرض القائمة الطلبة ذوي السجلات الموجودة لهذه المحاضرة؛ لا نفترض أنها قائمة تاريخية كاملة.':'تظهر الحالات المسجلة والطلبة المرتبطون حالياً بهذه المجموعة.';
+                renderHeadAttendanceRows();
+            }catch(e){alert(e.message);}
+        }
+        function renderHeadAttendanceRows(){
+            const query=(document.getElementById('headAttendanceSearch').value||'').trim();
+            const rows=(headAttendanceView?.rows||[]).filter(r=>r.name.includes(query));
+            document.getElementById('headAttendanceRows').innerHTML=rows.map(r=>{const value=headAttendanceDraft.get(r.id)??(r.record?(Number(r.record.hours)>0?(Number(r.record.excused)?'excused':'absent'):'present'):'');return `<tr><td><input type="checkbox" data-head-student="${escapeHtml(r.id)}"></td><td>${escapeHtml(r.name)}</td><td><select onchange="setHeadAttendanceDraft(decodeURIComponent('${encodeURIComponent(r.id)}'),this.value)"><option value="" ${!value?'selected':''}>لم تسجل حالته</option><option value="present" ${value==='present'?'selected':''}>حاضر</option><option value="absent" ${value==='absent'?'selected':''}>غائب</option><option value="excused" ${value==='excused'?'selected':''}>غائب بعذر</option></select></td></tr>`;}).join('')||'<tr><td colspan="3">لا توجد سجلات مطابقة.</td></tr>';
+        }
+        function setHeadAttendanceDraft(id,value){
+            if(state.currentUser?.role!=='admin'||headAttendanceBusy)return;
+            const row=headAttendanceView?.rows.find(r=>r.id===id);if(!row)return;
+            const original=row.record?(Number(row.record.hours)>0?(Number(row.record.excused)?'excused':'absent'):'present'):'';
+            if(!value||value===original)headAttendanceDraft.delete(id);else if(['present','absent','excused'].includes(value))headAttendanceDraft.set(id,value);
+        }
+        function bulkHeadAttendance(value){
+            if(state.currentUser?.role!=='admin'||headAttendanceBusy)return;
+            document.querySelectorAll('#headAttendanceRows input[data-head-student]:checked').forEach(el=>setHeadAttendanceDraft(el.dataset.headStudent,value));renderHeadAttendanceRows();
+        }
+        async function saveHeadAttendance(){
+            if(!requireAppRole('admin')||headAttendanceBusy||!headAttendanceView)return false;
+            if(!headAttendanceDraft.size){alert('لا توجد تعديلات للحفظ.');return false;}
+            const view=headAttendanceView,sub=state.subjects.find(s=>String(s.id)===view.subjectId);
+            try{
+                if(!sub||JSON.stringify(stableComparable(sub))!==view.subjectSnapshot)throw new Error('تغيرت بيانات المادة. أعد فتح المحاضرة قبل الحفظ.');
+                const edits=[...headAttendanceDraft].map(([id,value])=>{
+                    const row=view.rows.find(r=>r.id===id),student=state.students.find(s=>String(s.id)===id);
+                    if(!row||!student||JSON.stringify(stableComparable(student))!==row.studentSnapshot||headAttendanceSnapshot(id,sub.id,view.date,view.sessionTime)!==row.snapshot)throw new Error('تغيرت بيانات طالب أو غيابه أثناء التعديل. أعد تحميل المحاضرة للمراجعة.');
+                    if(Object.values(syncConflicts).some(c=>[c.before,c.after,c.remote].some(r=>r&&((c.name==='students'&&String(r.id)===id)||(c.name==='attendances'&&String(r.studentId)===id&&String(r.subjectId)===sub.id)))))throw new Error('يوجد تعارض مزامنة يخص أحد الطلبة المحددين. راجعه قبل الحفظ.');
+                    const prior=findAttendanceForSession(id,sub.id,view.date,view.sessionTime);
+                    if(!row.record && prior)throw new Error('للطالب سجل في مجموعة أخرى في الوقت نفسه؛ افتح مجموعته المسجلة للتعديل.');
+                    if(!row.record && findCrossSubjectAttendanceConflicts(id,sub.id,view.date,view.sessionTime).length)throw new Error('يوجد تسجيل للطالب في مادة أخرى في الوقت نفسه.');
+                    const context={date:view.date,sessionTime:view.sessionTime,groupName:view.groupName,subjectId:sub.id,professorId:sub.professorId,lectureId:row.record?.lectureId||'',adminHistoricalExisting:!!row.record};
+                    const check=validateAttendanceWriteIntegrity(id,sub,context);if(!check.ok)throw new Error(check.reason);
+                    return {row,id,value,context};
+                });
+                if(!confirm(`حفظ ${edits.length} تعديل باسم رئيس القسم لمحاضرة ${view.date} الساعة ${view.sessionTime}؟`))return false;
+                headAttendanceBusy=true;
+                const before=JSON.parse(JSON.stringify(state.attendances)),auditBefore=state.auditLogs.length;
+                let written=[];
+                try{edits.forEach(e=>{const result=upsertAttendanceState(e.id,sub,e.context,e.value==='present'?0:getSubjectWeeklyHours(sub),e.value==='excused'?1:0,'head-attendance-panel');written.push(JSON.parse(JSON.stringify(result.record)));recordAudit('تعديل حضور وغياب بقرار رئيس القسم',{studentId:e.id,subjectId:sub.id,date:view.date,sessionTime:view.sessionTime,groupName:view.groupName,before:e.row.record,after:result.record});});}
+                catch(e){state.attendances=before;state.auditLogs.splice(auditBefore);throw e;}
+                headAttendanceDraft.clear();
+                await saveAll({silent:true});
+                const cloud=written.every(r=>!syncConflicts[syncConflictKey('attendances',r.id)]&&sameRecord((lastSyncedCollections.attendances||[]).find(x=>String(x.id)===String(r.id)),r));
+                document.getElementById('headAttendanceResult').textContent=cloud?'✅ حُفظت تعديلات رئيس القسم محلياً وسحابياً.':'🟠 التعديلات في الحالة المحلية؛ لم يتأكد اكتمال المزامنة. راجع حالة الحفظ أعلى البرنامج.';
+                headAttendanceView=buildHeadAttendanceView(sub,view.date,view.groupName,view.sessionTime);renderHeadAttendanceRows();
+                scheduleRenderRefresh('attendances');return cloud;
+            }catch(e){alert(e.message||'تعذر الحفظ؛ راجع حالة المزامنة.');return false;}
+            finally{headAttendanceBusy=false;}
         }
 
         function renderAdmin() {
@@ -7866,7 +8002,7 @@
             const subjects=state.subjects.filter(s=>Number(s.level)===Number(level) && s.timetableActive!==false).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ar'));
             if(!subjects.length){container.innerHTML='<div class="card"><p>لا توجد مواد في هذه المرحلة.</p></div>';return;}
             const stats={ok:0,pending:0,dirty:0,unassigned:0};
-            const rows=subjects.map(sub=>{const prof=state.professors.find(p=>p.id===sub.professorId);const st=getSubmissionState(sub);const bucket=st.code==='reopened'?'dirty':st.code;stats[bucket]=(stats[bucket]||0)+1;return{sub,prof,st,tt:subjectTimetableMatch(sub,prof)};});
+            const rows=subjects.map(sub=>{const prof=state.professors.find(p=>p.id===sub.professorId);const st=getSubmissionState(sub);const bucket=st.code==='reopened'?'dirty':st.code==='cloud-pending'?'pending':st.code;stats[bucket]=(stats[bucket]||0)+1;return{sub,prof,st,tt:subjectTimetableMatch(sub,prof)};});
             let html=`<div class="card"><div class="flex-between"><div><h4 style="margin:0;">✅ متابعة إكمال وإرسال الغيابات</h4><small>الحالة تُقارن آلياً مع آخر نسخة أكدها الأستاذ؛ واتساب إرسال يدوي ولا يمكن للنظام إثبات الضغط على زر الإرسال داخله.</small></div><button onclick="exportSubmissionTrackingExcel()" class="btn-excel btn-sm">📊 تصدير المتابعة</button></div>
                 <div class="status-count-grid"><div class="status-count-card submission-ok"><strong>${stats.ok}</strong>مكتمل داخل النظام</div><div class="status-count-card submission-pending"><strong>${stats.pending}</strong>لم يؤكد</div><div class="status-count-card submission-dirty"><strong>${stats.dirty}</strong>يحتاج إعادة إرسال</div><div class="status-count-card submission-unassigned"><strong>${stats.unassigned}</strong>بلا أستاذ</div><div class="status-count-card" style="background:#ede9fe;color:#5b21b6;"><strong>${getScheduleLink()?'نعم':'لا'}</strong>ربط الجدول</div></div></div>`;
             html+='<div class="card"><div class="report-table-wrapper"><table class="report-table"><thead><tr><th>#</th><th>المادة</th><th>النوع</th><th>الأستاذ</th><th>الطلبة</th><th>آخر إرسال</th><th>الحالة</th><th>واتساب</th><th>الجدول الأسبوعي</th></tr></thead><tbody>';
@@ -8187,9 +8323,9 @@
             return isValidAttendanceDate(value)&&value<=today?value:today;
         }
 
-        function getSubjectOperationalAttendanceRecords(subjectId) {
+        function getSubjectOperationalAttendanceRecords(subjectId, records=state.attendances) {
             // البصمة تعتمد فقط على الحالة النهائية المنطقية لكل محاضرة، لا على نسخ مكررة/متجاوزة تقنية.
-            return getLogicalAttendanceRecords(state.attendances)
+            return getLogicalAttendanceRecords(records)
                 .filter(a => String(a.subjectId) === String(subjectId))
                 .map(a => ({studentId:String(a.studentId||''),date:String(a.date||''),sessionTime:normalizeSessionTime(a.sessionTime),sessionKey:attendanceRecordSessionKey(a),hours:Number(a.hours)||0,excused:Number(a.excused)||0,explicitState:String(a.explicitState||((Number(a.hours)||0)>0?'absent':'present'))}))
                 .sort((a,b) => (a.date+a.sessionKey+a.studentId).localeCompare(b.date+b.sessionKey+b.studentId));
@@ -8547,6 +8683,25 @@
             return protectSubmittedLectureContext(subject,validateManualAttendanceContextBase(subject,student,date,sessionTime));
         }
 
+        function getSubmissionCloudIssue(subject,submission) {
+            if(!submission)return 'لا يوجد تأكيد إرسال.';
+            const sid=String(subject.id);
+            const relevantConflict=Object.values(syncConflicts).find(c=>{
+                const r=c.after||c.remote||c.before;
+                return ['attendances','submissions','appSettings'].includes(c.name) && String(r?.subjectId||'')===sid;
+            });
+            if(relevantConflict)return 'يوجد تعارض مزامنة يخص هذه المادة؛ يلزم حسمه قبل الإرسال.';
+            if(getSubjectAttendanceFingerprint(sid)!==submission.fingerprint)return 'تغيرت الغيابات بعد التأكيد؛ يلزم تأكيد النسخة الحالية.';
+            const cloudFingerprint=simpleHash(JSON.stringify(getSubjectOperationalAttendanceRecords(sid,lastSyncedCollections.attendances||[])));
+            if(cloudFingerprint!==submission.fingerprint)return 'سجلات حضور وغياب هذه المادة لم تكتمل مزامنتها بعد.';
+            const saved=(lastSyncedCollections.submissions||[]).find(x=>String(x.id)===String(submission.id));
+            if(!saved || saved.fingerprint!==submission.fingerprint || String(saved.subjectId)!==sid || String(saved.professorId)!==String(submission.professorId) || saved.declaration!=='completed')return 'تأكيد إرسال هذه المادة لم يصل إلى السحابة بعد.';
+            const workflow=getAttendanceWorkflowState(subject.id,submission.professorId,false);
+            const savedWorkflow=(lastSyncedCollections.appSettings||[]).find(x=>String(x.id)===String(workflow.id));
+            if(!savedWorkflow || !savedWorkflow.locked || String(savedWorkflow.lastSubmissionId)!==String(submission.id))return 'حالة إغلاق المحاضرة بعد الإرسال لم تكتمل مزامنتها بعد.';
+            return '';
+        }
+
         function getSubmissionState(subject) {
             if(!subject)return {code:'pending',label:'لم يؤكد الإكمال',cls:'submission-pending'};
             const prof=state.professors.find(p=>String(p.id)===String(subject.professorId));
@@ -8557,6 +8712,7 @@
             if(adminOpen){
                 return {code:'reopened',label:adminOpen?'🔓 أعاد رئيس القسم فتح المادة للتعديل — جميع المحاضرات مفتوحة حتى تعيد الإرسال':'المادة مفتوحة للتعديل بعد التراجع — عدّل بحرية ثم أعد الإرسال',cls:'submission-dirty',latest:latestCompleted,workflow,adminOpen};
             }
+            if(latestCompleted && getSubjectAttendanceFingerprint(subject.id)===latestCompleted.fingerprint && getSubmissionCloudIssue(subject,latestCompleted))return {code:'cloud-pending',label:'⏳ تأكيد محفوظ محلياً — اضغط إعادة محاولة المزامنة والإرسال',cls:'submission-pending',latest:latestCompleted,workflow};
             if(state.currentUser?.role==='professor' && hasOpenScheduledProfessorLecture(subject))return {code:'pending',label:'محاضرة متاحة للتسجيل — تفتح تلقائياً عند موعدها',cls:'submission-pending',latest:latestCompleted,workflow};
             if(!latestCompleted)return {code:'pending',label:'لم يؤكد الإكمال',cls:'submission-pending',workflow};
             const current=getSubjectAttendanceFingerprint(subject.id);
@@ -8587,9 +8743,9 @@
                 button.textContent=(st.code==='reopened'||st.code==='dirty')?(whatsappConfigured?'🔄 إعادة إرسال الغيابات بعد التعديل':'🔄 إعادة تأكيد الغيابات بعد التعديل'):(whatsappConfigured?'✅ تأكيد الإكمال وفتح واتساب':'✅ تأكيد الإكمال داخل النظام');
             }
             if(resendButton){
-                resendButton.style.display=(locked&&st.code==='ok')?'block':'none';
-                resendButton.disabled=!(locked&&st.code==='ok'&&whatsappConfigured);
-                resendButton.textContent=whatsappConfigured?'📱 إعادة فتح آخر رسالة واتساب':'📱 رقم مسؤول الغيابات غير مضبوط';
+                resendButton.style.display=(['ok','cloud-pending'].includes(st.code))?'block':'none';
+                resendButton.disabled=!(['ok','cloud-pending'].includes(st.code)&&whatsappConfigured);
+                resendButton.textContent=whatsappConfigured?(st.code==='cloud-pending'?'🔄 إعادة محاولة المزامنة والإرسال':'📱 إعادة فتح آخر رسالة واتساب'):'📱 رقم مسؤول الغيابات غير مضبوط';
             }
             if(removeAllButton){
                 removeAllButton.disabled=!!locked;
@@ -8612,17 +8768,20 @@
             const st=getSubmissionState(sub);
             const latest=st.latest||getLatestSubmission(sub.id,state.currentUser.id);
             if(!latest||latest.declaration!=='completed'){alert('لا يوجد إرسال مكتمل يمكن إعادة فتح رسالته.');return false;}
-            if(st.code!=='ok'){
+            if(!['ok','cloud-pending'].includes(st.code)){
                 alert('توجد تغييرات بعد آخر إرسال. استخدم زر «إعادة إرسال الغيابات بعد التعديل» أولاً حتى تصل النسخة الحالية.');
                 return false;
             }
             const number=getOfficerWhatsAppNumber();
             if(!number){alert('رقم واتساب مسؤول الغيابات غير مضبوط. اطلب من رئيس القسم حفظ الرقم أولاً.');return false;}
+            const popup=reserveWhatsAppWindow();
+            try { await saveAll({silent:true}); } catch(err){closeReservedWhatsAppWindow(popup);alert(err.message||'تعذر حفظ التأكيد.');return false;}
+            const issue=getSubmissionCloudIssue(sub,latest);
+            if(issue){closeReservedWhatsAppWindow(popup);renderProfessorSubmissionStatus(sub);alert('⏳ '+issue+'\nلم تُفتح رسالة واتساب. أعد المحاولة بعد اكتمال المزامنة.');return false;}
             const students=getStudentsForProfessor();
             const url=buildWhatsAppUrl(number,buildOfficerWhatsAppMessage(sub,latest,students));
-            if(!url){alert('تعذر إنشاء رابط واتساب بسبب رقم غير صالح.');return false;}
+            if(!url){closeReservedWhatsAppWindow(popup);alert('تعذر إنشاء رابط واتساب بسبب رقم غير صالح.');return false;}
             // هذه الدالة تُستدعى مباشرة من زر المستخدم، لذلك نحجز النافذة فوراً قبل أي حفظ غير متزامن.
-            const popup=reserveWhatsAppWindow();
             let opened=navigateReservedWhatsAppWindow(popup,url);
             if(!opened){
                 // fallback بلا popup: فتح الرابط في الصفحة الحالية لا يخضع لحظر النوافذ المنبثقة.
@@ -9753,7 +9912,7 @@
                 // مهم: لا نضع أي await قبل محاولة فتح واتساب من زر "إعادة آخر رسالة".
                 // التأخير قبل window.open كان سبباً مباشراً في حظر النافذة عند بعض Android/iPhone/Chrome/Safari.
                 const immediateState=getSubmissionState(sub);
-                if(immediateState.code==='ok' && immediateState.latest){
+                if(['ok','cloud-pending'].includes(immediateState.code) && immediateState.latest){
                     return await resendLastSubmissionWhatsApp();
                 }
 
@@ -9807,12 +9966,13 @@
                 state.notifications.push({ id: makeId('note'), msg: `${isResend?'🔄':'✅'} الأستاذ ${state.currentUser.name} ${isResend?'أعاد إرسال':'أكد إكمال'} غيابات مادة ${sub.name} داخل النظام`, time: now.toLocaleString('ar-IQ'), professorId:state.currentUser.id, subjectId:sub.id, submissionId:submission.id });
                 recordAudit(isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات وتجهيز واتساب لمسؤول الغيابات', { subject: sub.name, students: students.length, records: realRecords.length, submissionId: submission.id, previousSubmissionId:submission.resendOfSubmissionId, revisionNumber:submission.revisionNumber, workflowRevision:Number(workflowRecord?.revision)||0, whatsappPrepared: !!whatsappNumber, whatsappPopupReserved:!!whatsappWindow });
 
-                const ok = await saveAll();
+                await saveAll();
+                const cloudIssue=getSubmissionCloudIssue(sub,submission);
                 renderProfessorSubmissionStatus(sub);
-                if (!ok) {
+                if (cloudIssue) {
                     closeReservedWhatsAppWindow(whatsappWindow);
                     whatsappWindow=null;
-                    alert('⚠️ تم تسجيل التأكيد محلياً لكن تعذر تثبيته في السحابة. ستعاد المزامنة تلقائياً؛ لم تُفتح رسالة واتساب حتى لا تُرسل نسخة غير مثبتة سحابياً.');
+                    alert('⏳ '+cloudIssue+'\nبقي التأكيد محفوظاً محلياً. استخدم زر إعادة محاولة المزامنة والإرسال؛ لن يُنشأ تأكيد مكرر.');
                     return false;
                 }
 
