@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.13</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.14</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -512,6 +512,7 @@
 <label>المجموعة ووقت المحاضرة<select id="headAttendanceSession"></select></label></div>
 <button onclick="loadHeadAttendance()">عرض المحاضرة</button><p id="headAttendanceLoaded"></p>
 <p>تعديلك لا يفتح المحاضرة للأستاذ ولا يرسل واتساب باسمه.</p>
+<span id="headAttendanceCount" aria-live="polite"></span><button onclick="document.getElementById('headAttendanceSearch').value='';renderHeadAttendanceRows()">إظهار كل الأسماء</button>
 <input id="headAttendanceSearch" placeholder="البحث باسم الطالب" oninput="renderHeadAttendanceRows()">
 <button onclick="document.querySelectorAll('#headAttendanceRows input[data-head-student]').forEach(e=>e.checked=true)">تحديد الظاهرين</button>
 <button onclick="bulkHeadAttendance('present')">تثبيت حضور المحددين</button><button onclick="bulkHeadAttendance('absent')">غياب المحددين</button><button onclick="bulkHeadAttendance('excused')">غياب بعذر للمحددين</button>
@@ -1002,7 +1003,7 @@
         let cloudRetryTimer = null;
         let cloudConnected = false;
         let attendanceReadScope = null;
-        const APP_VERSION = '45.13-head-attendance';
+        const APP_VERSION = '45.14-complete-head-roster';
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -5679,7 +5680,7 @@
             if(baghdadLectureEpoch(date,mins)>Date.now())throw new Error('لا يمكن تعديل محاضرة مستقبلية.');
             const existing=getLogicalAttendanceRecords().filter(r=>String(r.subjectId)===String(subject.id)&&r.date===date&&attendanceRecordSessionKey(r)===attendanceSessionKey(time)&&String(r.lectureGroup||'')===group);
             const ids=new Set(existing.map(r=>String(r.studentId)));
-            if(date===getLocalDateISO()&&group)state.students.filter(st=>studentMatchesSubject(st,subject)&&professorGroupNameForStudent(st,subject)===group).forEach(st=>ids.add(String(st.id)));
+            if(group)state.students.filter(st=>studentMatchesSubject(st,subject)&&professorGroupNameForStudent(st,subject)===group).forEach(st=>ids.add(String(st.id)));
             const rows=[...ids].map(id=>{const student=state.students.find(st=>String(st.id)===id);if(!student||isStudentOfficiallyDeleted(id))return null;const record=existing.find(r=>String(r.studentId)===id);return {id,name:student.name,studentSnapshot:JSON.stringify(stableComparable(student)),snapshot:headAttendanceSnapshot(id,subject.id,date,time),record:record?JSON.parse(JSON.stringify(record)):null};}).filter(Boolean).sort((a,b)=>a.name.localeCompare(b.name,'ar'));
             return {subjectId:String(subject.id),subjectSnapshot:JSON.stringify(stableComparable(subject)),date,groupName:group,sessionTime:time,rows};
         }
@@ -5691,16 +5692,19 @@
                 const [group,time]=JSON.parse(document.getElementById('headAttendanceSession').value||'[]');
                 headAttendanceView=buildHeadAttendanceView(sub,document.getElementById('headAttendanceDate').value,group,time);
                 headAttendanceDraft.clear();
+                document.getElementById('headAttendanceSearch').value='';
                 const prof=state.professors.find(p=>String(p.id)===String(sub.professorId));
                 document.getElementById('headAttendanceLoaded').textContent=`المحاضرة المفتوحة: ${sub.name} / ${sub.groupType} / ${prof?.name||'غير معين'} / ${group||'بلا مجموعة موثقة'} / ${headAttendanceView.date} / ${time}`;
-                document.getElementById('headAttendanceResult').textContent=headAttendanceView.date<getLocalDateISO()?'تعرض القائمة الطلبة ذوي السجلات الموجودة لهذه المحاضرة؛ لا نفترض أنها قائمة تاريخية كاملة.':'تظهر الحالات المسجلة والطلبة المرتبطون حالياً بهذه المجموعة.';
+                document.getElementById('headAttendanceResult').textContent=headAttendanceView.date<getLocalDateISO()?'تعرض القائمة جميع طلبة المجموعة الحاليين مع أصحاب السجلات القديمة، ومنهم المنقولون. الطالب بلا سجل لا تُفترض حالته؛ تحقق من انتمائه وقت المحاضرة قبل تسجيل حالة جديدة.':'تظهر الحالات المسجلة والطلبة المرتبطون حالياً بهذه المجموعة.';
                 renderHeadAttendanceRows();
             }catch(e){alert(e.message);}
         }
         function renderHeadAttendanceRows(){
             const query=(document.getElementById('headAttendanceSearch').value||'').trim();
-            const rows=(headAttendanceView?.rows||[]).filter(r=>r.name.includes(query));
-            document.getElementById('headAttendanceRows').innerHTML=rows.map(r=>{const value=headAttendanceDraft.get(r.id)??(r.record?(Number(r.record.hours)>0?(Number(r.record.excused)?'excused':'absent'):'present'):'');return `<tr><td><input type="checkbox" data-head-student="${escapeHtml(r.id)}"></td><td>${escapeHtml(r.name)}</td><td><select onchange="setHeadAttendanceDraft(decodeURIComponent('${encodeURIComponent(r.id)}'),this.value)"><option value="" ${!value?'selected':''}>لم تسجل حالته</option><option value="present" ${value==='present'?'selected':''}>حاضر</option><option value="absent" ${value==='absent'?'selected':''}>غائب</option><option value="excused" ${value==='excused'?'selected':''}>غائب بعذر</option></select></td></tr>`;}).join('')||'<tr><td colspan="3">لا توجد سجلات مطابقة.</td></tr>';
+            const rows=(headAttendanceView?.rows||[]).filter(r=>normalizeMatchText(r.name).includes(normalizeMatchText(query)));
+            const count=document.getElementById('headAttendanceCount');
+            if(count)count.textContent=`المعروض ${rows.length} من ${headAttendanceView?.rows.length||0} طالب — تعديلات معلقة: ${headAttendanceDraft.size}`;
+            document.getElementById('headAttendanceRows').innerHTML=rows.map(r=>{const value=headAttendanceDraft.get(r.id)??(r.record?(Number(r.record.hours)>0?(Number(r.record.excused)?'excused':'absent'):'present'):'');return `<tr><td><input type="checkbox" data-head-student="${escapeHtml(r.id)}"></td><td>${escapeHtml(r.name)}<small style="display:block;color:#64748b">${r.record?'له سجل في هذه المحاضرة':'ضمن المجموعة حالياً — لا يوجد سجل لهذه المحاضرة'}</small></td><td><select onchange="setHeadAttendanceDraft(decodeURIComponent('${encodeURIComponent(r.id)}'),this.value)"><option value="" ${!value?'selected':''}>لم تسجل حالته</option><option value="present" ${value==='present'?'selected':''}>حاضر</option><option value="absent" ${value==='absent'?'selected':''}>غائب</option><option value="excused" ${value==='excused'?'selected':''}>غائب بعذر</option></select></td></tr>`;}).join('')||'<tr><td colspan="3">لا توجد سجلات مطابقة.</td></tr>';
         }
         function setHeadAttendanceDraft(id,value){
             if(state.currentUser?.role!=='admin'||headAttendanceBusy)return;
@@ -5729,7 +5733,7 @@
                     const check=validateAttendanceWriteIntegrity(id,sub,context);if(!check.ok)throw new Error(check.reason);
                     return {row,id,value,context};
                 });
-                if(!confirm(`حفظ ${edits.length} تعديل باسم رئيس القسم لمحاضرة ${view.date} الساعة ${view.sessionTime}؟`))return false;
+                if(!confirm(`حفظ ${edits.length} تعديل باسم رئيس القسم لمحاضرة ${view.date} الساعة ${view.sessionTime}؟${view.date<getLocalDateISO()&&edits.some(e=>!e.row.record)?'\nتنبيه: ستنشئ سجلات جديدة لطلبة ضمن المجموعة حالياً. تأكد أنهم كانوا ضمن هذه المحاضرة في التاريخ المختار.':''}`))return false;
                 headAttendanceBusy=true;
                 const before=JSON.parse(JSON.stringify(state.attendances)),auditBefore=state.auditLogs.length;
                 let written=[];
