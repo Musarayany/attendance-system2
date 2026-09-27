@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.10</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.11</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -986,7 +986,7 @@
         let cloudRetryTimer = null;
         let cloudConnected = false;
         let attendanceReadScope = null;
-        const APP_VERSION = '45.10-auto-lecture-opening';
+        const APP_VERSION = '45.11-transfer-visibility';
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -1761,6 +1761,28 @@
             return JSON.stringify(stableComparable(a)) === JSON.stringify(stableComparable(b));
         }
 
+        // Derived compatibility fields are not user edits. Compare their effective values
+        // without mutating either the cloud baseline or the student's saved record.
+        function studentSyncComparable(record) {
+            if(!record)return record;
+            const theory=studentTheoreticalGroup(record),practical=studentPracticalGroup(record);
+            return {...record,theoreticalGroup:theory,practicalGroup:practical,
+                group:theory,section:theory,groupType:practical?'نظري+عملي':'نظري',barcode:record.barcode||record.id};
+        }
+        function sameCollectionRecord(name,a,b) {
+            return sameRecord(name==='students'?studentSyncComparable(a):a,name==='students'?studentSyncComparable(b):b);
+        }
+        function recoverDerivedStudentConflict(id,local,fallback) {
+            const key=syncConflictKey('students',id),conflict=syncConflicts[key];
+            if(conflict?.before && conflict.after && local &&
+                sameCollectionRecord('students',conflict.before,conflict.after) &&
+                sameCollectionRecord('students',conflict.before,local)){
+                delete syncConflicts[key];
+                return conflict.before;
+            }
+            return fallback;
+        }
+
         function ensureAllRecordIds() {
             ensureStudentGroupingModel();
             SYNC_COLLECTIONS.forEach(name => {
@@ -1783,7 +1805,7 @@
                     const after = current.get(id);
                     // نسخ الجدول التاريخية لا تُحذف عبر فرق مزامنة صادر من جهاز قديم.
                     if(name==='scheduleLinks' && String(id).startsWith('schedule_history__') && !String(id).startsWith('schedule_history_gap__') && before && !after)return;
-                    if (sameRecord(before, after)) return;
+                    if (sameCollectionRecord(name,before, after)) return;
                     const key = String(id).replace(/[.#$\[\]\/]/g, '_');
                     updates[`${name}/${key}`] = after ? after : null;
                 });
@@ -1803,7 +1825,7 @@
                     const after = current.get(id);
                     // append-only: لا نولّد عملية حذف لنسخة جدول تاريخية موجودة في خط الأساس.
                     if(name==='scheduleLinks' && String(id).startsWith('schedule_history__') && !String(id).startsWith('schedule_history_gap__') && before && !after)return;
-                    if (!sameRecord(before, after) && !syncConflicts[syncConflictKey(name,id)]) changes.push({
+                    if (!sameCollectionRecord(name,before, after) && !syncConflicts[syncConflictKey(name,id)]) changes.push({
                         name, id, before: before === undefined ? undefined : JSON.parse(JSON.stringify(before)),
                         after: after === undefined ? undefined : JSON.parse(JSON.stringify(after))
                     });
@@ -1840,9 +1862,14 @@
         // يدمج فقط عندما يكون كل حقل قد تغيّر من جهة واحدة، أو تغير إلى القيمة نفسها في الجهتين.
         // إذا غيّر جهازان الحقل نفسه إلى قيمتين مختلفتين يبقى تعارضاً حقيقياً للمراجعة.
         function safeThreeWayRecordMerge(name,before,local,remote){
-            const b=before===undefined?undefined:before;
-            const l=local===undefined?undefined:local;
-            const r=remote===undefined?undefined:remote;
+            if(name==='students'){
+                if(before && [local,remote].some(v=>v && before.id!==undefined && !conflictValueEqual(v.id,before.id)))return {safe:false,reason:'record-identity-change'};
+                if(sameCollectionRecord(name,local,before))return {safe:true,value:remote,reason:'remote-only'};
+                if(sameCollectionRecord(name,local,remote))return {safe:true,value:remote,reason:'same-result'};
+            }
+            const b=name==='students'?studentSyncComparable(before):before;
+            const l=name==='students'?studentSyncComparable(local):local;
+            const r=name==='students'?studentSyncComparable(remote):remote;
 
             // Linked fields describe one enrollment/session, not independent settings.
             const identityKeys=name==='attendances'?['id','studentId','subjectId']:['id'];
@@ -2046,6 +2073,7 @@
             const remote = mapsById(remoteArr);
             const local = mapsById(localArr);
             const base = mapsById(baseArr);
+            if(name==='students')local.forEach((record,id)=>{base.set(id,recoverDerivedStudentConflict(id,record,base.get(id)));});
 
             // V34: الحذف الرسمي للطالب له أولوية مطلقة على أي لقطة سحابية قديمة أو جهاز قديم.
             // المطابقة بالمعرف فقط، لذلك لا يمكن أن تمس سجلات طالب آخر.
@@ -2075,7 +2103,7 @@
                     candidates.sort((a,b)=>(Number(b.deletedAt)||0)-(Number(a.deletedAt)||0));
                     remote.set(id,candidates[0]);
                 });
-                const changed=local.size!==remote.size||[...remote.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
+                const changed=local.size!==remote.size||[...remote.entries()].some(([id,rec])=>!sameCollectionRecord(name,local.get(id),rec));
                 state[name]=Array.from(remote.values());
                 lastSyncedCollections[name]=JSON.parse(JSON.stringify(remoteArr));
                 purgeOfficiallyDeletedStudentsFromState();
@@ -2089,12 +2117,12 @@
                     const l=local.get(id), r=remote.get(id), b=base.get(id);
                     if(l&&r){
                         const lr=Number(l.updatedAt||0), rr=Number(r.updatedAt||0);
-                        if(lr>rr || (lr===rr && !sameRecord(l,b))) remote.set(id,l);
+                        if(lr>rr || (lr===rr && !sameCollectionRecord(name,l,b))) remote.set(id,l);
                     } else if(l&&!r) {
-                        if(!sameRecord(l,b)||Number(l.updatedAt||0)>=Number(b?.updatedAt||0)) remote.set(id,l);
+                        if(!sameCollectionRecord(name,l,b)||Number(l.updatedAt||0)>=Number(b?.updatedAt||0)) remote.set(id,l);
                     }
                 });
-                const changed=local.size!==remote.size||[...remote.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
+                const changed=local.size!==remote.size||[...remote.entries()].some(([id,rec])=>!sameCollectionRecord(name,local.get(id),rec));
                 state[name]=Array.from(remote.values());
                 lastSyncedCollections[name]=JSON.parse(JSON.stringify(remoteArr));
                 return changed;
@@ -2135,7 +2163,7 @@
                 local.forEach((l,id)=>{
                     if(isEnrollmentRecord(l) || l?.superseded===true) return;
                     const b=base.get(id);
-                    if(!sameRecord(l,b)){
+                    if(!sameCollectionRecord(name,l,b)){
                         const key=attendanceLogicalKeyFromRecord(l);
                         const cur=dirtyLogical.get(key);
                         if(key && (!cur || attendanceRecordRevision(l)>=attendanceRecordRevision(cur))) dirtyLogical.set(key,l);
@@ -2148,7 +2176,7 @@
                     const r = remote.get(id);
                     const b = base.get(id);
                     const deletedAt = Number(attendanceDeletionGuards.get(id) || 0);
-                    const localDirty=!sameRecord(l,b);
+                    const localDirty=!sameCollectionRecord(name,l,b);
 
                     if (!l && deletedAt) {
                         // حذف تقني لنسخة مكررة: لا تسمح للسحابة بإعادتها أثناء التنظيف.
@@ -2215,7 +2243,7 @@
                 });
 
                 const mergedMap=mapsById(merged);
-                const changed = local.size !== mergedMap.size || [...mergedMap.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
+                const changed = local.size !== mergedMap.size || [...mergedMap.entries()].some(([id,rec])=>!sameCollectionRecord(name,local.get(id),rec));
                 state[name] = Array.from(mergedMap.values());
                 // نحتفظ باللقطة الخام كخط أساس حتى تُرفع تعديلات هذا الجهاز وتنظيف التكرارات فعلياً.
                 lastSyncedCollections[name] = JSON.parse(JSON.stringify(remoteArr));
@@ -2228,7 +2256,7 @@
                 const workflowIds=new Set([...local.keys(),...remote.keys(),...base.keys()].filter(id=>String(id).startsWith('attendanceWorkflow__')));
                 workflowIds.forEach(id=>{
                     const l=local.get(id),r=remote.get(id),b=base.get(id);
-                    const localDirty=!sameRecord(l,b);
+                    const localDirty=!sameCollectionRecord(name,l,b);
                     if(l&&localDirty){remote.set(id,l);return;}
                     if(l&&r){
                         const lr=Number(l.revision)||0,rr=Number(r.revision)||0;
@@ -2240,7 +2268,7 @@
                 if(l){
                     const localNumber=normalizeWhatsAppNumber(l.whatsappNormalized||l.whatsappNumber||'');
                     const remoteNumber=normalizeWhatsAppNumber(r?.whatsappNormalized||r?.whatsappNumber||'');
-                    const localDirty=!sameRecord(l,b);
+                    const localDirty=!sameCollectionRecord(name,l,b);
                     const localRev=Number(l.updatedAt)||0, remoteRev=Number(r?.updatedAt)||0;
                     if(/^\d{8,15}$/.test(localNumber) && (!r || localDirty || localRev>remoteRev || !/^\d{8,15}$/.test(remoteNumber))) remote.set(contactId,l);
                 }
@@ -2252,14 +2280,14 @@
                 const b = base.get(id);
                 // V41: سجل تاريخ الجدول لا يُحذف إذا كان هذا الجهاز لا يملكه محلياً.
                 if(name==='scheduleLinks' && String(id).startsWith('schedule_history__') && !String(id).startsWith('schedule_history_gap__') && !l)return;
-                if (!sameRecord(l, b)) {
+                if (!sameCollectionRecord(name,l, b)) {
                     const r=remote.get(id),decision=safeThreeWayRecordMerge(name,b,l,r);
                     if(!decision.safe)preserveRemoteConflict(name,id,l,b,r);
                     const merged=decision.safe?decision.value:l;
                     if(merged)remote.set(id,merged);else remote.delete(id);
                 }
             });
-            const changed = local.size !== remote.size || [...remote.entries()].some(([id,rec])=>!sameRecord(local.get(id),rec));
+            const changed = local.size !== remote.size || [...remote.entries()].some(([id,rec])=>!sameCollectionRecord(name,local.get(id),rec));
             state[name] = Array.from(remote.values());
             lastSyncedCollections[name] = JSON.parse(JSON.stringify(remoteArr));
             if (name === 'appSettings') purgeOfficiallyDeletedStudentsFromState();
@@ -2486,7 +2514,7 @@
                 if(sid&&isStudentOfficiallyDeleted(sid))return;
             }
             const base=mapsById(lastSyncedCollections[name]||[]);
-            const before=base.get(id),key=syncConflictKey(name,id);
+            const before=name==='students'?recoverDerivedStudentConflict(id,local,base.get(id)):base.get(id),key=syncConflictKey(name,id);
             if(name==='attendances'&&incoming&&!isEnrollmentRecord(incoming)&&incoming.superseded!==true&&attendanceRecordSessionKey(incoming)!=='legacy'){
                 const logicalKey=attendanceLogicalKeyFromRecord(incoming);
                 const other=list.find(r=>String(r.id)!==id&&r.superseded!==true&&attendanceLogicalKeyFromRecord(r)===logicalKey);
@@ -2499,13 +2527,13 @@
                     return;
                 }
             }
-            const dirty=!sameRecord(local,before);
+            const dirty=!sameCollectionRecord(name,local,before);
             const pending=inFlightFirebaseChanges.get(key);
-            const ownEcho=!!pending&&sameRecord(incoming,pending.after);
-            const equal=sameRecord(local,incoming);
+            const ownEcho=!!pending&&sameCollectionRecord(name,incoming,pending.after);
+            const equal=sameCollectionRecord(name,local,incoming);
             const olderAttendance=name==='attendances'&&local&&incoming&&!isEnrollmentRecord(local)&&
                 attendanceRecordRevision(incoming)<attendanceRecordRevision(local);
-            const concurrent=dirty&&!sameRecord(incoming,before)&&!equal&&!ownEcho;
+            const concurrent=dirty&&!sameCollectionRecord(name,incoming,before)&&!equal&&!ownEcho;
 
             if(equal)delete syncConflicts[key];
             else if(concurrent||(!dirty&&olderAttendance)||syncConflicts[key]){
