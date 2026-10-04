@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.14</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.15</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -590,10 +590,9 @@
                 <h4 style="margin-top:0;">📐 سياسة احتساب الغياب والساعات</h4>
                 <div class="grid-3" style="align-items:end;">
                     <div>
-                        <label>النسبة المعتمدة للحالة</label>
-                        <select id="absenceStatusBasis">
-                            <option value="unexcused">الغياب غير المعذر فقط</option>
-                            <option value="all">كل الغياب (بعذر وبدون عذر)</option>
+                        <label>سياسة تحديد الحالة</label>
+                        <select id="absenceStatusBasis" disabled>
+                            <option value="unexcused">المادة (11) — فصل المعذر عن غير المعذر</option>
                         </select>
                     </div>
                     <div><label>أسابيع مقررات بولونيا</label><input type="number" id="bolognaTeachingWeeks" min="1" max="52" value="15"></div>
@@ -601,7 +600,7 @@
                 </div>
                 <button onclick="saveAbsencePolicySettings()" class="btn-success btn-sm" style="margin-top:7px;">💾 حفظ السياسة وإعادة حساب الساعات</button>
                 <div id="absencePolicyStatus" class="integration-status" style="margin-top:7px;background:#fff;border-color:#f6d365;color:#744210;"></div>
-                <small>يمكن تعديل أسابيع مادة منفردة من قائمة المواد. المادة المعدلة يدوياً لا تتغير عند مزامنة الجدول.</small>
+                <small>الحالة تُحسب تلقائياً بمسارين منفصلين: غير المعذر (5% تنبيه، 7.5% إنذار أولي وقائي، 10% إنذار نهائي، وأكثر من 10% راسب) والمعذر (5% تنبيه، 10% إنذار أولي وقائي، 15% إنذار نهائي، وأكثر من 15% راسب). يمكن تعديل أسابيع مادة منفردة من قائمة المواد.</small>
             </div>
 
             <div class="card" style="background:#f0fdfa;border:2px solid #14b8a6;">
@@ -1003,7 +1002,7 @@
         let cloudRetryTimer = null;
         let cloudConnected = false;
         let attendanceReadScope = null;
-        const APP_VERSION = '45.14-complete-head-roster';
+        const APP_VERSION = '45.15-article11-progressive-warnings';
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -3475,7 +3474,10 @@
 
         function getLevelIcon(level) { const icons = { 1: '🟦', 2: '🟩', 3: '🟧', 4: '🟪' }; return icons[Number(level)] || '📚'; }
 
-        const ABSENCE_THRESHOLDS = Object.freeze({ notice:3, firstWarning:5, finalWarning:7, fail:10, unexcusedFail:10 });
+        const ABSENCE_THRESHOLDS = Object.freeze({
+            unexcused: Object.freeze({ notice:5, firstWarning:7.5, finalWarning:10, failAbove:10 }),
+            excused: Object.freeze({ notice:5, firstWarning:10, finalWarning:15, failAbove:15 })
+        });
 
         function getAbsencePolicy() {
             const settings = getGlobalAppSettings();
@@ -3612,18 +3614,26 @@
         }
 
         function absencePolicyLabel() {
-            return getAbsencePolicy().statusBasis === 'all' ? 'كل الغياب (بعذر وبدون عذر)' : 'الغياب غير المعذر فقط';
+            return 'المادة (11): مساران مستقلان للغياب غير المعذر والمعذر، مع إنذار أولي وقائي داخلي';
+        }
+
+        function statusForAbsenceTrack(pct, thresholds) {
+            const value = Math.max(0, Number(pct) || 0);
+            // المادة (11): عند بلوغ الحد = إنذار نهائي، والرسوب فقط عند تجاوزه.
+            if (value > thresholds.failAbove) return 'راسب';
+            if (value >= thresholds.finalWarning) return 'إنذار نهائي';
+            if (value >= thresholds.firstWarning) return 'إنذار أولي';
+            if (value >= thresholds.notice) return 'تنبيه';
+            return 'جيد';
         }
 
         function getStatus(unexcusedPct, totalPct) {
-            const unexcused = Number(unexcusedPct) || 0;
-            const total = Number(totalPct) || 0;
-            const pct = getAbsencePolicy().statusBasis === 'all' ? total : unexcused;
-            if (pct >= ABSENCE_THRESHOLDS.fail) return 'راسب';
-            if (pct >= ABSENCE_THRESHOLDS.finalWarning) return 'إنذار نهائي';
-            if (pct >= ABSENCE_THRESHOLDS.firstWarning) return 'إنذار أولي';
-            if (pct >= ABSENCE_THRESHOLDS.notice) return 'تنبيه';
-            return 'جيد';
+            const unexcused = Math.max(0, Number(unexcusedPct) || 0);
+            const total = Math.max(0, Number(totalPct) || 0);
+            const excused = Math.max(0, total - unexcused);
+            const unexcusedStatus = statusForAbsenceTrack(unexcused, ABSENCE_THRESHOLDS.unexcused);
+            const excusedStatus = statusForAbsenceTrack(excused, ABSENCE_THRESHOLDS.excused);
+            return statusSeverity(unexcusedStatus) >= statusSeverity(excusedStatus) ? unexcusedStatus : excusedStatus;
         }
 
         function statusSeverity(status) {
@@ -4788,10 +4798,10 @@
             const status = document.getElementById('absencePolicyStatus');
             if (!basis || !bologna || !annual || !status) return;
             const policy = getAbsencePolicy();
-            basis.value = policy.statusBasis;
+            basis.value = 'unexcused';
             bologna.value = policy.bolognaWeeks;
             annual.value = policy.annualWeeks;
-            status.textContent = `الحالة تعتمد على: ${absencePolicyLabel()} — بولونيا ${policy.bolognaWeeks} أسبوعاً — السنوي ${policy.annualWeeks} أسبوعاً.`;
+            status.textContent = `الحالة تعتمد على: ${absencePolicyLabel()} — غير المعذر: 5% / 7.5% / 10% / >10% — المعذر: 5% / 10% / 15% / >15% — بولونيا ${policy.bolognaWeeks} أسبوعاً — السنوي ${policy.annualWeeks} أسبوعاً.`;
         }
 
         function refreshAutomaticSubjectHours() {
@@ -4809,7 +4819,7 @@
 
         async function saveAbsencePolicySettings() {
             if (!requireAppRole('admin')) return false;
-            const basis = document.getElementById('absenceStatusBasis')?.value === 'all' ? 'all' : 'unexcused';
+            const basis = 'unexcused';
             const bolognaWeeks = Number(document.getElementById('bolognaTeachingWeeks')?.value);
             const annualWeeks = Number(document.getElementById('annualTeachingWeeks')?.value);
             if (!Number.isInteger(bolognaWeeks) || bolognaWeeks < 1 || bolognaWeeks > 52 || !Number.isInteger(annualWeeks) || annualWeeks < 1 || annualWeeks > 52) {
@@ -6346,7 +6356,7 @@
                 <div class="card">
                     <h4>📊 إجمالي ساعات الغياب لكل طالب - ${escapeHtml(getLevelName(level))}</h4>
                     <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
-                    <small>🟢 جيد (&lt;3%) | 🔵 تنبيه (3–&lt;5%) | 🟡 إنذار أولي (5–&lt;7%) | 🟠 إنذار نهائي (7–&lt;10%) | 🔴 راسب (≥10%)</small>
+                    <small>🟢 جيد | 🔵 تنبيه: 5% | 🟡 إنذار أولي وقائي: 7.5% غير معذر / 10% معذر | 🟠 إنذار نهائي: 10% غير معذر / 15% معذر | 🔴 راسب: عند تجاوز 10% غير معذر أو 15% معذر</small>
                 </div>
                 <div class="card">
                     <h4>📈 ملخص الحالات حسب أسوأ حالة للطالب في مواده</h4>
@@ -8051,10 +8061,12 @@
                 (totalAbsentHours / annualCourseHours) * 100 : 0;
             const unexcusedPercentage = annualCourseHours > 0 ?
                 (unexcusedHours / annualCourseHours) * 100 : 0;
+            const excusedPercentage = annualCourseHours > 0 ?
+                (excusedHours / annualCourseHours) * 100 : 0;
 
             const status = getStatus(unexcusedPercentage, absencePercentage);
             return { records, totalAbsentHours, unexcusedHours, excusedHours,
-                annualCourseHours, absencePercentage, unexcusedPercentage, status };
+                annualCourseHours, absencePercentage, unexcusedPercentage, excusedPercentage, status };
         }
 
         function getStatusStyle(status) {
@@ -8116,11 +8128,11 @@
                         <h3 style="color:#1a3a5e; margin:0 0 3px; font-size:15px;">📊 تقرير الغياب السنوي التراكمي</h3>
                         <p style="color:#4a5568; font-size:11px; margin:2px 0;">${getLevelName(level)} - ${getLevelSystem(level) === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي'}</p>
                         <div class="report-legend">
-                            <span style="background:#c6f6d5; padding:2px 6px; border-radius:4px;">🟢 جيد: أقل من 3%</span>
-                            <span style="background:#bee3f8; padding:2px 6px; border-radius:4px;">🔵 تنبيه: 3%–أقل من 5%</span>
-                            <span style="background:#fefcbf; padding:2px 6px; border-radius:4px;">🟡 إنذار أولي: 5%–أقل من 7%</span>
-                            <span style="background:#feebc8; padding:2px 6px; border-radius:4px;">🟠 إنذار نهائي: 7%–أقل من 10%</span>
-                            <span style="background:#fed7d7; padding:2px 6px; border-radius:4px;">🔴 راسب: 10% فأكثر</span>
+                            <span style="background:#c6f6d5; padding:2px 6px; border-radius:4px;">🟢 جيد: أقل من 5%</span>
+                            <span style="background:#bee3f8; padding:2px 6px; border-radius:4px;">🔵 تنبيه: من 5% حتى ما قبل الإنذار الأولي</span>
+                            <span style="background:#fefcbf; padding:2px 6px; border-radius:4px;">🟡 إنذار أولي وقائي: 7.5% غير معذر / 10% معذر</span>
+                            <span style="background:#feebc8; padding:2px 6px; border-radius:4px;">🟠 إنذار نهائي رسمي: 10% غير معذر / 15% معذر</span>
+                            <span style="background:#fed7d7; padding:2px 6px; border-radius:4px;">🔴 راسب: تجاوز 10% غير معذر أو 15% معذر</span>
                         </div>
                         <p class="report-explanation" style="font-size:9px; color:#718096; margin:2px 0;">أساس تحديد الحالة: <strong>${escapeHtml(absencePolicyLabel())}</strong>. وتبقى الساعات المعذرة وغير المعذرة محفوظة في التفاصيل.</p>
                     </div>
@@ -8143,11 +8155,11 @@
                     }
                     const d = calculateAnnualAbsence(st.id, sub);
                     const style = getStatusStyle(d.status);
-                    const pct = (getAbsencePolicy().statusBasis === 'all' ? d.absencePercentage : d.unexcusedPercentage).toFixed(1);
+                    const pct = `غ.م ${d.unexcusedPercentage.toFixed(1)}% / بعذر ${(d.excusedPercentage ?? Math.max(0,d.absencePercentage-d.unexcusedPercentage)).toFixed(1)}%`;
                     const hours = d.totalAbsentHours.toFixed(1);
                     html += `<td class="subject-cell ${style.cls}" title="إجمالي الغياب: ${d.absencePercentage.toFixed(1)}% — غير المعذر: ${d.unexcusedPercentage.toFixed(1)}% — ساعات المقرر: ${d.annualCourseHours}" style="background:${style.bg}; color:${style.fg}; border:1px solid #cbd5e0;">
                         <span class="status-text" style="color:${style.fg}; font-weight:800;">${d.status}</span>
-                        <span class="percentage" style="color:${style.fg};">${pct}%</span>
+                        <span class="percentage" style="color:${style.fg};">${pct}</span>
                         <span class="hours-detail" style="color:${style.fg};"><strong>${hours} س</strong><span class="annual-label"> غياب سنوي</span></span>
                     </td>`;
                 });
@@ -8156,7 +8168,7 @@
 
             html += `</tbody></table></div>
                 <div class="report-footer-primary" style="margin-top:7px;text-align:center;color:#718096;font-size:9px;border-top:1px solid #e2e8f0;padding-top:5px;">إعداد وتنفيذ <strong>م. دموسى محمد مهدي</strong> - رئيس قسم الفيزياء</div>
-                <div class="report-footer-secondary" style="margin-top:4px;text-align:center;color:#9ca3af;font-size:8px;">كل خلية = الحالة الحالية حسب النسبة التراكمية / نسبة الغياب السنوية / مجموع ساعات الغياب طوال السنة.</div>
+                <div class="report-footer-secondary" style="margin-top:4px;text-align:center;color:#9ca3af;font-size:8px;">كل خلية = الحالة الحالية / نسبة غير المعذر ونسبة المعذر / مجموع ساعات الغياب طوال السنة.</div>
                 </div>`;
             html += renderFilteredStatusDetails(level);
             html += periodDetailsHtml;
@@ -8242,9 +8254,9 @@
                 finalSubjects.forEach(sub => {
                     if (!studentRelevantToSubject(st, sub)) { row[sub.name] = 'غير مشمول'; return; }
                     const d = calculateAnnualAbsence(st.id, sub);
-                    const selectedPct = getAbsencePolicy().statusBasis === 'all' ? d.absencePercentage : d.unexcusedPercentage;
+                    const excusedPct = d.excusedPercentage ?? Math.max(0,d.absencePercentage-d.unexcusedPercentage);
                     row[sub.name] =
-                        `${d.status} (${selectedPct.toFixed(1)}% معتمدة - إجمالي ${d.absencePercentage.toFixed(1)}% - غير معذر ${d.unexcusedPercentage.toFixed(1)}% - ${d.totalAbsentHours.toFixed(1)} س)`;
+                        `${d.status} (غير معذر ${d.unexcusedPercentage.toFixed(1)}% - بعذر ${excusedPct.toFixed(1)}% - إجمالي ${d.absencePercentage.toFixed(1)}% - ${d.totalAbsentHours.toFixed(1)} س)`;
                 });
                 data.push(row);
             });
