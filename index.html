@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.18</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.20</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -4204,7 +4204,7 @@
             if(isStudentOfficiallyDeleted(studentId))return {ok:false,reason:'الطالب محذوف نهائياً.'};
             if(!subject||!state.subjects.some(s=>String(s.id)===String(subject.id)))return {ok:false,reason:'المادة غير موجودة.'};
             if(!isValidAttendanceDate(context?.date)||!normalizeSessionTime(context?.sessionTime))return {ok:false,reason:'تاريخ المحاضرة أو وقتها غير صالح.'};
-            if(isProfessorLectureSubmitted(subject,{...context,groupName:context?.groupName||professorGroupNameForStudent(student,subject)}))return {ok:false,reason:'المحاضرة مقفلة بعد الإرسال؛ اطلب إعادة فتحها من رئيس القسم.'};
+            if(isProfessorLectureEffectivelyLocked(subject,{...context,groupName:context?.groupName||professorGroupNameForStudent(student,subject)}))return {ok:false,reason:'المحاضرة مقفلة بعد انتهاء المهلة ولا يوجد إذن فعال من رئيس القسم.'};
             if(state.currentUser?.role==='admin' && context?.adminHistoricalExisting===true){
                 const prior=findAttendanceForSession(studentId,subject.id,context.date,context.sessionTime);
                 if(prior && String(prior.lectureGroup||'')===String(context.groupName||'') && (!context.subjectId||String(context.subjectId)===String(subject.id)))return {ok:true};
@@ -4213,7 +4213,7 @@
             if(!studentMatchesSubject(student,subject))return {ok:false,reason:'الطالب لا ينتمي إلى المرحلة/الشعبة/المجموعة الخاصة بهذه المادة.'};
 
             const prior=findAttendanceForSession(studentId,subject.id,context.date,context.sessionTime);
-            if(prior && isProfessorLectureSubmitted(subject,{...prior,groupName:prior.lectureGroup||professorGroupNameForStudent(student,subject)}))return {ok:false,reason:'سجل الطالب الأصلي مرسل؛ يحتاج إعادة فتح من رئيس القسم.'};
+            if(prior && isProfessorLectureEffectivelyLocked(subject,{...prior,groupName:prior.lectureGroup||professorGroupNameForStudent(student,subject)}))return {ok:false,reason:'سجل الطالب الأصلي مقفل بعد انتهاء المهلة ولا يوجد إذن فعال من رئيس القسم.'};
             const expectedGroup=normalizeGroupName(professorGroupNameForStudent(student,subject),'');
             const contextGroup=normalizeGroupName(context?.groupName||'','');
             if(contextGroup && expectedGroup && contextGroup!==expectedGroup)
@@ -5053,126 +5053,32 @@
         }
 
         function buildWhatsAppAppUrl(number, message) {
-            const normalized = normalizeWhatsAppNumber(number);
-            if (!/^\d{8,15}$/.test(normalized)) return '';
-            return `whatsapp://send?phone=${normalized}&text=${encodeURIComponent(message || '')}`;
+            // V45.20: نبقي اسم الدالة للتوافق، لكن نستخدم wa.me Universal Link.
+            return buildWhatsAppUrl(number,message);
         }
 
         function openWhatsAppReliable(number, message, reservedWindow = null) {
-            const webUrl = buildWhatsAppUrl(number, message);
-            if (!webUrl) return { opened:false, mode:'invalid-url', url:'' };
+            const url = buildWhatsAppUrl(number,message);
+            if(!url)return {opened:false,mode:'invalid-url',url:''};
 
-            // الهاتف: نطلب تطبيق WhatsApp مباشرة من نفس نقرة المستخدم.
-            // إذا لم يستجب التطبيق سريعاً، نعود إلى wa.me. عند مغادرة الصفحة
-            // (أي فتح التطبيق) نلغي fallback تلقائياً.
-            if (isMobileWhatsAppDevice()) {
-                const appUrl = buildWhatsAppAppUrl(number, message);
-                if (reservedWindow) {
-                    try { if (!reservedWindow.closed) reservedWindow.close(); } catch (e) {}
-                }
-                if (!appUrl) return { opened:false, mode:'invalid-app-url', url:webUrl };
+            // لا نستخدم نافذة about:blank؛ إن وصلت نافذة قديمة نغلقها.
+            if(reservedWindow){
+                try{ if(!reservedWindow.closed)reservedWindow.close(); }catch(e){}
+            }
 
-                let fallbackTimer = null;
-                let pageLeft = false;
-                const cancelFallback = () => {
-                    pageLeft = true;
-                    if (fallbackTimer) {
-                        clearTimeout(fallbackTimer);
-                        fallbackTimer = null;
-                    }
-                };
-                const onVisibility = () => {
-                    if (document.visibilityState === 'hidden') cancelFallback();
-                };
-                document.addEventListener('visibilitychange', onVisibility, { once:true });
-                window.addEventListener('pagehide', cancelFallback, { once:true });
-
-                fallbackTimer = setTimeout(() => {
-                    document.removeEventListener('visibilitychange', onVisibility);
-                    if (!pageLeft && document.visibilityState !== 'hidden') {
-                        try { window.location.assign(webUrl); } catch (e) {}
-                    }
-                }, 1400);
-
-                try {
-                    window.location.assign(appUrl);
-                    return { opened:true, mode:'app-direct', url:appUrl, fallbackUrl:webUrl };
-                } catch (e) {
-                    if (fallbackTimer) clearTimeout(fallbackTimer);
-                    document.removeEventListener('visibilitychange', onVisibility);
-                    try {
-                        window.location.assign(webUrl);
-                        return { opened:true, mode:'same-tab-fallback', url:webUrl };
-                    } catch (_) {
-                        return { opened:false, mode:'failed', url:webUrl };
-                    }
+            try{
+                // Universal Link من نفس الصفحة: يمنع مشكلة الصفحة البيضاء.
+                // الهاتف يسلّم الرابط إلى WhatsApp عند توفره؛ والحاسبة تستخدم Desktop/Web.
+                window.location.replace(url);
+                return {opened:true,mode:isMobileWhatsAppDevice()?'universal-link-mobile':'universal-link-desktop',url};
+            }catch(e){
+                try{
+                    window.location.href=url;
+                    return {opened:true,mode:'universal-link-fallback',url};
+                }catch(_){
+                    return {opened:false,mode:'failed',url};
                 }
             }
-
-            // الحاسبة: wa.me هو المسار الأكثر توافقاً؛ يتيح للنظام/المتصفح
-            // فتح WhatsApp Desktop إن كان مرتبطاً، وإلا WhatsApp Web.
-            if (reservedWindow) {
-                try {
-                    if (!reservedWindow.closed) {
-                        reservedWindow.location.replace(webUrl);
-                        return { opened:true, mode:'reserved-window', url:webUrl };
-                    }
-                } catch (e) {}
-            }
-            try {
-                window.location.assign(webUrl);
-                return { opened:true, mode:'same-tab', url:webUrl };
-            } catch (e) {
-                return { opened:false, mode:'failed', url:webUrl };
-            }
-        }
-
-        function testOfficerWhatsApp() {
-            const number = getOfficerWhatsAppNumber();
-            if (!number) {
-                alert('احفظ رقم واتساب مسؤول الغيابات أولاً.');
-                return;
-            }
-            const msg = `🧪 رسالة اختبار من نظام إدارة الغيابات - قسم الفيزياء\nالتاريخ: ${getLocalDateISO()}\nإذا ظهرت هذه الرسالة فالربط مع واتساب جاهز.`;
-            const url = buildWhatsAppUrl(number, msg);
-            window.open(url, '_blank', 'noopener');
-        }
-
-        function openOfficerWhatsAppForSubmission(subject, submission, students) {
-            const number = getOfficerWhatsAppNumber();
-            if (!number) return { opened: false, reason: 'missing_number' };
-            const url = buildWhatsAppUrl(number, buildOfficerWhatsAppMessage(subject, submission, students));
-            if (!url) return { opened: false, reason: 'invalid_number' };
-            const popup = window.open(url, '_blank', 'noopener');
-            return { opened: !!popup, reason: popup ? 'opened' : 'blocked', url };
-        }
-
-
-        // V39: حجز نافذة واتساب داخل نقرة المستخدم نفسها قبل أي await.
-        // بعض متصفحات الهاتف تمنع window.open إذا حدث بعد انتظار Firebase حتى لو كان سببه زر ضغطه المستخدم.
-        function reserveWhatsAppWindow() {
-            try {
-                const popup = window.open('about:blank','_blank');
-                if (!popup || popup.closed) return null;
-                try {
-                    popup.document.open();
-                    popup.document.write('<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>جار تجهيز واتساب</title></head><body style="font-family:Tahoma,Arial;padding:24px;text-align:center"><h3>جار تثبيت الغيابات...</h3><p>سيتم فتح واتساب تلقائياً بعد اكتمال الحفظ.</p></body></html>');
-                    popup.document.close();
-                } catch (e) {}
-                return popup;
-            } catch (e) { return null; }
-        }
-
-        function navigateReservedWhatsAppWindow(popup, url) {
-            if (!url) return false;
-            try {
-                if (popup && !popup.closed) {
-                    try { popup.opener = null; } catch (e) {}
-                    popup.location.href = url;
-                    return true;
-                }
-            } catch (e) {}
-            return false;
         }
 
         function closeReservedWhatsAppWindow(popup) {
@@ -7980,7 +7886,7 @@
                         sub.hoursPerWeek=centralHoursOverride;
                         sub.hoursManual=true;
                     } else if(sub.hoursManual!==true) sub.hoursPerWeek=hours;
-                    if(isProfessorLectureSubmitted(sub,{...attendance,groupName:attendance.lectureGroup||professorGroupNameForStudent(student,sub)})){alert('هذه المحاضرة مرسلة؛ اطلب إعادة فتحها من رئيس القسم.');return;}
+                    if(isProfessorLectureEffectivelyLocked(sub,{...attendance,groupName:attendance.lectureGroup||professorGroupNameForStudent(student,sub)})){alert('هذه المحاضرة مرسلة؛ اطلب إعادة فتحها من رئيس القسم.');return;}
             const effectiveHours=getSubjectWeeklyHours(sub);
                     sub.totalWeeks=sub.weeksManual===true && Number(sub.totalWeeks)>0 ? Number(sub.totalWeeks) : automaticWeeks;
                     sub.totalHours=effectiveHours*sub.totalWeeks;
@@ -8748,6 +8654,19 @@
             });
         }
 
+        // V45.19: قرار قفل جلسة محددة يجب أن يحترم نافذة الـ48 ساعة
+        // وإذن التاريخ القديم، إضافة إلى إعادة الفتح الإداري الموجودة أصلاً.
+        function isProfessorLectureEffectivelyLocked(subject, context) {
+            if(!isProfessorLectureSubmitted(subject,context))return false;
+            if(!subject || state.currentUser?.role!=='professor')return true;
+            const groupName=context?.groupName||context?.lectureGroup||'';
+            const date=String(context?.date||'');
+            const sessionTime=normalizeSessionTime(context?.sessionTime||'');
+            if(professorHas48hAttendanceAccess(subject,groupName,date,sessionTime))return false;
+            if(hasHistoricalAttendanceCreatePermission(subject,date,state.currentUser.id))return false;
+            return true;
+        }
+
         function hasOpenScheduledProfessorLecture(subject) {
             if(!subjectBelongsToCurrentProfessor(subject))return false;
             const groups=[...new Set(getStudentsForProfessor().map(st=>professorGroupNameForStudent(st,subject)))];
@@ -8784,6 +8703,15 @@
                     code: context.code === 'current' ? 'current' : 'grace-48h',
                     alreadySubmitted: true,
                     attendanceWindowLabel: access.label
+                };
+            }
+            if(hasHistoricalAttendanceCreatePermission(subject,context.date,state.currentUser?.id)) {
+                return {
+                    ...context,
+                    ok:true,
+                    code:'admin-authorized-old',
+                    alreadySubmitted:true,
+                    attendanceWindowLabel:'🔓 متاحة بإذن رئيس القسم للتسجيل بتاريخ قديم'
                 };
             }
             return {
@@ -8895,7 +8823,7 @@
             }
             const number=getOfficerWhatsAppNumber();
             if(!number){alert('رقم واتساب مسؤول الغيابات غير مضبوط. اطلب من رئيس القسم حفظ الرقم أولاً.');return false;}
-            const popup=reserveWhatsAppWindow();
+            const popup=null;
             try { await saveAll({silent:true}); } catch(err){closeReservedWhatsAppWindow(popup);alert(err.message||'تعذر حفظ التأكيد.');return false;}
             const issue=getSubmissionCloudIssue(sub,latest);
             if(issue){closeReservedWhatsAppWindow(popup);renderProfessorSubmissionStatus(sub);alert('⏳ '+issue+'\nلم تُفتح رسالة واتساب. أعد المحاولة بعد اكتمال المزامنة.');return false;}
@@ -9952,7 +9880,7 @@
             if (!confirm('⚠️ هل أنت متأكد من إلغاء غياب هذه المحاضرة؟')) return;
             const removed = state.attendances.find(a => String(a.id) === String(attendanceId));
             if(!removed||!sub||String(removed.subjectId)!==String(sub.id)||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح بإلغاء سجل لا يخص المادة الحالية.');return;}
-            if(isProfessorLectureSubmitted(sub,{...removed,groupName:removed.lectureGroup||professorGroupNameForStudent(state.students.find(st=>String(st.id)===String(removed.studentId))||{},sub)})){alert('هذه المحاضرة مرسلة؛ اطلب إعادة فتحها من رئيس القسم.');return;}
+            if(isProfessorLectureEffectivelyLocked(sub,{...removed,groupName:removed.lectureGroup||professorGroupNameForStudent(state.students.find(st=>String(st.id)===String(removed.studentId))||{},sub)})){alert('هذه المحاضرة مرسلة؛ اطلب إعادة فتحها من رئيس القسم.');return;}
             const savedView=captureProfessorViewState(removed.studentId);
             const normalized=normalizeSessionTime(removed.sessionTime);
             if(normalized){
@@ -9985,7 +9913,7 @@
             if(!sub||String(attendance.subjectId)!==String(sub.id)||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح بتعديل سجل لا يخص المادة الحالية.');return;}
             const student=state.students.find(s=>String(s.id)===String(attendance.studentId));
             if(!student){alert('الطالب المرتبط بالسجل غير موجود.');return;}
-            if(isProfessorLectureSubmitted(sub,{...attendance,groupName:attendance.lectureGroup||professorGroupNameForStudent(student,sub)})){alert('هذه المحاضرة مرسلة؛ اطلب إعادة فتحها من رئيس القسم.');return;}
+            if(isProfessorLectureEffectivelyLocked(sub,{...attendance,groupName:attendance.lectureGroup||professorGroupNameForStudent(student,sub)})){alert('هذه المحاضرة مرسلة؛ اطلب إعادة فتحها من رئيس القسم.');return;}
             const effectiveHours=getSubjectWeeklyHours(sub);
             const newSessionTime = prompt(`وقت المحاضرة (HH:MM):\nساعات الغياب مقفلة على ${effectiveHours} ساعة حسب إعداد المادة.`, normalizeSessionTime(attendance.sessionTime) || '');
             if (newSessionTime === null) return;
@@ -10043,7 +9971,7 @@
                 if (!confirm(`هل تؤكد ${actionLabel} لمادة «${sub.name}» حتى تاريخ ${getLocalDateISO()}؟\n\nعدد الطلبة الحاليين: ${previewStudents.length}\nالحالات التشغيلية للمحاضرات: ${previewRecords.length}${whatsappNumber?'\n\nبعد تثبيت الحفظ سيفتح واتساب تلقائياً، ويجب الضغط على «إرسال» داخله يدوياً.':''}`)) return false;
 
                 // احجز نافذة واتساب الآن، أثناء نفس نقرة المستخدم، قبل انتظار أي عملية تخزين.
-                if (whatsappNumber) whatsappWindow=reserveWhatsAppWindow();
+                if (whatsappNumber) whatsappWindow=null;
                 const savedView=captureProfessorViewState();
 
                 // انتظر فقط بعد حجز النافذة، ثم ابنِ الإرسال من أحدث حالة فعلية.
