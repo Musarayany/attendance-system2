@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.20</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.21</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -4204,6 +4204,13 @@
             if(isStudentOfficiallyDeleted(studentId))return {ok:false,reason:'الطالب محذوف نهائياً.'};
             if(!subject||!state.subjects.some(s=>String(s.id)===String(subject.id)))return {ok:false,reason:'المادة غير موجودة.'};
             if(!isValidAttendanceDate(context?.date)||!normalizeSessionTime(context?.sessionTime))return {ok:false,reason:'تاريخ المحاضرة أو وقتها غير صالح.'};
+            if(state.currentUser?.role==='professor' && String(context.date)<getLocalDateISO()){
+                const groupName=context?.groupName||professorGroupNameForStudent(student,subject);
+                const withinNormal48h=professorHas48hAttendanceAccess(subject,groupName,context.date,context.sessionTime);
+                const historicalPermission=hasHistoricalAttendanceCreatePermission(subject,context.date,state.currentUser.id);
+                if(!withinNormal48h && !historicalPermission)
+                    return {ok:false,reason:'انتهت مهلة الـ48 ساعة لهذا التاريخ، ولا يوجد إذن فعال من رئيس القسم للتسجيل أو التعديل.'};
+            }
             if(isProfessorLectureEffectivelyLocked(subject,{...context,groupName:context?.groupName||professorGroupNameForStudent(student,subject)}))return {ok:false,reason:'المحاضرة مقفلة بعد انتهاء المهلة ولا يوجد إذن فعال من رئيس القسم.'};
             if(state.currentUser?.role==='admin' && context?.adminHistoricalExisting===true){
                 const prior=findAttendanceForSession(studentId,subject.id,context.date,context.sessionTime);
@@ -8460,9 +8467,14 @@
                     existing.enabled=false; existing.revokedAt=Date.now(); existing.updatedAt=Date.now();
                     existing.revokedById=String(state.currentUser?.id||'admin');
                     recordAudit('سحب إذن التسجيل بتاريخ قديم',{subjectId:subject.id,subject:subject.name,professorId:professor.id,professor:professor.name});
-                    await persistLocalState('revoke-historical-attendance-permission',true);
-                    pushToFirebase({silent:true}).catch(console.error); renderAll();
-                    alert('✅ تم سحب إذن التسجيل بتاريخ قديم.'); return true;
+                    const localSaved=await persistLocalState('revoke-historical-attendance-permission',true);
+                    const cloudSaved=await pushToFirebase({silent:true});
+                    renderAll();
+                    if(!cloudSaved){
+                        alert(localSaved?'⚠️ تم سحب الإذن على هذا الجهاز، لكن لم يتم تأكيد المزامنة السحابية بعد.':'⛔ تعذر تأكيد سحب الإذن محلياً وسحابياً.');
+                        return false;
+                    }
+                    alert('✅ تم سحب إذن التسجيل بتاريخ قديم وتم تأكيد المزامنة.'); return true;
                 }
             }
             const today=getLocalDateISO();
@@ -8482,9 +8494,16 @@
                 grantedById:String(state.currentUser?.id||'admin'),grantedByName:sanitizeText(state.currentUser?.name||'رئيس القسم',120)};
             state.appSettings=(state.appSettings||[]).filter(x=>String(x?.id||'')!==id); state.appSettings.push(rec);
             recordAudit('منح إذن التسجيل بتاريخ قديم',{subjectId:subject.id,subject:subject.name,professorId:professor.id,professor:professor.name,fromDate:from,toDate:to});
-            await persistLocalState('historical-attendance-permission',true);
-            pushToFirebase({silent:true}).catch(console.error); renderAll();
-            alert(`✅ تم منح الإذن من ${from} إلى ${to}.\nهذا الإذن يسمح بإنشاء تسجيلات قديمة ضمن هذه المدة فقط.`);
+            const localSaved=await persistLocalState('historical-attendance-permission',true);
+            const cloudSaved=await pushToFirebase({silent:true});
+            renderAll();
+            if(!cloudSaved){
+                alert(localSaved
+                    ?`⚠️ تم حفظ الإذن على جهاز رئيس القسم، لكن لم يتم تأكيد وصوله إلى السحابة بعد.\nلن نعتمد أنه وصل إلى جهاز الأستاذ حتى تنجح المزامنة.`
+                    :'⛔ تعذر تأكيد حفظ إذن التسجيل محلياً وسحابياً. لا تعتمد هذا الإذن.');
+                return false;
+            }
+            alert(`✅ تم منح الإذن من ${from} إلى ${to} وتم تأكيد مزامنته.\nيمكن للأستاذ التسجيل أو التعديل ضمن هذه المدة فقط.`);
             return true;
         }
 
@@ -9282,7 +9301,7 @@
             const access=getProfessorAttendanceWindowForLecture(desiredDate,lecture);
             const specialOldPermission=state.currentUser?.role==='professor' && hasHistoricalAttendanceCreatePermission(subject,desiredDate,state.currentUser.id);
             if(state.currentUser?.role==='professor' && !access.allowed && !specialOldPermission){
-                return {ok:false,code:'expired-48h',reason:`انتهت مهلة الأستاذ: يسمح بالتسجيل حتى 24 ساعة بعد نهاية المحاضرة. انتهت المهلة في ${access.deadlineText}.`,date:desiredDate,groupName,lecture};
+                return {ok:false,code:'expired-48h',reason:`انتهت مهلة الأستاذ: يسمح بالتسجيل حتى 48 ساعة بعد نهاية المحاضرة. انتهت المهلة في ${access.deadlineText}.`,date:desiredDate,groupName,lecture};
             }
             return {
                 ok:true,code:isCurrent?'current':(access.allowed?'grace-48h':'admin-authorized-old'),
@@ -9308,21 +9327,24 @@
             students.forEach(st => { const g = professorGroupNameForStudent(st,sub); if(!groups[g]) groups[g]=[]; groups[g].push(st); });
             const groupLabel = sub?.groupType === 'عملي' ? 'المجموعة العملية' : 'الشعبة النظرية';
             const submissionLocked = isProfessorSubjectLockedAfterSubmission(sub);
-            let html = submissionLocked ? `<div style="margin-bottom:8px;padding:8px;border-radius:9px;background:#fef2f2;color:#991b1b;font-size:11px;font-weight:900;">🔒 الغيابات مغلقة بعد الإرسال. تعديل المحاضرة المرسلة يحتاج إذن رئيس القسم؛ المحاضرة الجديدة تفتح عند موعدها.</div><div class="groups-grid">` : `<div class="groups-grid">`;
+            let html = submissionLocked ? `<div style="margin-bottom:8px;padding:8px;border-radius:9px;background:#fef2f2;color:#991b1b;font-size:11px;font-weight:900;">ℹ️ بعض الجلسات السابقة لهذه المادة مغلقة. الجلسة المختارة أدناه تُحسم بشكل مستقل حسب مهلة 48 ساعة أو إذن رئيس القسم.</div><div class="groups-grid">` : `<div class="groups-grid">`;
             for (const groupName of Object.keys(groups).sort((a,b)=>a.localeCompare(b,'ar'))) {
                 const groupStudents = [...groups[groupName]].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ar',{sensitivity:'base'}));
                 const context=resolveBulkAttendanceContext(sub,groupName,false);
                 const encodedGroup=encodeURIComponent(groupName);
                 const chipClass=context.ok?'':(context.code==='future'?'waiting':'unavailable');
-                const chipPrefix=context.code==='current'?'● المحاضرة جارية':context.code==='grace-48h'?'⏱️ متاحة ضمن مهلة 24 ساعة':context.code==='recorded-history'?'↶ جلسة تاريخية مثبتة':context.code==='admin-authorized-old'?'🔓 متاحة بإذن رئيس القسم':'✓ متاحة';
+                const chipPrefix=context.code==='current'?'● المحاضرة جارية':context.code==='grace-48h'?'⏱️ متاحة ضمن مهلة 48 ساعة':context.code==='recorded-history'?'↶ جلسة تاريخية مثبتة':context.code==='admin-authorized-old'?'🔓 متاحة بإذن رئيس القسم':'✓ متاحة';
                 const chipText=context.ok?`${chipPrefix} · ${context.displayTime}${context.attendanceDeadlineText?` · حتى ${context.attendanceDeadlineText}`:''}`:(context.code==='future'?`⏳ لم تبدأ بعد · ${formatScheduleMinutes(context.lecture?.startMinutes)}`:(context.reason||'ليس لديهم محاضرة اليوم'));
                 // V40: المجموعة بلا محاضرة في التاريخ المختار تبقى ظاهرة ولكن جميع أدواتها مقفلة.
                 const groupScheduleLocked=!context.ok;
-                const disabled=(!submissionLocked&&!groupScheduleLocked)?'':'disabled aria-disabled="true"';
+                // V45.21: القفل هنا خاص بالجلسة المختارة. إذا أعطى رئيس القسم إذناً
+                // لتاريخ قديم وأعاد resolver سياقاً صالحاً فلا يجوز لقفل المادة العام تعطيل الأزرار.
+                const sessionLocked=groupScheduleLocked;
+                const disabled=!sessionLocked?'':'disabled aria-disabled="true"';
                 const bulkCancelContext=getBulkCancelContext(sub,groupName,groupStudents);
                 const currentAbsentCount=Number(bulkCancelContext?.absentCount)||0;
-                const cancelAllDisabled=(!submissionLocked&&!groupScheduleLocked)?'':'disabled aria-disabled="true"';
-                const actionTitle=escapeHtml(submissionLocked?'المحاضرات المرسلة مقفلة؛ إعادة التعديل بإذن رئيس القسم.':(groupScheduleLocked?(context.reason||'ليس لديهم محاضرة في التاريخ المختار'):`تسجيل أو تعديل محاضرة ${context.displayTime}`));
+                const cancelAllDisabled=!sessionLocked?'':'disabled aria-disabled="true"';
+                const actionTitle=escapeHtml(sessionLocked?(context.reason||'هذه الجلسة غير متاحة'):`تسجيل أو تعديل محاضرة ${context.displayTime}`);
                 html += `<div class="group-card"><div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length} طالب)</span><button type="button" class="btn-secondary group-collapse-btn" onclick="toggleProfessorGroup(this)" aria-expanded="true">▲ إخفاء الطلبة</button></div>
                     <div class="group-bulk-actions" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button><button data-attendance-control="1" ${cancelAllDisabled} title="${currentAbsentCount?`إزالة غياب ${currentAbsentCount} طالب من ${escapeHtml(bulkCancelContext.displayTime||'آخر محاضرة مسجلة')}`:'اضغط للبحث عن آخر محاضرة مسجلة فيها غياب لهذه المجموعة'}" data-cancel-all-group="${escapeHtml(encodedGroup)}" onclick="removeAllCurrentSessionAbsences(decodeURIComponent('${encodedGroup}'))" class="btn-secondary btn-sm" style="font-size:10px;">🗑️ إزالة غياب الكل${currentAbsentCount?` (${currentAbsentCount})`:''}</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
                 groupStudents.forEach(st => {
@@ -9340,7 +9362,7 @@
                         html += `<div class="student-quick-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-seq">${groupStudents.indexOf(st)+1}</span><span class="student-label">${escapeHtml(st.name)}</span> <span class="student-status-icon">${statusIcon}</span><span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="present" aria-pressed="${isPresent?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present ${isPresent?'attendance-selected':hasAbsence?'attendance-dimmed':''}">✅ حاضر</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="absent" aria-pressed="${hasAbsence?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent ${hasAbsence?'attendance-selected':isPresent?'attendance-dimmed':''}">❌ غائب</button></div></div>`;
                     } else {
                         const todayBadge = hasAbsence ? '<span data-attendance-session-badge="1" class="badge bg-red" style="font-size:8px;">غائب في هذه المحاضرة</span>' : isPresent ? '<span data-attendance-session-badge="1" class="badge bg-green" style="font-size:8px;">حاضر في هذه المحاضرة</span>' : '<span data-attendance-session-badge="1" class="badge" style="font-size:8px;background:#e2e8f0;color:#475569;">لم تُسجل حالته</span>';
-                        html += `<div class="student-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-seq">${groupStudents.indexOf(st)+1}</span>👨‍🎓 ${escapeHtml(st.name)} <span class="student-status-icon">${statusIcon}</span> ${todayBadge}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="student-actions" style="display:flex;gap:4px;flex-wrap:wrap;"><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="markStudentAbsent(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-warning" style="font-size:10px;">📝</button><span data-remove-absence-slot="1">${hasAbsence?`<button data-attendance-control="1" ${(submissionLocked||groupScheduleLocked)?'disabled aria-disabled="true"':''} title="${submissionLocked?'الغيابات مغلقة بعد الإرسال':groupScheduleLocked?(context.reason||'المجموعة غير متاحة في هذا التاريخ'):'إزالة غياب هذه المحاضرة'}" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:''}</span></div></div>`;
+                        html += `<div class="student-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-seq">${groupStudents.indexOf(st)+1}</span>👨‍🎓 ${escapeHtml(st.name)} <span class="student-status-icon">${statusIcon}</span> ${todayBadge}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="student-actions" style="display:flex;gap:4px;flex-wrap:wrap;"><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="markStudentAbsent(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-warning" style="font-size:10px;">📝</button><span data-remove-absence-slot="1">${hasAbsence?`<button data-attendance-control="1" ${sessionLocked?'disabled aria-disabled="true"':''} title="${sessionLocked?(context.reason||'الجلسة غير متاحة'):'إزالة غياب هذه المحاضرة'}" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:''}</span></div></div>`;
                     }
                 });
                 html += `</div></div>`;
