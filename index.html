@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.22</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.23</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1289,6 +1289,7 @@
                     if (firebaseTransportConnected) {
                         setStartupStatus(cloudInitialReadComplete?'✅ متصل بالسحابة':'⏳ متصل بـ Firebase — جارٍ إكمال قراءة البيانات', cloudInitialReadComplete?'online':'');
                         if (state.initialLoadDone && cloudInitialReadComplete) pushToFirebase({ silent:true });
+                        else if (state.initialLoadDone && !cloudInitialReadComplete) scheduleCloudRetry(1000);
                     } else if (state.initialLoadDone) {
                         setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
                     }
@@ -2473,9 +2474,18 @@
         function pushToFirebase(options = {}) {
             if (!state.initialLoadDone) return Promise.resolve(false);
             if (!options.skipInitialLocalPersistence) scheduleLocalPersistence(0);
-            if (!database || !cloudInitialReadComplete || !state.currentUser) {
-                if (!options.silent) setSyncStatus('🟠 التعديل ينتظر المزامنة؛ تحقق من اكتمال الحفظ المحلي', '#b45309');
+            if (!database || !state.currentUser) {
+                if (!options.silent) setSyncStatus('🟠 التعديل ينتظر اتصال Firebase؛ الحفظ المحلي باقٍ محفوظاً', '#b45309');
                 scheduleCloudRetry();
+                return Promise.resolve(false);
+            }
+            if (!cloudInitialReadComplete) {
+                // V45.23: لا نكتب قبل اكتمال القراءة/الدمج الأولي حمايةً من الكتابة فوق بيانات جهاز آخر.
+                // لكن إذا كان transport نفسه متصلاً نطلب استكمال القراءة فوراً بدل الاكتفاء بفشل صامت.
+                if (!options.silent) setSyncStatus(firebaseTransportConnected
+                    ?'⏳ Firebase متصل — جارٍ استكمال القراءة الآمنة قبل رفع التغييرات'
+                    :'🟠 التعديل محفوظ محلياً وينتظر عودة اتصال Firebase', '#b45309');
+                scheduleCloudRetry(1000);
                 return Promise.resolve(false);
             }
 
@@ -2517,11 +2527,21 @@
                     return allConfirmed;
                 } catch (err) {
                     console.error('خطأ في الحفظ:', err);
-                    cloudConnected = false;
+                    // V45.23: فشل عملية كتابة/timeout لا يعني أن transport انقطع.
+                    cloudConnected = firebaseTransportConnected;
                     const localCopySaved=await persistLocalState('cloud-failed', true);
-                    setSyncStatus(localCopySaved?'🟠 محفوظ على هذا الجهاز؛ ستعاد المزامنة':'⛔ لم ينجح الحفظ محلياً أو سحابياً؛ أبق الصفحة مفتوحة وخذ نسخة احتياطية',localCopySaved?'#b45309':'#b91c1c');
-                    setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
-                    scheduleCloudRetry();
+                    const errText=String(err?.message||err||'').trim();
+                    if(firebaseTransportConnected){
+                        setSyncStatus(localCopySaved
+                            ?`🟠 Firebase متصل لكن تعذر تأكيد الكتابة${errText?`: ${errText}`:''} — التغيير محفوظ محلياً وستعاد المحاولة`
+                            :'⛔ Firebase متصل لكن تعذر تأكيد الحفظ محلياً وسحابياً؛ أبق الصفحة مفتوحة وخذ نسخة احتياطية',
+                            localCopySaved?'#b45309':'#b91c1c');
+                        setStartupStatus('⏳ متصل بـ Firebase — توجد كتابة معلقة ستعاد محاولتها');
+                    } else {
+                        setSyncStatus(localCopySaved?'🟠 محفوظ على هذا الجهاز؛ ستعاد المزامنة':'⛔ لم ينجح الحفظ محلياً أو سحابياً؛ أبق الصفحة مفتوحة وخذ نسخة احتياطية',localCopySaved?'#b45309':'#b91c1c');
+                        setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
+                    }
+                    scheduleCloudRetry(firebaseTransportConnected?3000:15000);
                     return false;
                 } finally {
                     state.isSyncing = false;
