@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.21</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.22</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1001,6 +1001,7 @@
         let cloudListenersStarted = false;
         let cloudRetryTimer = null;
         let cloudConnected = false;
+        let firebaseTransportConnected = false;
         let attendanceReadScope = null;
         const APP_VERSION = '45.18-article11-progressive-warnings';
         const inFlightFirebaseChanges = new Map();
@@ -1283,14 +1284,18 @@
                 if (!firebase.apps || firebase.apps.length === 0) firebase.initializeApp(firebaseConfig);
                 database = firebase.database();
                 database.ref('.info/connected').on('value', snap => {
-                    cloudConnected = snap.val() === true;
-                    if (cloudConnected) {
-                        setStartupStatus('✅ متصل بالسحابة', 'online');
+                    firebaseTransportConnected = snap.val() === true;
+                    cloudConnected = firebaseTransportConnected;
+                    if (firebaseTransportConnected) {
+                        setStartupStatus(cloudInitialReadComplete?'✅ متصل بالسحابة':'⏳ متصل بـ Firebase — جارٍ إكمال قراءة البيانات', cloudInitialReadComplete?'online':'');
                         if (state.initialLoadDone && cloudInitialReadComplete) pushToFirebase({ silent:true });
                     } else if (state.initialLoadDone) {
                         setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
                     }
-                }, () => { cloudConnected = false; });
+                }, () => {
+                    firebaseTransportConnected = false;
+                    cloudConnected = false;
+                });
                 return true;
             })().catch(err => {
                 database = null;
@@ -2357,13 +2362,18 @@
         // ==============================================================
         async function readCloudCollections() {
             if (!database) throw new Error('الاتصال السحابي غير جاهز');
-            const settled = await Promise.allSettled(CLOUD_SYNC_COLLECTIONS.map(name =>
-                withTimeout(database.ref('/' + name).once('value'), CLOUD_OPERATION_TIMEOUT_MS, `انتهت مهلة تحميل ${name}`)
-                    .then(snapshot => ({ name, value:snapshot.val() }))
-            ));
+
+            const readOne = name => withTimeout(
+                database.ref('/' + name).once('value'),
+                CLOUD_OPERATION_TIMEOUT_MS,
+                `انتهت مهلة تحميل ${name}`
+            ).then(snapshot => ({ name, value:snapshot.val() }));
+
+            const settled = await Promise.allSettled(CLOUD_SYNC_COLLECTIONS.map(readOne));
             const data = {};
             const loadedNames = [];
-            const failures = [];
+            let failures = [];
+
             settled.forEach((result, index) => {
                 if (result.status === 'fulfilled') {
                     data[result.value.name] = result.value.value;
@@ -2371,6 +2381,25 @@
                     loadedNames.push(result.value.name);
                 } else failures.push({ name:CLOUD_SYNC_COLLECTIONS[index], error:result.reason });
             });
+
+            // V45.22: بطء مجموعة واحدة لا يعني انقطاع Firebase كله.
+            // نعيد فقط الأقسام التي فشلت مرة واحدة، ولا نعيد تنزيل الأقسام الناجحة.
+            if (failures.length && navigator.onLine !== false) {
+                try { if (typeof database.goOnline === 'function') database.goOnline(); } catch(e) {}
+                const retryNames = failures.map(x=>x.name);
+                const retry = await Promise.allSettled(retryNames.map(readOne));
+                const remaining = [];
+                retry.forEach((result,index)=>{
+                    const name=retryNames[index];
+                    if(result.status==='fulfilled'){
+                        data[name]=result.value.value;
+                        if(Array.isArray(result.value.value))legacyCloudCollections.add(name);
+                        if(!loadedNames.includes(name))loadedNames.push(name);
+                    } else remaining.push({name,error:result.reason});
+                });
+                failures=remaining;
+            }
+
             if (!loadedNames.length) throw failures[0]?.error || new Error('تعذر تحميل البيانات السحابية');
             return { data, loadedNames, failures };
         }
@@ -2426,9 +2455,14 @@
                 return true;
             } catch (err) {
                 console.error('خطأ في تحميل البيانات:', err);
-                cloudConnected = false;
-                setSyncStatus('🟠 تعذر الاتصال حاليا — النسخة المحلية محفوظة وتعمل', '#b45309');
-                setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
+                cloudConnected = firebaseTransportConnected;
+                if(firebaseTransportConnected){
+                    setSyncStatus('🟠 Firebase متصل، لكن لم تكتمل قراءة جميع البيانات بعد — ستتم إعادة المحاولة تلقائياً', '#b45309');
+                    setStartupStatus('⏳ متصل بـ Firebase — بعض البيانات لم تكتمل قراءتها بعد');
+                } else {
+                    setSyncStatus('🟠 تعذر الاتصال حاليا — النسخة المحلية محفوظة وتعمل', '#b45309');
+                    setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
+                }
                 scheduleCloudRetry();
                 return false;
             } finally {
@@ -2712,7 +2746,7 @@
         setInterval(() => {
             // لا نعيد تسلسل الحالة كاملة كل 30 ثانية؛ الحفظ الحدثي موجود أصلاً بعد كل تعديل.
             // الحفظ المحلي يتم بعد التعديلات مباشرة؛ لا نعيد بناء snapshot كامل دورياً بلا تغيير.
-            if (document.visibilityState==='visible' && !cloudConnected && !cloudSyncPromise) connectAndSyncCloud();
+            if (document.visibilityState==='visible' && (!cloudConnected || !cloudInitialReadComplete) && !cloudSyncPromise) connectAndSyncCloud();
         }, 120000);
 
         // ==============================================================
