@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.30</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.32</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1008,6 +1008,17 @@
         let initialCloudReadCache = Object.create(null);
         let initialCloudReadCompleted = new Set();
         let initialCloudReadStartedAt = 0;
+        let lastCloudFailureReason = '';
+        function describeCloudFailure(err){
+            const base=String(err?.message||err||'سبب غير معروف').trim();
+            if(lastCloudReadFailures?.length){
+                const detail=lastCloudReadFailures.map(f=>`${f.name}: ${f.message}`).join(' | ');
+                return detail || base;
+            }
+            if(!firebaseTransportConnected)return base==='سبب غير معروف'?'اتصال Firebase غير متاح حالياً':base;
+            return base;
+        }
+
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
@@ -2460,6 +2471,7 @@
                     throw new Error(`لم تكتمل القراءة الآمنة. الأقسام التي فشلت: ${detail}`);
                 }
                 lastCloudReadFailures = [];
+                lastCloudFailureReason='';
                 cloudInitialReadComplete = true;
                 // Always merge. New local edits made while the first cloud read is pending must survive.
                 applyRemoteData(data, loadedNames);
@@ -2572,6 +2584,7 @@
                     updateSyncConflictButton();
                     return allConfirmed;
                 } catch (err) {
+                lastCloudFailureReason=describeCloudFailure(err);
                     console.error('خطأ في الحفظ:', err);
                     // V45.23: فشل عملية كتابة/timeout لا يعني أن transport انقطع.
                     cloudConnected = firebaseTransportConnected;
@@ -2790,7 +2803,7 @@
         window.addEventListener('offline', () => {
             cloudConnected = false;
             setStartupStatus('🟠 لا يوجد إنترنت — النسخة المحلية جاهزة ومحفوظة', 'local');
-            setSyncStatus('🟠 وضع محلي؛ لن يضيع أي تعديل', '#b45309');
+            setSyncStatus(`🟠 وضع محلي؛ لن يضيع أي تعديل — السبب: ${lastCloudFailureReason||(!firebaseTransportConnected?'Firebase غير متصل حالياً':'القراءة السحابية الآمنة لم تكتمل')}`, '#b45309');
         });
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
@@ -8910,6 +8923,9 @@
 
         // V45.26: التحقق الحرج قبل فتح واتساب يقرأ Firebase نفسه،
         // ولا يعتمد فقط على lastSyncedCollections التي قد تتأخر عن نجاح الكتابة.
+        // V45.32: التحقق قبل واتساب لا يستعلم عن attendances حسب subjectId.
+        // ذلك الاستعلام كان يقرأ/يفحص مجموعة كبيرة ويؤدي إلى timeout على الهاتف.
+        // نتحقق فقط من سجلات المادة الموجودة في النسخة التي تم إرسالها، كل سجل بمساره المباشر.
         async function getSubmissionCloudIssueDirect(subject,submission) {
             const quick=getSubmissionCloudIssue(subject,submission);
             if(!quick)return '';
@@ -8917,17 +8933,33 @@
             const sid=String(subject?.id||'');
             if(!sid||!submission)return quick;
             try{
-                // اقرأ سجلات المادة فقط. إذا لم يتوفر index في القواعد، Firebase ما زال
-                // يعيد النتيجة الصحيحة مع تحذير أداء؛ لا نغير Rules أو schema هنا.
-                const attSnap=await withTimeout(
-                    database.ref('/attendances').orderByChild('subjectId').equalTo(sid).once('value'),
-                    CLOUD_OPERATION_TIMEOUT_MS,
-                    'انتهت مهلة التحقق المباشر من غيابات المادة'
-                );
-                const remoteAttendances=normalizeCollection(attSnap.val(),'attendances');
-                const remoteFingerprint=simpleHash(JSON.stringify(getSubjectOperationalAttendanceRecords(sid,remoteAttendances)));
+                const localRecords=getSubjectOperationalAttendanceRecords(sid,state.attendances||[]);
+                const expectedFingerprint=simpleHash(JSON.stringify(localRecords));
+                if(expectedFingerprint!==submission.fingerprint)
+                    return 'تغيرت سجلات حضور وغياب المادة محلياً بعد إنشاء الإرسال؛ أعد الإرسال بعد تثبيت التعديلات.';
+
+                // اقرأ السجلات المطلوبة فقط بمفاتيحها المباشرة، بدفعات صغيرة.
+                // لا query على /attendances ولا تنزيل للمجموعة كاملة.
+                const confirmedRecords=[];
+                const VERIFY_BATCH=6;
+                for(let i=0;i<localRecords.length;i+=VERIFY_BATCH){
+                    const batch=localRecords.slice(i,i+VERIFY_BATCH);
+                    const results=await Promise.all(batch.map(async rec=>{
+                        const snap=await withTimeout(
+                            database.ref(`/attendances/${firebaseRecordKey(rec.id)}`).once('value'),
+                            CLOUD_OPERATION_TIMEOUT_MS,
+                            `انتهت مهلة التحقق من سجل غياب ${rec.id}`
+                        );
+                        const raw=snap.val();
+                        return raw===null?undefined:sanitizeRecord(raw);
+                    }));
+                    confirmedRecords.push(...results);
+                }
+                if(confirmedRecords.some((r,i)=>!r || !sameRecord(r,localRecords[i])))
+                    return 'بعض سجلات حضور وغياب هذه المادة لم تصل إلى Firebase بنفس النسخة الحالية بعد.';
+                const remoteFingerprint=simpleHash(JSON.stringify(confirmedRecords));
                 if(remoteFingerprint!==submission.fingerprint)
-                    return 'سجلات حضور وغياب هذه المادة لم تصل إلى Firebase بنفس النسخة المؤكدة بعد.';
+                    return 'نسخة غيابات المادة المؤكدة في Firebase لا تطابق نسخة الإرسال الحالية.';
 
                 const subSnap=await withTimeout(
                     database.ref(`/submissions/${firebaseRecordKey(submission.id)}`).once('value'),
@@ -8949,9 +8981,8 @@
                 if(!savedWorkflow || !savedWorkflow.locked || String(savedWorkflow.lastSubmissionId)!==String(submission.id))
                     return 'حالة تأكيد الإرسال لم تصل إلى Firebase بعد.';
 
-                // Firebase نفسه أكد العناصر الثلاثة المطلوبة. حدّث baseline لهذه السجلات
-                // فقط كي لا تبقى الواجهة تعرض حالة cloud-pending كاذبة.
-                remoteAttendances.forEach(r=>updateSyncBaseRecord('attendances',r.id,r));
+                // حدّث baseline للسجلات التي أكدها Firebase فقط.
+                confirmedRecords.forEach(r=>updateSyncBaseRecord('attendances',r.id,r));
                 updateSyncBaseRecord('submissions',saved.id,saved);
                 updateSyncBaseRecord('appSettings',savedWorkflow.id,savedWorkflow);
                 return '';
