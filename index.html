@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.28</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.29</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -8566,12 +8566,17 @@
                     recordAudit('سحب إذن التسجيل بتاريخ قديم',{subjectId:subject.id,subject:subject.name,professorId:professor.id,professor:professor.name});
                     const localSaved=await persistLocalState('revoke-historical-attendance-permission',true);
                     const cloudSaved=await pushToFirebase({silent:true});
+                    const exactCheck=await verifyFirebaseRecordExact('appSettings',existing);
                     renderAll();
-                    if(!cloudSaved){
-                        alert(localSaved?'⚠️ تم سحب الإذن على هذا الجهاز، لكن لم يتم تأكيد المزامنة السحابية بعد.':'⛔ تعذر تأكيد سحب الإذن محلياً وسحابياً.');
+                    if(!exactCheck.ok){
+                        const detail=exactCheck.reason==='missing-record'?'سجل الإذن غير موجود في Firebase'
+                            :exactCheck.reason==='different-record'?'سجل الإذن في Firebase لا يطابق حالة السحب الحالية'
+                            :exactCheck.reason==='read-error'?String(exactCheck.error?.message||exactCheck.error||'تعذر التحقق المباشر')
+                            :!cloudSaved?'المزامنة العامة لم تؤكد الكتابة':'تعذر تأكيد سحب الإذن';
+                        alert(localSaved?`⚠️ تم سحب الإذن محلياً، لكن لم يتم تأكيد حالة السحب في Firebase.\nالسبب: ${detail}`:'⛔ تعذر تأكيد سحب الإذن محلياً وسحابياً.');
                         return false;
                     }
-                    alert('✅ تم سحب إذن التسجيل بتاريخ قديم وتم تأكيد المزامنة.'); return true;
+                    alert('✅ تم سحب إذن التسجيل بتاريخ قديم وتم التحقق من حالة السحب في Firebase.'); return true;
                 }
             }
             const today=getLocalDateISO();
@@ -8593,7 +8598,7 @@
             recordAudit('منح إذن التسجيل بتاريخ قديم',{subjectId:subject.id,subject:subject.name,professorId:professor.id,professor:professor.name,fromDate:from,toDate:to});
             const localSaved=await persistLocalState('historical-attendance-permission',true);
             const cloudSaved=await pushToFirebase({silent:true});
-            const exactCheck=await verifyFirebaseRecordExact('appSettings',permission);
+            const exactCheck=await verifyFirebaseRecordExact('appSettings',rec);
             renderAll();
             if(exactCheck.ok){
                 alert(`✅ تم منح الإذن من ${from} إلى ${to} وتم التحقق من سجل الإذن نفسه في Firebase.\nيمكن للأستاذ التسجيل أو التعديل ضمن هذه المدة فقط.`);
