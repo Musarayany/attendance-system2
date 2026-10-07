@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.29</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.30</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1003,6 +1003,13 @@
         let cloudConnected = false;
         let firebaseTransportConnected = false;
         let lastCloudReadFailures = [];
+        // V45.30: نتائج القراءة الأولية الناجحة تبقى في الذاكرة بين محاولات الاتصال.
+        // لا تُحفظ في localStorage/IndexedDB ولا تغيّر مخطط البيانات.
+        let initialCloudReadCache = Object.create(null);
+        let initialCloudReadCompleted = new Set();
+        let initialCloudReadStartedAt = 0;
+        const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+
         let attendanceReadScope = null;
         const APP_VERSION = '45.18-article11-progressive-warnings';
         const inFlightFirebaseChanges = new Map();
@@ -2362,15 +2369,21 @@
         // ==============================================================
         //  دوال المزامنة مع Firebase
         // ==============================================================
-        // V45.28: القراءة الأولية على دفعات صغيرة مع الاحتفاظ بنتائج المحاولة نفسها.
-        // الهدف منع ازدحام الشبكة عند قراءة جميع الأقسام الكبيرة بالتوازي.
+        // V45.30: القراءة الأولية التراكمية.
+        // المجموعة التي تُقرأ بنجاح لا يعاد تنزيلها في المحاولة التالية؛
+        // يعاد فقط ما بقي ناقصاً، مع بقاء حاجز منع الكتابة حتى اكتمال الجميع.
         async function readCloudCollections() {
             if (!database) throw new Error('الاتصال السحابي غير جاهز');
 
-            const data = {};
-            const loadedNames = [];
+            const now=Date.now();
+            if(!initialCloudReadStartedAt || (now-initialCloudReadStartedAt)>INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS){
+                initialCloudReadCache=Object.create(null);
+                initialCloudReadCompleted=new Set();
+                initialCloudReadStartedAt=now;
+            }
+
             const failures = [];
-            const pending = [...CLOUD_SYNC_COLLECTIONS];
+            const pending = CLOUD_SYNC_COLLECTIONS.filter(name=>!initialCloudReadCompleted.has(name));
             const INITIAL_READ_CONCURRENCY = 2;
 
             const readOne = async name => {
@@ -2381,9 +2394,9 @@
                         `انتهت مهلة تحميل ${name}`
                     );
                     const value=snapshot.val();
-                    data[name]=value;
+                    initialCloudReadCache[name]=value;
+                    initialCloudReadCompleted.add(name);
                     if(Array.isArray(value))legacyCloudCollections.add(name);
-                    if(!loadedNames.includes(name))loadedNames.push(name);
                     return true;
                 }catch(error){
                     failures.push({name,error});
@@ -2391,26 +2404,40 @@
                 }
             };
 
-            // لا نطلق كل القراءات الثقيلة دفعة واحدة.
+            // اقرأ فقط الأقسام التي لم تنجح في أي محاولة سابقة ضمن دورة القراءة الحالية.
             for(let i=0;i<pending.length;i+=INITIAL_READ_CONCURRENCY){
                 const batch=pending.slice(i,i+INITIAL_READ_CONCURRENCY);
                 await Promise.all(batch.map(readOne));
             }
 
-            // أعد فقط الأقسام التي فشلت، بالتتابع هذه المرة لتقليل الضغط أكثر.
+            // إعادة واحدة للأقسام التي فشلت في هذه المحاولة، بالتتابع لتخفيف الضغط.
             if(failures.length && navigator.onLine!==false){
                 try{ if(typeof database.goOnline==='function') database.goOnline(); }catch(e){}
-                const retryNames=failures.map(f=>f.name);
+                const retryNames=failures.map(f=>f.name).filter(name=>!initialCloudReadCompleted.has(name));
                 failures.length=0;
                 for(const name of retryNames) await readOne(name);
             }
 
-            lastCloudReadFailures = failures.map(f=>({
-                name:String(f.name||''),
-                message:String(f.error?.message||f.error||'خطأ غير معروف')
+            const remaining=CLOUD_SYNC_COLLECTIONS.filter(name=>!initialCloudReadCompleted.has(name));
+            const failureByName=new Map(failures.map(f=>[f.name,f.error]));
+            lastCloudReadFailures=remaining.map(name=>({
+                name,
+                message:String(failureByName.get(name)?.message||failureByName.get(name)||'لم يكتمل التحميل بعد')
             }));
-            if (!loadedNames.length) throw failures[0]?.error || new Error('تعذر تحميل البيانات السحابية');
-            return { data, loadedNames, failures };
+
+            const loadedNames=CLOUD_SYNC_COLLECTIONS.filter(name=>initialCloudReadCompleted.has(name));
+            const data={};
+            loadedNames.forEach(name=>{data[name]=initialCloudReadCache[name];});
+
+            if(!loadedNames.length && remaining.length)
+                throw failureByName.get(remaining[0]) || new Error('تعذر تحميل البيانات السحابية');
+
+            return {
+                data,
+                loadedNames,
+                failures:lastCloudReadFailures.map(f=>({name:f.name,error:new Error(f.message)})),
+                remaining
+            };
         }
 
         function hasAnyCollectionData(data, names = SYNC_COLLECTIONS) {
@@ -2457,6 +2484,10 @@
                 cloudConnected = true;
                 lastCloudSyncAt = Date.now();
                 const localCopySaved=await persistLocalState('cloud-load', true);
+                // اكتملت دورة القراءة والدمج الآمن؛ لم نعد بحاجة إلى النسخة المؤقتة في الذاكرة.
+                initialCloudReadCache=Object.create(null);
+                initialCloudReadCompleted=new Set();
+                initialCloudReadStartedAt=0;
                 const partialNote = failures.length ? ` — تعذر تحديث ${failures.length} قسم وسيعاد تلقائيا` : '';
                 setSyncStatus(localCopySaved?`✅ تم تحميل أحدث البيانات${partialNote}`:'⚠️ تم التحميل من السحابة؛ تعذر حفظ نسخة على الجهاز', localCopySaved ? '#2f855a' : '#b45309');
                 setStartupStatus('✅ متصل بالسحابة', 'online');
