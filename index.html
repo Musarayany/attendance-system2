@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.32</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.33</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -9001,7 +9001,7 @@
             if(adminOpen){
                 return {code:'reopened',label:adminOpen?'🔓 أعاد رئيس القسم فتح المادة للتعديل — جميع المحاضرات مفتوحة حتى تعيد الإرسال':'المادة مفتوحة للتعديل بعد التراجع — عدّل بحرية ثم أعد الإرسال',cls:'submission-dirty',latest:latestCompleted,workflow,adminOpen};
             }
-            if(latestCompleted && getSubjectAttendanceFingerprint(subject.id)===latestCompleted.fingerprint && getSubmissionCloudIssue(subject,latestCompleted))return {code:'cloud-pending',label:'⏳ تأكيد محفوظ محلياً — اضغط إعادة محاولة المزامنة والإرسال',cls:'submission-pending',latest:latestCompleted,workflow};
+            if(latestCompleted && getSubjectAttendanceFingerprint(subject.id)===latestCompleted.fingerprint && getSubmissionCloudIssue(subject,latestCompleted))return {code:'cloud-pending',label:'⏳ تأكيد محفوظ محلياً — Firebase معلّق، ويمكن إعادة فتح واتساب',cls:'submission-pending',latest:latestCompleted,workflow};
             if(state.currentUser?.role==='professor' && hasOpenScheduledProfessorLecture(subject))return {code:'pending',label:'محاضرة متاحة للتسجيل — تفتح تلقائياً عند موعدها',cls:'submission-pending',latest:latestCompleted,workflow};
             if(!latestCompleted)return {code:'pending',label:'لم يؤكد الإكمال',cls:'submission-pending',workflow};
             const current=getSubjectAttendanceFingerprint(subject.id);
@@ -9034,7 +9034,7 @@
             if(resendButton){
                 resendButton.style.display=(['ok','cloud-pending'].includes(st.code))?'block':'none';
                 resendButton.disabled=!(['ok','cloud-pending'].includes(st.code)&&whatsappConfigured);
-                resendButton.textContent=whatsappConfigured?(st.code==='cloud-pending'?'🔄 إعادة محاولة المزامنة والإرسال':'📱 إعادة فتح آخر رسالة واتساب'):'📱 رقم مسؤول الغيابات غير مضبوط';
+                resendButton.textContent=whatsappConfigured?(st.code==='cloud-pending'?'📱 إعادة فتح واتساب ومحاولة المزامنة':'📱 إعادة فتح آخر رسالة واتساب'):'📱 رقم مسؤول الغيابات غير مضبوط';
             }
             if(removeAllButton){
                 removeAllButton.disabled=!!locked;
@@ -9066,7 +9066,20 @@
             const popup=null;
             try { await saveAll({silent:true}); } catch(err){closeReservedWhatsAppWindow(popup);alert(err.message||'تعذر حفظ التأكيد.');return false;}
             const issue=await getSubmissionCloudIssueDirect(sub,latest);
-            if(issue){closeReservedWhatsAppWindow(popup);renderProfessorSubmissionStatus(sub);alert('⏳ '+issue+'\nلم تُفتح رسالة واتساب لأن Firebase لم يؤكد النسخة المطلوبة بعد. أعد المحاولة دون إنشاء إرسال جديد.');return false;}
+            if(issue){
+                // V45.33: آخر submission المحلي المكتمل يظل صالحاً لإعادة فتح رسالة واتساب
+                // ما دام fingerprint الحالي مطابقاً له. لا ننشئ submission جديداً.
+                if(getSubjectAttendanceFingerprint(sub.id)!==latest.fingerprint){
+                    renderProfessorSubmissionStatus(sub);
+                    alert('تغيرت الغيابات محلياً بعد آخر تأكيد. استخدم «إعادة إرسال الغيابات بعد التعديل» أولاً.');
+                    return false;
+                }
+                recordAudit('إعادة فتح واتساب مع مزامنة سحابية معلقة',{
+                    subjectId:sub.id,subject:sub.name,submissionId:latest.id,
+                    cloudIssue:String(issue).slice(0,500)
+                });
+                setSyncStatus('🟠 آخر إرسال محفوظ محلياً؛ فُتح واتساب بينما مزامنة Firebase معلقة', '#b45309');
+            }
             const students=getStudentsForProfessor();
             const url=buildWhatsAppUrl(number,buildOfficerWhatsAppMessage(sub,latest,students));
             if(!url){closeReservedWhatsAppWindow(popup);alert('تعذر إنشاء رابط واتساب بسبب رقم غير صالح.');return false;}
@@ -10259,10 +10272,15 @@
                 const cloudIssue=await getSubmissionCloudIssueDirect(sub,submission);
                 renderProfessorSubmissionStatus(sub);
                 if (cloudIssue) {
-                    closeReservedWhatsAppWindow(whatsappWindow);
-                    whatsappWindow=null;
-                    alert('⏳ '+cloudIssue+'\nبقي التأكيد محفوظاً محلياً. استخدم زر إعادة محاولة المزامنة والإرسال؛ لن يُنشأ تأكيد مكرر.');
-                    return false;
+                    // V45.33: واتساب قناة تسليم مستقلة عن Firebase.
+                    // ما دام التأكيد حُفظ محلياً بنجاح والـ fingerprint لم يتغير، لا نحجب
+                    // فتح واتساب بسبب بطء/تعذر التحقق السحابي. تبقى الواجهة cloud-pending
+                    // والمزامنة تستمر لاحقاً، من دون إنشاء submission جديد.
+                    recordAudit('فتح واتساب مع مزامنة سحابية معلقة',{
+                        subjectId:sub.id,subject:sub.name,submissionId:submission.id,
+                        cloudIssue:String(cloudIssue).slice(0,500)
+                    });
+                    setSyncStatus('🟠 الغيابات محفوظة محلياً وواتساب متاح؛ مزامنة Firebase ما زالت معلقة', '#b45309');
                 }
 
                 // الإرسال الجديد يقفل أدوات الغياب فوراً بصرياً ومنطقياً، مع حفظ موضع القائمة.
