@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.23</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.25</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -3638,6 +3638,17 @@
             return record;
         }
 
+        // V45.24: تحقق مباشر من سجل واحد بعد المزامنة الحرجة دون تغيير مخطط البيانات.
+        async function verifyFirebaseRecordExact(collectionName, record) {
+            if(!database || !record || record.id===undefined || record.id===null) return {ok:false,reason:'firebase-not-ready'};
+            const ref=database.ref(`/${collectionName}/${firebaseRecordKey(record.id)}`);
+            try{
+                const snap=await withTimeout(ref.once('value'),CLOUD_OPERATION_TIMEOUT_MS,`انتهت مهلة التحقق من ${collectionName}`);
+                const raw=snap.val(), remote=raw===null?undefined:sanitizeRecord(raw);
+                return {ok:!!remote && sameRecord(remote,record),remote,reason:remote?'different-record':'missing-record'};
+            }catch(err){ return {ok:false,reason:'read-error',error:err}; }
+        }
+
         async function persistSubjectHoursOverrideCritical(record) {
             if (!record) return false;
             const localSaved=await persistLocalState('subject-hours-critical-local',true);
@@ -5606,7 +5617,20 @@
             const cloudSaved=await pushToFirebase({silent:true});
             if (!localSaved && !cloudSaved) throw new Error('تعذر حفظ بيانات الأستاذ محلياً وسحابياً');
             const confirmed=mapsById(lastSyncedCollections.professorProfiles||[]).get(String(profile.id));
-            return {...expected,_localSaved:localSaved,_cloudSaved:cloudSaved&&sameRecord(expected,confirmed)};
+            // V45.25: نتيجة المزامنة العامة قد تكون false بسبب تغيير آخر غير متعلق بملف الأستاذ.
+            // تحقق من سجل professorProfiles نفسه مباشرة من Firebase قبل الحكم على كلمة المرور/الهاتف.
+            let exactCloud=false, cloudVerifyReason='';
+            if(database){
+                const exact=await verifyFirebaseRecordExact('professorProfiles',expected);
+                exactCloud=!!exact.ok;
+                if(!exactCloud){
+                    cloudVerifyReason=exact.reason==='missing-record'?'ملف الأستاذ غير موجود في Firebase'
+                        :exact.reason==='different-record'?'ملف الأستاذ في Firebase لا يطابق التعديل الحالي'
+                        :exact.reason==='read-error'?String(exact.error?.message||exact.error||'تعذر التحقق المباشر')
+                        :'تعذر التحقق من ملف الأستاذ في Firebase';
+                }
+            } else cloudVerifyReason='Firebase غير مهيأ على هذا الجهاز';
+            return {...expected,_localSaved:localSaved,_cloudSaved:exactCloud,_cloudVerifyReason:cloudVerifyReason,_generalCloudSaved:cloudSaved&&sameRecord(expected,confirmed)};
         }
         function refreshProfessorIdentityViews(levelHint=null){
             renderProfessorProfileHealth();
@@ -6535,8 +6559,12 @@
                 const savedProfile=await persistProfessorIdentityCritical(prof);
                 if(String(savedProfile.passwordHash||'')!==hash) throw new Error('فشل التحقق من كلمة المرور بعد الحفظ');
                 refreshProfessorIdentityViews(levelHint);
-                alert(savedProfile._cloudSaved ? '✅ تم تعيين كلمة المرور وحفظها محليا وسحابيا.' : '🟠 تم تعيين كلمة المرور وحفظها في هذا المتصفح، وستُرفع تلقائيا عند عودة الاتصال.');
-                return true;
+                if(savedProfile._cloudSaved){
+                    alert('✅ تم تعيين كلمة المرور والتحقق مباشرة من وصول ملف الأستاذ المحدّث إلى Firebase.');
+                    return true;
+                }
+                alert(`⚠️ تم تعيين كلمة المرور وحفظها محلياً، لكن لم يتم تأكيد وصول ملف الأستاذ المحدّث إلى Firebase.\nالسبب: ${savedProfile._cloudVerifyReason||'المزامنة لم تُؤكد الكتابة'}\nلا تعتمد كلمة المرور الجديدة على جهاز الأستاذ حتى تنجح المزامنة.`);
+                return false;
             }catch(err){
                 console.error('تعذر تثبيت كلمة مرور الأستاذ:',err);
                 alert('❌ تعذر تثبيت كلمة المرور في السحابة: '+err.message);
@@ -8550,15 +8578,20 @@
             recordAudit('منح إذن التسجيل بتاريخ قديم',{subjectId:subject.id,subject:subject.name,professorId:professor.id,professor:professor.name,fromDate:from,toDate:to});
             const localSaved=await persistLocalState('historical-attendance-permission',true);
             const cloudSaved=await pushToFirebase({silent:true});
+            const exactCheck=await verifyFirebaseRecordExact('appSettings',permission);
             renderAll();
-            if(!cloudSaved){
-                alert(localSaved
-                    ?`⚠️ تم حفظ الإذن على جهاز رئيس القسم، لكن لم يتم تأكيد وصوله إلى السحابة بعد.\nلن نعتمد أنه وصل إلى جهاز الأستاذ حتى تنجح المزامنة.`
-                    :'⛔ تعذر تأكيد حفظ إذن التسجيل محلياً وسحابياً. لا تعتمد هذا الإذن.');
-                return false;
+            if(exactCheck.ok){
+                alert(`✅ تم منح الإذن من ${from} إلى ${to} وتم التحقق من سجل الإذن نفسه في Firebase.\nيمكن للأستاذ التسجيل أو التعديل ضمن هذه المدة فقط.`);
+                return true;
             }
-            alert(`✅ تم منح الإذن من ${from} إلى ${to} وتم تأكيد مزامنته.\nيمكن للأستاذ التسجيل أو التعديل ضمن هذه المدة فقط.`);
-            return true;
+            const detail=!database?'Firebase غير مهيأ على هذا الجهاز.'
+                :!cloudInitialReadComplete?'لم تكتمل القراءة الأولية الآمنة من Firebase بعد.'
+                :exactCheck.reason==='missing-record'?'سجل الإذن غير موجود في Firebase.'
+                :exactCheck.reason==='different-record'?'يوجد سجل في Firebase لكنه لا يطابق الإذن الحالي.'
+                :exactCheck.reason==='read-error'?`تعذر التحقق المباشر: ${String(exactCheck.error?.message||exactCheck.error||'خطأ غير معروف')}`
+                :!cloudSaved?'المزامنة العامة لم تؤكد الكتابة.':'تعذر تأكيد سجل الإذن.';
+            alert(localSaved?`⚠️ الإذن محفوظ محلياً، لكنه غير مؤكد على Firebase.\nالسبب: ${detail}\nلن نعتبر أنه وصل إلى جهاز الأستاذ.`:`⛔ تعذر تأكيد حفظ الإذن محلياً وعلى Firebase.\nالسبب: ${detail}`);
+            return false;
         }
 
         // V38: فتح إداري مستقل للغيابات من رئيس القسم.
