@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.26</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.27</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1002,6 +1002,7 @@
         let cloudRetryTimer = null;
         let cloudConnected = false;
         let firebaseTransportConnected = false;
+        let lastCloudReadFailures = [];
         let attendanceReadScope = null;
         const APP_VERSION = '45.18-article11-progressive-warnings';
         const inFlightFirebaseChanges = new Map();
@@ -2401,6 +2402,10 @@
                 failures=remaining;
             }
 
+            lastCloudReadFailures = failures.map(f=>({
+                name:String(f.name||''),
+                message:String(f.error?.message||f.error||'خطأ غير معروف')
+            }));
             if (!loadedNames.length) throw failures[0]?.error || new Error('تعذر تحميل البيانات السحابية');
             return { data, loadedNames, failures };
         }
@@ -2420,7 +2425,11 @@
 
             try {
                 const { data, loadedNames, failures } = await readCloudCollections();
-                if (failures.length) throw new Error('لم تكتمل قراءة جميع الأقسام؛ أُجّل الدمج والحفظ لحماية البيانات');
+                if (failures.length) {
+                    const detail=failures.map(f=>`${f.name}: ${String(f.error?.message||f.error||'خطأ غير معروف')}`).join(' | ');
+                    throw new Error(`لم تكتمل القراءة الآمنة. الأقسام التي فشلت: ${detail}`);
+                }
+                lastCloudReadFailures = [];
                 cloudInitialReadComplete = true;
                 // Always merge. New local edits made while the first cloud read is pending must survive.
                 applyRemoteData(data, loadedNames);
@@ -2458,8 +2467,11 @@
                 console.error('خطأ في تحميل البيانات:', err);
                 cloudConnected = firebaseTransportConnected;
                 if(firebaseTransportConnected){
-                    setSyncStatus('🟠 Firebase متصل، لكن لم تكتمل قراءة جميع البيانات بعد — ستتم إعادة المحاولة تلقائياً', '#b45309');
-                    setStartupStatus('⏳ متصل بـ Firebase — بعض البيانات لم تكتمل قراءتها بعد');
+                    const failedDetail=lastCloudReadFailures.length
+                        ?lastCloudReadFailures.map(f=>`${f.name}: ${f.message}`).join(' | ')
+                        :String(err?.message||err||'سبب غير معروف');
+                    setSyncStatus(`🟠 Firebase متصل — فشل تحميل: ${failedDetail} — ستتم إعادة المحاولة تلقائياً`, '#b45309');
+                    setStartupStatus(`⏳ Firebase متصل — القراءة غير مكتملة: ${failedDetail}`);
                 } else {
                     setSyncStatus('🟠 تعذر الاتصال حاليا — النسخة المحلية محفوظة وتعمل', '#b45309');
                     setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
