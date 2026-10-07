@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.33</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.34</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -9051,7 +9051,7 @@
             }
         }
 
-        async function resendLastSubmissionWhatsApp() {
+        function resendLastSubmissionWhatsApp() {
             const sub=getProfessorSubject();
             if(!sub||state.currentUser?.role!=='professor'){alert('هذه العملية متاحة للأستاذ صاحب المادة فقط.');return false;}
             const st=getSubmissionState(sub);
@@ -9061,38 +9061,39 @@
                 alert('توجد تغييرات بعد آخر إرسال. استخدم زر «إعادة إرسال الغيابات بعد التعديل» أولاً حتى تصل النسخة الحالية.');
                 return false;
             }
+            if(getSubjectAttendanceFingerprint(sub.id)!==latest.fingerprint){
+                renderProfessorSubmissionStatus(sub);
+                alert('تغيرت الغيابات محلياً بعد آخر تأكيد. استخدم «إعادة إرسال الغيابات بعد التعديل» أولاً.');
+                return false;
+            }
             const number=getOfficerWhatsAppNumber();
             if(!number){alert('رقم واتساب مسؤول الغيابات غير مضبوط. اطلب من رئيس القسم حفظ الرقم أولاً.');return false;}
-            const popup=null;
-            try { await saveAll({silent:true}); } catch(err){closeReservedWhatsAppWindow(popup);alert(err.message||'تعذر حفظ التأكيد.');return false;}
-            const issue=await getSubmissionCloudIssueDirect(sub,latest);
-            if(issue){
-                // V45.33: آخر submission المحلي المكتمل يظل صالحاً لإعادة فتح رسالة واتساب
-                // ما دام fingerprint الحالي مطابقاً له. لا ننشئ submission جديداً.
-                if(getSubjectAttendanceFingerprint(sub.id)!==latest.fingerprint){
-                    renderProfessorSubmissionStatus(sub);
-                    alert('تغيرت الغيابات محلياً بعد آخر تأكيد. استخدم «إعادة إرسال الغيابات بعد التعديل» أولاً.');
-                    return false;
-                }
-                recordAudit('إعادة فتح واتساب مع مزامنة سحابية معلقة',{
-                    subjectId:sub.id,subject:sub.name,submissionId:latest.id,
-                    cloudIssue:String(issue).slice(0,500)
-                });
-                setSyncStatus('🟠 آخر إرسال محفوظ محلياً؛ فُتح واتساب بينما مزامنة Firebase معلقة', '#b45309');
-            }
             const students=getStudentsForProfessor();
-            const url=buildWhatsAppUrl(number,buildOfficerWhatsAppMessage(sub,latest,students));
-            if(!url){closeReservedWhatsAppWindow(popup);alert('تعذر إنشاء رابط واتساب بسبب رقم غير صالح.');return false;}
-            // V45.18: مسار موحد؛ نافذة محجوزة إن أمكن، وإلا انتقال في نفس التبويب.
-            const openResult=openWhatsAppReliable(number,buildOfficerWhatsAppMessage(sub,latest,students),popup);
-            let opened=openResult.opened;
+            const message=buildOfficerWhatsAppMessage(sub,latest,students);
+            const url=buildWhatsAppUrl(number,message);
+            if(!url){alert('تعذر إنشاء رابط واتساب بسبب رقم غير صالح.');return false;}
+
+            // V45.34: افتح واتساب فوراً داخل حدث النقر نفسه.
+            // لا ننتظر saveAll/Firebase قبل التنقل لأن Chrome/Android قد يسقط
+            // user activation بعد await، فيبدو الزر وكأنه لا يفعل شيئاً.
             latest.whatsappReopenCount=(Number(latest.whatsappReopenCount)||0)+1;
             latest.whatsappLastReopenedAt=Date.now();
-            recordAudit('إعادة فتح رسالة واتساب لآخر إرسال',{subjectId:sub.id,subject:sub.name,submissionId:latest.id,reopenCount:latest.whatsappReopenCount});
-            persistLocalState('resend-whatsapp-v39',true).then(()=>pushToFirebase({silent:true})).catch(console.error);
-            if(opened && popup) alert('📱 تم فتح آخر رسالة واتساب من جديد.\n\nاضغط «إرسال» داخل واتساب حتى تصل فعلياً لمسؤول الغيابات.');
-            else if(!opened) alert('⚠️ تعذر فتح واتساب على هذا الجهاز. تحقق من تثبيت واتساب أو السماح بفتح روابط wa.me.');
-            return opened;
+            recordAudit('إعادة فتح رسالة واتساب لآخر إرسال',{
+                subjectId:sub.id,subject:sub.name,submissionId:latest.id,
+                reopenCount:latest.whatsappReopenCount,
+                cloudPending:st.code==='cloud-pending'
+            });
+            // الحفظ المحلي يبدأ فوراً ولا ننتظر نتيجته قبل فتح واتساب.
+            persistLocalState('resend-whatsapp-v45-34',true)
+                .then(()=>pushToFirebase({silent:true}))
+                .catch(console.error);
+
+            const openResult=openWhatsAppReliable(number,message,null);
+            if(!openResult.opened){
+                alert('⚠️ تعذر فتح واتساب على هذا الجهاز. تحقق من تثبيت واتساب أو السماح بفتح روابط wa.me.');
+                return false;
+            }
+            return true;
         }
 
         async function undoLastSubmissionOnce() {
@@ -10269,13 +10270,11 @@
                 recordAudit(isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات وتجهيز واتساب لمسؤول الغيابات', { subject: sub.name, students: students.length, records: realRecords.length, submissionId: submission.id, previousSubmissionId:submission.resendOfSubmissionId, revisionNumber:submission.revisionNumber, workflowRevision:Number(workflowRecord?.revision)||0, whatsappPrepared: !!whatsappNumber, whatsappPopupReserved:!!whatsappWindow });
 
                 await saveAll();
-                const cloudIssue=await getSubmissionCloudIssueDirect(sub,submission);
+                // V45.34: بعد نجاح الحفظ المحلي لا نضيف قراءة Firebase انتظارية قبل
+                // فتح واتساب. حالة المزامنة تبقى مستقلة وتستمر في الخلفية.
+                const cloudIssue=getSubmissionCloudIssue(sub,submission);
                 renderProfessorSubmissionStatus(sub);
                 if (cloudIssue) {
-                    // V45.33: واتساب قناة تسليم مستقلة عن Firebase.
-                    // ما دام التأكيد حُفظ محلياً بنجاح والـ fingerprint لم يتغير، لا نحجب
-                    // فتح واتساب بسبب بطء/تعذر التحقق السحابي. تبقى الواجهة cloud-pending
-                    // والمزامنة تستمر لاحقاً، من دون إنشاء submission جديد.
                     recordAudit('فتح واتساب مع مزامنة سحابية معلقة',{
                         subjectId:sub.id,subject:sub.name,submissionId:submission.id,
                         cloudIssue:String(cloudIssue).slice(0,500)
