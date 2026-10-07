@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.27</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.28</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -2362,44 +2362,47 @@
         // ==============================================================
         //  دوال المزامنة مع Firebase
         // ==============================================================
+        // V45.28: القراءة الأولية على دفعات صغيرة مع الاحتفاظ بنتائج المحاولة نفسها.
+        // الهدف منع ازدحام الشبكة عند قراءة جميع الأقسام الكبيرة بالتوازي.
         async function readCloudCollections() {
             if (!database) throw new Error('الاتصال السحابي غير جاهز');
 
-            const readOne = name => withTimeout(
-                database.ref('/' + name).once('value'),
-                CLOUD_OPERATION_TIMEOUT_MS,
-                `انتهت مهلة تحميل ${name}`
-            ).then(snapshot => ({ name, value:snapshot.val() }));
-
-            const settled = await Promise.allSettled(CLOUD_SYNC_COLLECTIONS.map(readOne));
             const data = {};
             const loadedNames = [];
-            let failures = [];
+            const failures = [];
+            const pending = [...CLOUD_SYNC_COLLECTIONS];
+            const INITIAL_READ_CONCURRENCY = 2;
 
-            settled.forEach((result, index) => {
-                if (result.status === 'fulfilled') {
-                    data[result.value.name] = result.value.value;
-                    if(Array.isArray(result.value.value))legacyCloudCollections.add(result.value.name);
-                    loadedNames.push(result.value.name);
-                } else failures.push({ name:CLOUD_SYNC_COLLECTIONS[index], error:result.reason });
-            });
+            const readOne = async name => {
+                try{
+                    const snapshot=await withTimeout(
+                        database.ref('/' + name).once('value'),
+                        CLOUD_OPERATION_TIMEOUT_MS,
+                        `انتهت مهلة تحميل ${name}`
+                    );
+                    const value=snapshot.val();
+                    data[name]=value;
+                    if(Array.isArray(value))legacyCloudCollections.add(name);
+                    if(!loadedNames.includes(name))loadedNames.push(name);
+                    return true;
+                }catch(error){
+                    failures.push({name,error});
+                    return false;
+                }
+            };
 
-            // V45.22: بطء مجموعة واحدة لا يعني انقطاع Firebase كله.
-            // نعيد فقط الأقسام التي فشلت مرة واحدة، ولا نعيد تنزيل الأقسام الناجحة.
-            if (failures.length && navigator.onLine !== false) {
-                try { if (typeof database.goOnline === 'function') database.goOnline(); } catch(e) {}
-                const retryNames = failures.map(x=>x.name);
-                const retry = await Promise.allSettled(retryNames.map(readOne));
-                const remaining = [];
-                retry.forEach((result,index)=>{
-                    const name=retryNames[index];
-                    if(result.status==='fulfilled'){
-                        data[name]=result.value.value;
-                        if(Array.isArray(result.value.value))legacyCloudCollections.add(name);
-                        if(!loadedNames.includes(name))loadedNames.push(name);
-                    } else remaining.push({name,error:result.reason});
-                });
-                failures=remaining;
+            // لا نطلق كل القراءات الثقيلة دفعة واحدة.
+            for(let i=0;i<pending.length;i+=INITIAL_READ_CONCURRENCY){
+                const batch=pending.slice(i,i+INITIAL_READ_CONCURRENCY);
+                await Promise.all(batch.map(readOne));
+            }
+
+            // أعد فقط الأقسام التي فشلت، بالتتابع هذه المرة لتقليل الضغط أكثر.
+            if(failures.length && navigator.onLine!==false){
+                try{ if(typeof database.goOnline==='function') database.goOnline(); }catch(e){}
+                const retryNames=failures.map(f=>f.name);
+                failures.length=0;
+                for(const name of retryNames) await readOne(name);
             }
 
             lastCloudReadFailures = failures.map(f=>({
