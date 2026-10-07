@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.25</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.26</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -8857,6 +8857,58 @@
             return '';
         }
 
+        // V45.26: التحقق الحرج قبل فتح واتساب يقرأ Firebase نفسه،
+        // ولا يعتمد فقط على lastSyncedCollections التي قد تتأخر عن نجاح الكتابة.
+        async function getSubmissionCloudIssueDirect(subject,submission) {
+            const quick=getSubmissionCloudIssue(subject,submission);
+            if(!quick)return '';
+            if(!database)return quick;
+            const sid=String(subject?.id||'');
+            if(!sid||!submission)return quick;
+            try{
+                // اقرأ سجلات المادة فقط. إذا لم يتوفر index في القواعد، Firebase ما زال
+                // يعيد النتيجة الصحيحة مع تحذير أداء؛ لا نغير Rules أو schema هنا.
+                const attSnap=await withTimeout(
+                    database.ref('/attendances').orderByChild('subjectId').equalTo(sid).once('value'),
+                    CLOUD_OPERATION_TIMEOUT_MS,
+                    'انتهت مهلة التحقق المباشر من غيابات المادة'
+                );
+                const remoteAttendances=normalizeCollection(attSnap.val(),'attendances');
+                const remoteFingerprint=simpleHash(JSON.stringify(getSubjectOperationalAttendanceRecords(sid,remoteAttendances)));
+                if(remoteFingerprint!==submission.fingerprint)
+                    return 'سجلات حضور وغياب هذه المادة لم تصل إلى Firebase بنفس النسخة المؤكدة بعد.';
+
+                const subSnap=await withTimeout(
+                    database.ref(`/submissions/${firebaseRecordKey(submission.id)}`).once('value'),
+                    CLOUD_OPERATION_TIMEOUT_MS,
+                    'انتهت مهلة التحقق المباشر من تأكيد الإرسال'
+                );
+                const savedRaw=subSnap.val(), saved=savedRaw===null?undefined:sanitizeRecord(savedRaw);
+                if(!saved || saved.fingerprint!==submission.fingerprint || String(saved.subjectId)!==sid ||
+                   String(saved.professorId)!==String(submission.professorId) || saved.declaration!=='completed')
+                    return 'تأكيد إرسال هذه المادة لم يصل إلى Firebase بنفس النسخة الحالية بعد.';
+
+                const workflow=getAttendanceWorkflowState(subject.id,submission.professorId,false);
+                const wfSnap=await withTimeout(
+                    database.ref(`/appSettings/${firebaseRecordKey(workflow.id)}`).once('value'),
+                    CLOUD_OPERATION_TIMEOUT_MS,
+                    'انتهت مهلة التحقق المباشر من حالة الإرسال'
+                );
+                const wfRaw=wfSnap.val(), savedWorkflow=wfRaw===null?undefined:sanitizeRecord(wfRaw);
+                if(!savedWorkflow || !savedWorkflow.locked || String(savedWorkflow.lastSubmissionId)!==String(submission.id))
+                    return 'حالة تأكيد الإرسال لم تصل إلى Firebase بعد.';
+
+                // Firebase نفسه أكد العناصر الثلاثة المطلوبة. حدّث baseline لهذه السجلات
+                // فقط كي لا تبقى الواجهة تعرض حالة cloud-pending كاذبة.
+                remoteAttendances.forEach(r=>updateSyncBaseRecord('attendances',r.id,r));
+                updateSyncBaseRecord('submissions',saved.id,saved);
+                updateSyncBaseRecord('appSettings',savedWorkflow.id,savedWorkflow);
+                return '';
+            }catch(err){
+                return `تعذر التحقق المباشر من Firebase: ${String(err?.message||err||'خطأ غير معروف')}`;
+            }
+        }
+
         function getSubmissionState(subject) {
             if(!subject)return {code:'pending',label:'لم يؤكد الإكمال',cls:'submission-pending'};
             const prof=state.professors.find(p=>String(p.id)===String(subject.professorId));
@@ -8931,8 +8983,8 @@
             if(!number){alert('رقم واتساب مسؤول الغيابات غير مضبوط. اطلب من رئيس القسم حفظ الرقم أولاً.');return false;}
             const popup=null;
             try { await saveAll({silent:true}); } catch(err){closeReservedWhatsAppWindow(popup);alert(err.message||'تعذر حفظ التأكيد.');return false;}
-            const issue=getSubmissionCloudIssue(sub,latest);
-            if(issue){closeReservedWhatsAppWindow(popup);renderProfessorSubmissionStatus(sub);alert('⏳ '+issue+'\nلم تُفتح رسالة واتساب. أعد المحاولة بعد اكتمال المزامنة.');return false;}
+            const issue=await getSubmissionCloudIssueDirect(sub,latest);
+            if(issue){closeReservedWhatsAppWindow(popup);renderProfessorSubmissionStatus(sub);alert('⏳ '+issue+'\nلم تُفتح رسالة واتساب لأن Firebase لم يؤكد النسخة المطلوبة بعد. أعد المحاولة دون إنشاء إرسال جديد.');return false;}
             const students=getStudentsForProfessor();
             const url=buildWhatsAppUrl(number,buildOfficerWhatsAppMessage(sub,latest,students));
             if(!url){closeReservedWhatsAppWindow(popup);alert('تعذر إنشاء رابط واتساب بسبب رقم غير صالح.');return false;}
@@ -10122,7 +10174,7 @@
                 recordAudit(isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات وتجهيز واتساب لمسؤول الغيابات', { subject: sub.name, students: students.length, records: realRecords.length, submissionId: submission.id, previousSubmissionId:submission.resendOfSubmissionId, revisionNumber:submission.revisionNumber, workflowRevision:Number(workflowRecord?.revision)||0, whatsappPrepared: !!whatsappNumber, whatsappPopupReserved:!!whatsappWindow });
 
                 await saveAll();
-                const cloudIssue=getSubmissionCloudIssue(sub,submission);
+                const cloudIssue=await getSubmissionCloudIssueDirect(sub,submission);
                 renderProfessorSubmissionStatus(sub);
                 if (cloudIssue) {
                     closeReservedWhatsAppWindow(whatsappWindow);
