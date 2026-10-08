@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.34</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.36</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -2383,6 +2383,17 @@
         // V45.30: القراءة الأولية التراكمية.
         // المجموعة التي تُقرأ بنجاح لا يعاد تنزيلها في المحاولة التالية؛
         // يعاد فقط ما بقي ناقصاً، مع بقاء حاجز منع الكتابة حتى اكتمال الجميع.
+        // V45.36: تشخيص محلي للقراءات الأولية، دون تحميل بيانات إضافية أو إرسالها.
+        const firebaseUsageDiagnostics = {initialReadAttempts:Object.create(null), initialReadSuccess:Object.create(null), reconnectsReused:0, startedAt:Date.now()};
+        window.getFirebaseUsageDiagnostics = () => ({
+            initialReadAttempts:{...firebaseUsageDiagnostics.initialReadAttempts},
+            initialReadSuccess:{...firebaseUsageDiagnostics.initialReadSuccess},
+            reconnectsReused:firebaseUsageDiagnostics.reconnectsReused,
+            listenerActive:cloudListenersStarted,
+            initialReadComplete:cloudInitialReadComplete,
+            connected:firebaseTransportConnected,
+            uptimeMinutes:Math.round((Date.now()-firebaseUsageDiagnostics.startedAt)/60000)
+        });
         async function readCloudCollections() {
             if (!database) throw new Error('الاتصال السحابي غير جاهز');
 
@@ -2398,6 +2409,7 @@
             const INITIAL_READ_CONCURRENCY = 2;
 
             const readOne = async name => {
+                firebaseUsageDiagnostics.initialReadAttempts[name]=(firebaseUsageDiagnostics.initialReadAttempts[name]||0)+1;
                 try{
                     const snapshot=await withTimeout(
                         database.ref('/' + name).once('value'),
@@ -2407,6 +2419,7 @@
                     const value=snapshot.val();
                     initialCloudReadCache[name]=value;
                     initialCloudReadCompleted.add(name);
+                    firebaseUsageDiagnostics.initialReadSuccess[name]=(firebaseUsageDiagnostics.initialReadSuccess[name]||0)+1;
                     if(Array.isArray(value))legacyCloudCollections.add(name);
                     return true;
                 }catch(error){
@@ -2749,6 +2762,19 @@
                 try {
                     setStartupStatus('⏳ النسخة المحلية جاهزة — جارٍ فحص التحديثات السحابية...');
                     await initializeFirebaseRuntime();
+                    // V45.36: استمرار الاتصال على نفس صفحة المتصفح لا يستلزم قراءة
+                    // جميع المجموعات من جديد؛ Firebase SDK يعيد مزامنة listeners
+                    // القائمة بعد استعادة النقل. لا نتخطى التحميل الأول أبداً.
+                    if (cloudInitialReadComplete && cloudListenersStarted && state.initialLoadDone) {
+                        firebaseUsageDiagnostics.reconnectsReused++;
+                        cloudConnected = firebaseTransportConnected;
+                        setSyncStatus(firebaseTransportConnected
+                            ? '✅ مستمعات Firebase الحالية تعمل — لا حاجة لإعادة تحميل جميع السجلات'
+                            : '⏳ مستمعات Firebase محفوظة — بانتظار إعادة الاتصال',
+                            firebaseTransportConnected ? '#2f855a' : '#b45309');
+                        if (firebaseTransportConnected) pushToFirebase({silent:true});
+                        return firebaseTransportConnected;
+                    }
                     const loaded = await loadFromFirebase();
                     if (!loaded) return false;
                     await enforceDeletedStudentsCloudCleanup();
@@ -8151,6 +8177,22 @@
             return null;
         }
 
+        // V45.35: separate the original confirmation timestamp from WhatsApp reopen attempts.
+        function submissionDisplayDate(value) {
+            const n=Number(value);
+            return Number.isFinite(n)&&n>0?new Date(n).toLocaleString('ar-IQ'):'—';
+        }
+        function submissionConfirmedAt(submission) {
+            return submission?submissionDisplayDate(submission.createdAt):'—';
+        }
+        function submissionWhatsAppLastOpenedAt(submission) {
+            if(!submission)return '—';
+            return submissionDisplayDate(Math.max(Number(submission.whatsappLastReopenedAt)||0,Number(submission.whatsappOpenedAt)||0));
+        }
+        function submissionCloudDisplay(subject,submission) {
+            if(!submission)return '—';
+            return getSubmissionCloudIssue(subject,submission)?'معلّقة / غير مؤكدة':'مؤكدة محلياً من سجل المزامنة';
+        }
         function renderOfficerSubmissions(level, container) {
             const subjects=state.subjects.filter(s=>Number(s.level)===Number(level) && s.timetableActive!==false).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ar'));
             if(!subjects.length){container.innerHTML='<div class="card"><p>لا توجد مواد في هذه المرحلة.</p></div>';return;}
@@ -8158,8 +8200,8 @@
             const rows=subjects.map(sub=>{const prof=state.professors.find(p=>p.id===sub.professorId);const st=getSubmissionState(sub);const bucket=st.code==='reopened'?'dirty':st.code==='cloud-pending'?'pending':st.code;stats[bucket]=(stats[bucket]||0)+1;return{sub,prof,st,tt:subjectTimetableMatch(sub,prof)};});
             let html=`<div class="card"><div class="flex-between"><div><h4 style="margin:0;">✅ متابعة إكمال وإرسال الغيابات</h4><small>الحالة تُقارن آلياً مع آخر نسخة أكدها الأستاذ؛ واتساب إرسال يدوي ولا يمكن للنظام إثبات الضغط على زر الإرسال داخله.</small></div><button onclick="exportSubmissionTrackingExcel()" class="btn-excel btn-sm">📊 تصدير المتابعة</button></div>
                 <div class="status-count-grid"><div class="status-count-card submission-ok"><strong>${stats.ok}</strong>مكتمل داخل النظام</div><div class="status-count-card submission-pending"><strong>${stats.pending}</strong>لم يؤكد</div><div class="status-count-card submission-dirty"><strong>${stats.dirty}</strong>يحتاج إعادة إرسال</div><div class="status-count-card submission-unassigned"><strong>${stats.unassigned}</strong>بلا أستاذ</div><div class="status-count-card" style="background:#ede9fe;color:#5b21b6;"><strong>${getScheduleLink()?'نعم':'لا'}</strong>ربط الجدول</div></div></div>`;
-            html+='<div class="card"><div class="report-table-wrapper"><table class="report-table"><thead><tr><th>#</th><th>المادة</th><th>النوع</th><th>الأستاذ</th><th>الطلبة</th><th>آخر إرسال</th><th>الحالة</th><th>واتساب</th><th>الجدول الأسبوعي</th></tr></thead><tbody>';
-            rows.forEach((r,i)=>{const studentCount=state.students.filter(st=>studentMatchesSubject(st,r.sub)).length;const last=r.st.latest;html+=`<tr><td>${i+1}</td><td>${escapeHtml(r.sub.name)}</td><td>${escapeHtml(r.sub.groupType||'')}</td><td>${escapeHtml(r.prof?.name||'غير معين')}</td><td>${studentCount}</td><td>${last?escapeHtml((last.date||'')+' '+(last.time||'')):'—'}</td><td><span class="submission-state ${r.st.cls}">${escapeHtml(r.st.label)}</span></td><td>${last?.whatsappPreparedAt?'📱 واتساب جُهز — الإرسال اليدوي مطلوب':(last?.whatsappNumberConfigured===false?'⚠️ لا يوجد رقم':'—')}</td><td>${getScheduleLink()?(r.tt?'✅ مطابق':'⚠️ غير مطابق'):'غير مربوط'}</td></tr>`;});
+            html+='<div class="card"><div class="report-table-wrapper"><table class="report-table"><thead><tr><th>#</th><th>المادة</th><th>النوع</th><th>الأستاذ</th><th>الطلبة</th><th>آخر تأكيد داخل النظام</th><th>آخر فتح واتساب</th><th>مزامنة Firebase</th><th>الحالة</th><th>واتساب</th><th>الجدول الأسبوعي</th></tr></thead><tbody>';
+            rows.forEach((r,i)=>{const studentCount=state.students.filter(st=>studentMatchesSubject(st,r.sub)).length;const last=r.st.latest;html+=`<tr><td>${i+1}</td><td>${escapeHtml(r.sub.name)}</td><td>${escapeHtml(r.sub.groupType||'')}</td><td>${escapeHtml(r.prof?.name||'غير معين')}</td><td>${studentCount}</td><td>${escapeHtml(submissionConfirmedAt(last))}</td><td>${escapeHtml(submissionWhatsAppLastOpenedAt(last))}</td><td>${escapeHtml(submissionCloudDisplay(r.sub,last))}</td><td><span="submission-state ${r.st.cls}">${escapeHtml(r.st.label)}</span></td><td>${last?.whatsappPreparedAt?'📱 واتساب جُهز — الإرسال اليدوي مطلوب':(last?.whatsappNumberConfigured===false?'⚠️ لا يوجد رقم':'—')}</td><td>${getScheduleLink()?(r.tt?'✅ مطابق':'⚠️ غير مطابق'):'غير مربوط'}</td></tr>`;});
             html+='</tbody></table></div></div>';
             const link=getScheduleLink(); if(link){const a=link.analysis||{};html+=`<div class="card integration-card"><h4>🔗 نتيجة ربط الجدول الأسبوعي</h4><p style="font-size:12px;">الأساتذة المطابقون: <strong>${a.matchedProfessors||0}/${a.teacherTotal||0}</strong> — المواد المطابقة: <strong>${a.matchedSubjects||0}/${a.subjectTotal||0}</strong></p>${(a.unmatchedProfessors||[]).length?`<small>أساتذة غير مطابقين: ${escapeHtml(a.unmatchedProfessors.slice(0,8).join('، '))}</small>`:''}</div>`;}
             container.innerHTML=html;
@@ -8168,8 +8210,8 @@
         function exportSubmissionTrackingExcel() {
             if (!requireOptionalLibrary(() => typeof XLSX !== 'undefined', 'Excel')) return;
             const level=state.currentLevel;if(!level)return;const subjects=state.subjects.filter(s=>Number(s.level)===Number(level) && s.timetableActive!==false);
-            const data=subjects.map((sub,i)=>{const prof=state.professors.find(p=>p.id===sub.professorId);const st=getSubmissionState(sub);const last=st.latest;return{'#':i+1,'المادة':sub.name,'النوع':sub.groupType||'','الأستاذ':prof?.name||'غير معين','عدد الطلبة':state.students.filter(x=>studentMatchesSubject(x,sub)).length,'الحالة':st.label,'آخر إرسال':last?`${last.date||''} ${last.time||''}`:'','واتساب':last?.whatsappPreparedAt?'جُهز — تحقق من الإرسال':(last?.whatsappNumberConfigured===false?'لا يوجد رقم':''),'مطابقة الجدول الأسبوعي':getScheduleLink()?(subjectTimetableMatch(sub,prof)?'مطابق':'غير مطابق'):'غير مربوط'};});
-            const ws=XLSX.utils.json_to_sheet(data);ws['!cols']=[{wch:5},{wch:26},{wch:12},{wch:22},{wch:12},{wch:34},{wch:22},{wch:16},{wch:20}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'متابعة الإرسال');XLSX.writeFile(wb,`متابعة_إرسال_الغيابات_${getLevelName(level)}_${getLocalDateISO()}.xlsx`);
+            const data=subjects.map((sub,i)=>{const prof=state.professors.find(p=>p.id===sub.professorId);const st=getSubmissionState(sub);const last=st.latest;return{'#':i+1,'المادة':sub.name,'النوع':sub.groupType||'','الأستاذ':prof?.name||'غير معين','عدد الطلبة':state.students.filter(x=>studentMatchesSubject(x,sub)).length,'الحالة':st.label,'آخر تأكيد داخل النظام':submissionConfirmedAt(last),'آخر فتح واتساب':submissionWhatsAppLastOpenedAt(last),'مزامنة Firebase':submissionCloudDisplay(sub,last),'واتساب':last?.whatsappPreparedAt?'جُهز — تحقق من الإرسال':(last?.whatsappNumberConfigured===false?'لا يوجد رقم':''),'مطابقة الجدول الأسبوعي':getScheduleLink()?(subjectTimetableMatch(sub,prof)?'مطابق':'غير مطابق'):'غير مربوط'};});
+            const ws=XLSX.utils.json_to_sheet(data);ws['!cols']=[{wch:5},{wch:26},{wch:12},{wch:22},{wch:12},{wch:34},{wch:34},{wch:24},{wch:22},{wch:16},{wch:20}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'متابعة الإرسال');XLSX.writeFile(wb,`متابعة_إرسال_الغيابات_${getLevelName(level)}_${getLocalDateISO()}.xlsx`);
         }
 
         // ==============================================================
@@ -9015,7 +9057,7 @@
             const st=getSubmissionState(subject);
             el.className=`prof-submission-status ${st.cls}`;
             let extra='';
-            if(st.latest)extra=`<br><span style="font-weight:normal;font-size:10px;">آخر إرسال: ${escapeHtml(st.latest.date||'')} ${escapeHtml(st.latest.time||'')}</span>`;
+            if(st.latest)extra=`<br><span style="font-weight:normal;font-size:10px;">آخر تأكيد: ${escapeHtml(submissionConfirmedAt(st.latest))} | آخر فتح واتساب: ${escapeHtml(submissionWhatsAppLastOpenedAt(st.latest))}</span>`;
             el.innerHTML=`${escapeHtml(st.label)}${extra}`;
             const whatsappConfigured=!!getOfficerWhatsAppNumber();
             const button=document.getElementById('sendToOfficerBtn');
