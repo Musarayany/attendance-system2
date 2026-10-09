@@ -420,6 +420,12 @@
         .attendance-export-footer{display:flex;justify-content:space-between;align-items:center;margin-top:1.5mm;font-size:5.5pt;color:#475569}
 
 
+        /* V45.38: مجموعات بلا محاضرة — حجب بصري دون إخفاء المعلومات */
+        #profGroupsContainer .group-card.prof-no-lecture {position:relative!important;background:#e2e8f0!important;border:2px dashed #94a3b8!important;isolation:isolate;}
+        #profGroupsContainer .group-card.prof-no-lecture .group-header,#profGroupsContainer .group-card.prof-no-lecture .students-grid {opacity:.27;filter:grayscale(1);pointer-events:none;}
+        #profGroupsContainer .group-card.prof-no-lecture .prof-no-lecture-overlay {position:absolute;inset:0;z-index:8;display:flex;align-items:center;justify-content:center;pointer-events:none;padding:12px;background:rgba(226,232,240,.35);}
+        #profGroupsContainer .prof-no-lecture-overlay span {border:2px solid #64748b;background:#fff;color:#334155;border-radius:12px;padding:12px 18px;text-align:center;font-weight:900;font-size:13px;box-shadow:0 3px 14px #64748b55;}
+        #profGroupsContainer .prof-no-lecture-overlay b {display:block;font-size:26px;color:#991b1b;}
         /* V45.1 — واجهة حضور الأستاذ: مضغوطة، واضحة، وقابلة للتمرير داخل كل شعبة */
         #profGroupsContainer .groups-grid{display:block!important;}
         #profGroupsContainer .group-card{
@@ -473,7 +479,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.37</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.38</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -873,7 +879,7 @@
                 <div>
                     <div class="card">
                         <h4>📤 إكمال وإرسال الغيابات</h4>
-                        <button id="sendToOfficerBtn" onclick="sendToOfficer()" style="background:#805ad5; width:100%; margin-bottom:4px;">✅ تأكيد الإكمال داخل النظام</button>
+                        <button id="sendToOfficerBtn" onclick="sendToOfficer()" style="background:#805ad5; width:100%; margin-bottom:4px;">✅ إرسال الغيابات إلى النظام</button><div id="profDailyCompletionNotice" role="status" style="font-size:11px;margin:5px 0;padding:7px;background:#f1f5f9;border-radius:8px;"></div>
                         <button id="undoSubmissionBtn" onclick="undoLastSubmissionOnce()" class="btn-warning" style="display:none;width:100%;margin-bottom:4px;">↩️ تراجع عن آخر إرسال وفتح التعديل</button>
                         <button id="resendWhatsAppBtn" onclick="resendLastSubmissionWhatsApp()" class="btn-info" style="display:none;width:100%;margin-bottom:4px;">📱 إعادة فتح آخر رسالة واتساب</button>
                         <div id="profSubmissionStatus" class="prof-submission-status submission-pending">لم يتم الإرسال بعد</div>
@@ -9062,6 +9068,34 @@
             return {code:'ok',label:'مكتمل داخل النظام — تحقق من إرسال واتساب',cls:'submission-ok',latest:latestCompleted,workflow};
         }
 
+        // V45.38: لا نعدّ غياباً مكتمل التسجيل لمجرد وجود غياب طالب واحد.
+        // يجب توفر سجل حضور/غياب صريح لكل طالب في كل شعبة ومحاضرة منشورة حتى لحظة التحقق.
+        function getProfessorDailyCompletion(dateISO=getProfessorAttendanceWorkDate()) {
+            const issues=[];const sessions=[];
+            const subjects=getProfessorSubjects();
+            const today=getLocalDateISO();
+            const now=getBaghdadClock().minutes;
+            if(!getScheduleVersionForDate(dateISO))return {ready:false,issues:['لا يوجد جدول منشور موثوق لهذا التاريخ؛ تعذر التحقق من جميع المحاضرات.'],sessions};
+            for(const subject of subjects){
+                const students=state.students.filter(st=>studentMatchesSubject(st,subject));
+                const groups=[...new Set(students.map(st=>professorGroupNameForStudent(st,subject)))];
+                for(const group of groups){
+                    const people=students.filter(st=>professorGroupNameForStudent(st,subject)===group);
+                    const lectures=getScheduledAttendanceLectures(subject,group,dateISO);
+                    for(const lecture of lectures){
+                        const time=formatMinutes24(lecture.startMinutes);
+                        const label=`${subject.name} — ${subject.groupType==='عملي'?'المجموعة العملية':'الشعبة النظرية'} ${group} — ${time}`;
+                        const missing=people.filter(st=>!findAttendanceForSession(st.id,subject.id,dateISO,time));
+                        const future=dateISO===today && Number(lecture.startMinutes)>now;
+                        sessions.push({subjectId:String(subject.id),group,time,missing:missing.length,future,label});
+                        if(future)issues.push(`${label}: المحاضرة لم تبدأ بعد`);
+                        else if(missing.length)issues.push(`${label}: لم تُسجّل حالة ${missing.length} طالب`);
+                    }
+                }
+            }
+            return {ready:issues.length===0 && sessions.length>0,issues:issues.length?issues:(!sessions.length?['لا توجد محاضرات منشورة للأستاذ في هذا التاريخ.']:[]),sessions};
+        }
+
         function renderProfessorSubmissionStatus(subject) {
             const el=document.getElementById('profSubmissionStatus');
             if(!el)return;
@@ -9078,16 +9112,20 @@
             const note=document.getElementById('profSubmissionDeliveryNote');
             const undoUsed=subject&&state.currentUser?.role==='professor'?hasSubmissionUndoEverUsed(subject.id,state.currentUser.id):false;
             const locked=isProfessorSubjectLockedAfterSubmission(subject);
+            const dailyCompletion=getProfessorDailyCompletion();
+            const dailyNotice=document.getElementById('profDailyCompletionNotice');
+            if(dailyNotice){dailyNotice.textContent=dailyCompletion.ready?`✅ اكتملت حالات الطلبة في ${dailyCompletion.sessions.length} محاضرة مجدولة. يمكن الإرسال إلى النظام.`:`⛔ أكمل جميع محاضرات هذا اليوم قبل الإرسال: ${dailyCompletion.issues.slice(0,5).join(' | ')}`;dailyNotice.style.background=dailyCompletion.ready?'#dcfce7':'#fee2e2';}
             if(button){
                 const needsNewSubmission=(st.code==='reopened'||st.code==='dirty'||st.code==='pending');
                 button.style.display=(needsNewSubmission&&(!locked||st.code==='dirty'))?'block':'none';
-                button.disabled=!needsNewSubmission||(locked&&st.code!=='dirty');
-                button.textContent=(st.code==='reopened'||st.code==='dirty')?(whatsappConfigured?'🔄 إعادة إرسال الغيابات بعد التعديل':'🔄 إعادة تأكيد الغيابات بعد التعديل'):(whatsappConfigured?'✅ تأكيد الإكمال وفتح واتساب':'✅ تأكيد الإكمال داخل النظام');
+                button.disabled=!needsNewSubmission||(locked&&st.code!=='dirty')||!dailyCompletion.ready;
+                button.title=dailyCompletion.ready?'إرسال الغيابات إلى النظام':dailyCompletion.issues.join('\n');
+                button.textContent=(st.code==='reopened'||st.code==='dirty')?(whatsappConfigured?'🔄 إعادة إرسال الغيابات بعد التعديل':'🔄 إعادة تأكيد الغيابات بعد التعديل'):'✅ إرسال الغيابات إلى النظام';
             }
             if(resendButton){
                 resendButton.style.display=(['ok','cloud-pending'].includes(st.code))?'block':'none';
                 resendButton.disabled=!(['ok','cloud-pending'].includes(st.code)&&whatsappConfigured);
-                resendButton.textContent=whatsappConfigured?(st.code==='cloud-pending'?'📱 إعادة فتح واتساب ومحاولة المزامنة':'📱 إعادة فتح آخر رسالة واتساب'):'📱 رقم مسؤول الغيابات غير مضبوط';
+                resendButton.textContent=whatsappConfigured?(st.code==='cloud-pending'?'📱 إعادة فتح واتساب ومحاولة المزامنة':'📱 إبلاغ مسؤول الغيابات عبر واتساب'):'📱 رقم مسؤول الغيابات غير مضبوط';
             }
             if(removeAllButton){
                 removeAllButton.disabled=!!locked;
@@ -9100,7 +9138,7 @@
                 else if(locked&&undoUsed)note.textContent='⏱️ كل محاضرة لها نافذة مستقلة: من وقت بدايتها وحتى 48 ساعة بعد انتهائها. بعد انتهاء نافذتها فقط تحتاج إعادة فتح من رئيس القسم.';
                 else if(st.code==='reopened'&&st.adminOpen)note.textContent='🔓 أعاد رئيس القسم فتح الغيابات للتعديل. جميع محاضرات المادة، الحالية والسابقة المتاحة تاريخياً، تبقى مفتوحة حتى تضغط «إعادة إرسال الغيابات بعد التعديل».';
                 else if(st.code==='reopened')note.textContent='↩️ تم استخدام فرصة التراجع الوحيدة. عدّل الغيابات المطلوبة ثم أعد التأكيد والإرسال.';
-                else note.textContent=whatsappConfigured?'⚠️ مهم: الغيابات لا تُعد واصلة لمسؤول الغيابات بمجرد الحفظ. بعد فتح واتساب يجب أن تضغط «إرسال» بنفسك.':'⚠️ مهم: رقم واتساب مسؤول الغيابات غير مفعّل. الحفظ داخل النظام لا يعني وصول الغيابات إليه عبر واتساب.';
+                else note.textContent='✅ إرسال الغيابات داخل النظام مستقل عن واتساب. زر واتساب مخصص لإبلاغ مسؤول الغيابات فقط، ولا يتحكم في اعتماد السجلات.';
             }
         }
 
@@ -9640,6 +9678,7 @@
                 const chipText=context.ok?`${chipPrefix} · ${context.displayTime}${context.attendanceDeadlineText?` · حتى ${context.attendanceDeadlineText}`:''}`:(context.code==='future'?`⏳ لم تبدأ بعد · ${formatScheduleMinutes(context.lecture?.startMinutes)}`:(context.reason||'ليس لديهم محاضرة اليوم'));
                 // V40: المجموعة بلا محاضرة في التاريخ المختار تبقى ظاهرة ولكن جميع أدواتها مقفلة.
                 const groupScheduleLocked=!context.ok;
+                const noLectureToday=context.code==='not-scheduled';
                 // V45.21: القفل هنا خاص بالجلسة المختارة. إذا أعطى رئيس القسم إذناً
                 // لتاريخ قديم وأعاد resolver سياقاً صالحاً فلا يجوز لقفل المادة العام تعطيل الأزرار.
                 const sessionLocked=groupScheduleLocked;
@@ -9648,7 +9687,7 @@
                 const currentAbsentCount=Number(bulkCancelContext?.absentCount)||0;
                 const cancelAllDisabled=!sessionLocked?'':'disabled aria-disabled="true"';
                 const actionTitle=escapeHtml(sessionLocked?(context.reason||'هذه الجلسة غير متاحة'):`تسجيل أو تعديل محاضرة ${context.displayTime}`);
-                html += `<div class="group-card"><div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length} طالب)</span><button type="button" class="btn-secondary group-collapse-btn" onclick="toggleProfessorGroup(this)" aria-expanded="true">▲ إخفاء الطلبة</button></div>
+                html += `<div class="group-card ${noLectureToday?'prof-no-lecture':''}">${noLectureToday?`<div class="prof-no-lecture-overlay"><span><b>✕</b>${escapeHtml(context.reason||'ليس لديهم محاضرة لهذا اليوم')}</span></div>`:''}<div class="group-header"><div class="group-title"><span class="group-icon">${sub?.groupType==='عملي'?'🔬':'📖'}</span><span class="group-name">${groupLabel} ${escapeHtml(groupName)}</span><span class="group-count">(${groupStudents.length} طالب)</span><button type="button" class="btn-secondary group-collapse-btn" onclick="toggleProfessorGroup(this)" aria-expanded="true">▲ إخفاء الطلبة</button></div>
                     <div class="group-bulk-actions" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"><span class="attendance-session-chip ${chipClass}" title="${escapeHtml(context.reason||'')}">${escapeHtml(chipText)}</span><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickAbsentAll(decodeURIComponent('${encodedGroup}'))" class="btn-danger btn-sm" style="font-size:10px;">❌ غياب الكل</button><button type="button" data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="quickPresentAll(decodeURIComponent('${encodedGroup}'))" class="btn-success btn-sm" style="font-size:10px;">✅ حضور الكل</button><button data-attendance-control="1" ${cancelAllDisabled} title="${currentAbsentCount?`إزالة غياب ${currentAbsentCount} طالب من ${escapeHtml(bulkCancelContext.displayTime||'آخر محاضرة مسجلة')}`:'اضغط للبحث عن آخر محاضرة مسجلة فيها غياب لهذه المجموعة'}" data-cancel-all-group="${escapeHtml(encodedGroup)}" onclick="removeAllCurrentSessionAbsences(decodeURIComponent('${encodedGroup}'))" class="btn-secondary btn-sm" style="font-size:10px;">🗑️ إزالة غياب الكل${currentAbsentCount?` (${currentAbsentCount})`:''}</button></div></div><div class="students-grid" data-group-key="${escapeHtml(encodedGroup)}">`;
                 groupStudents.forEach(st => {
                     const atts = attendanceByStudent.get(String(st.id))||[];
@@ -10286,18 +10325,22 @@
                     return await resendLastSubmissionWhatsApp();
                 }
 
+                const dailyCheck=getProfessorDailyCompletion();
+                if(!dailyCheck.ready){alert('لا يمكن إرسال الغيابات قبل إكمال محاضرات اليوم:\n'+dailyCheck.issues.join('\n'));return false;}
                 const previewStudents = getStudentsForProfessor();
                 const previewRecords = getSubjectOperationalAttendanceRecords(sub.id);
                 const previewPrevious=getLatestSubmission(sub.id,state.currentUser?.id);
                 const isResendPreview=!!previewPrevious;
                 const actionLabel=isResendPreview?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات';
                 const whatsappNumber = getOfficerWhatsAppNumber();
-                if (!confirm(`هل تؤكد ${actionLabel} لمادة «${sub.name}» حتى تاريخ ${getLocalDateISO()}؟\n\nعدد الطلبة الحاليين: ${previewStudents.length}\nالحالات التشغيلية للمحاضرات: ${previewRecords.length}${whatsappNumber?'\n\nبعد تثبيت الحفظ سيفتح واتساب تلقائياً، ويجب الضغط على «إرسال» داخله يدوياً.':''}`)) return false;
+                if (!confirm(`هل تؤكد ${actionLabel} لمادة «${sub.name}» حتى تاريخ ${getLocalDateISO()}؟\n\nعدد الطلبة الحاليين: ${previewStudents.length}\nالحالات التشغيلية للمحاضرات: ${previewRecords.length}\n\nسيتم تثبيت الإرسال داخل النظام بصورة مستقلة؛ ويمكن إبلاغ مسؤول الغيابات بواتساب لاحقاً.`)) return false;
 
                 const savedView=captureProfessorViewState();
 
                 // انتظر طابور الحضور المحلي، ثم ابنِ التأكيد من أحدث حالة فعلية.
                 await attendancePersistenceQueue.catch(()=>false);
+                const confirmCheck=getProfessorDailyCompletion();
+                if(!confirmCheck.ready){alert('لم يكتمل تسجيل جميع محاضرات اليوم:\n'+confirmCheck.issues.join('\n'));return false;}
                 const students = getStudentsForProfessor();
                 const realRecords = getSubjectOperationalAttendanceRecords(sub.id);
                 const previousSubmission=getLatestSubmission(sub.id,state.currentUser?.id);
@@ -10355,27 +10398,15 @@
                 restoreProfessorViewState(savedView,'');
                 renderProfessorSubmissionStatus(sub);
 
-                if (!whatsappNumber) {
-                    alert('✅ تم توثيق إكمال الغيابات داخل النظام.\n\n⚠️ رقم واتساب مسؤول الغيابات غير مضبوط، لذلك لم تُفتح رسالة واتساب.');
-                    return true;
-                }
-
-                const message = buildOfficerWhatsAppMessage(sub, submission, students);
-                // These legacy fields describe a navigation attempt, not delivery.
-                // Save them before navigation because the page may be unloaded immediately.
-                submission.whatsappOpenedAt=Date.now();
-                submission.whatsappOpenCount=(Number(submission.whatsappOpenCount)||0)+1;
-                submission.whatsappOpenMode=isMobileWhatsAppDevice()?'universal-link-mobile':'universal-link-desktop';
-                const attemptSaved=persistSubmissionBeforeNavigation('submission-whatsapp-attempt-v45-35-1');
-                if(attemptSaved!==true && !await attemptSaved){
-                    alert('حُفظ التأكيد، لكن تعذر حفظ محاولة فتح واتساب. استخدم إعادة الفتح بعد معالجة الحفظ المحلي.');
+                // WhatsApp is notification-only, never a condition for submitting to the system.
+                const cloudSaved=await pushToFirebase({silent:true,skipInitialLocalPersistence:true}).catch(()=>false);
+                const verifiedCloud=cloudSaved && !getSubmissionCloudIssue(sub,submission);
+                if(!verifiedCloud){
+                    alert('⏳ تم حفظ التأكيد محلياً، ولكن وصوله إلى Firebase لم يتأكد بعد. أبقِ الصفحة مفتوحة واتصل بالإنترنت للتحقق من المزامنة. واتساب لا يغيّر هذه الحالة.');
                     return false;
                 }
                 renderProfessorSubmissionStatus(sub);
-                const openResult = openWhatsAppReliable(whatsappNumber,message,null);
-                if (openResult.opened) return true;
-                try { await navigator.clipboard.writeText(message); } catch (e) {}
-                alert('✅ تم تثبيت الغيابات داخل النظام.\n⚠️ تعذر فتح واتساب على هذا الجهاز. تم تجهيز الرسالة ويمكن استخدام زر «إعادة فتح آخر رسالة واتساب».');
+                alert('✅ تم إرسال الغيابات واعتماد التأكيد في النظام.\nرسالة واتساب اختيارية لإعلام مسؤول الغيابات، وليست جزءاً من عملية الاعتماد.');
                 return true;
             } finally {
                 submissionMutationBusy=false;
