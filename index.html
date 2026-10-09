@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.43</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.1 استعادة التحقق من الإجازات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -634,6 +634,48 @@
                 <div id="professorProfileHealth" class="admin-health"></div>
             </div>
 
+
+            <!-- V45.46: preview is read-only; optional verified shadow copy only writes /weeklyArchiveV1, not /attendances. -->
+            <details class="card" id="weeklyArchiveWorkspace" style="border:2px solid #60a5fa;background:#f8fbff" ontoggle="weeklyArchiveToggle(this.open)">
+              <summary style="font-size:14px;font-weight:900;cursor:pointer;color:#1e3a8a">🗂️ الأرشيف الأسبوعي — النسخ والتحقق دون حذف</summary>
+              <p style="font-size:11px;color:#334155;line-height:1.75;margin:8px 0">
+                يعمل هذا العرض عند فتحه فقط، دون مستمع Firebase إضافي. يمكن فحص أسبوع وتصديره وفتح نسخته لاحقاً،
+                ولا يغير أي سجل حضور أو حالة إرسال أو حساب غياب. <b>يمكن إنشاء نسخة ظل موثقة أسبوعيًا بعد تصدير نسخة احتياطية كاملة والتحقق منها، لكن حذف الأصل والتحويل النهائي غير مفعلين حتى اختبار توافق الأجهزة والتقارير وقواعد Firebase.</b>
+              </p>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:9px;align-items:end">
+                <label>اختر يومًا من الأسبوع<input type="date" id="weeklyArchiveDate" onchange="weeklyArchiveDateChanged()"></label>
+                <button type="button" class="btn-info" onclick="weeklyArchiveShowLocal()">معاينة الأسبوع من النسخة المحلية</button>
+                <button type="button" class="btn-secondary" id="weeklyArchiveCloudButton" onclick="weeklyArchiveReadCloud()">استدعاء هذا الأسبوع من Firebase فقط</button>
+              </div>
+              <div id="weeklyArchiveWeekLabel" style="font-size:12px;font-weight:900;color:#1e3a8a;margin:8px 0"></div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+                <button type="button" class="btn-backup btn-sm" onclick="weeklyArchiveExport('local')">تصدير نسخة الأسبوع المحلية JSON</button>
+                <button type="button" class="btn-excel btn-sm" onclick="weeklyArchiveExport('cloud')">تصدير نسخة الأسبوع المقروءة من Firebase</button>
+                <button type="button" class="btn-import btn-sm" onclick="document.getElementById('weeklyArchiveFileInput').click()">فتح ملف أرشيف أسبوعي للتصفح فقط</button>
+                <input type="file" id="weeklyArchiveFileInput" accept=".json,application/json" style="display:none" onchange="weeklyArchiveImportFile(event)">
+                <button type="button" class="btn-secondary btn-sm" onclick="weeklyArchiveClear()">إفراغ ذاكرة المعاينة</button>
+              </div>
+              <div style="margin-top:10px;padding:10px;border:2px dashed #d97706;border-radius:9px;background:#fffbeb">
+                <strong>المرحلة A: نسخة احتياطية كاملة والتحقق منها</strong>
+                <p style="font-size:11px;margin:5px 0">ينزّل هذا الإجراء بيانات Firebase التي تسمح صلاحياتك بقراءتها بصيغة JSON، ثم يُطلب فتح الملف المُنزّل للتحقق من تطابق البصمة. احتفظ بالملف في موقع آمن؛ يحتوي بيانات الطلاب ولا يُعد بديلاً عن تصدير إداري موثوق ومُجرّب للاستعادة.</p>
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  <button type="button" class="btn-backup btn-sm" onclick="weeklyArchiveDownloadFullBackup()">إنشاء نسخة Firebase كاملة متاحة للحساب</button>
+                  <button type="button" class="btn-import btn-sm" onclick="document.getElementById('weeklyArchiveFullBackupInput').click()">تحقق من ملف النسخة الاحتياطية المُنزّل</button>
+                  <input type="file" id="weeklyArchiveFullBackupInput" accept=".json,application/json" style="display:none" onchange="weeklyArchiveVerifyFullBackupFile(event)">
+                </div>
+                <div id="weeklyArchiveBackupStatus" style="font-size:11px;white-space:pre-wrap;margin-top:7px">لم يتم التحقق من نسخة احتياطية كاملة بهذه الجلسة.</div>
+              </div>
+              <div style="margin-top:10px;padding:10px;border:2px dashed #2563eb;border-radius:9px;background:#eff6ff">
+                <strong>المرحلة B: Copy → Verify للأسبوع المحدد (نسخة ظل سحابية)</strong>
+                <p style="font-size:11px;margin:5px 0">بعد التحقق من النسخة الاحتياطية، يُنسخ الأسبوع القديم إلى مسار جديد دون أي تعديل أو حذف في ‎/attendances‎. ستُقرأ النسخة الجديدة والأصل ثانيةً للتحقق من التطابق. لا تُحوّل المزامنة الحية تلقائيًا.</p>
+                <button type="button" class="btn-info btn-sm" id="weeklyArchiveCopyButton" onclick="weeklyArchiveStageVerifiedCopy()">نسخ الأسبوع إلى الأرشيف السحابي والتحقق من التطابق</button>
+                <div id="weeklyArchiveMigrationStatus" style="font-size:11px;white-space:pre-wrap;margin-top:7px">الترحيل النهائي (Cutover) معطّل؛ يتطلب موافقة قواعد Firebase على تجميد عمل النسخ القديمة واختبارات التقارير والتصحيح.</div>
+              </div>
+              <div id="weeklyArchiveStatus" role="status" aria-live="polite" style="margin-top:9px;padding:8px;background:#fff;border:1px solid #bfdbfe;border-radius:8px;font-size:11px;line-height:1.65;white-space:pre-wrap">لم تُحمّل أي سجلات للأرشيف بعد.</div>
+              <div id="weeklyArchiveIndex" style="font-size:11px;max-height:220px;overflow:auto;margin-top:9px"></div>
+              <div id="weeklyArchivePreview" style="font-size:11px;max-height:270px;overflow:auto;margin-top:7px"></div>
+              <small style="font-size:10px;color:#92400e;line-height:1.7">بداية الأسبوع: الأحد، ونهايته السبت (حسب تاريخ بغداد). الملفات المُصدّرة نسخ عرض واحتفاظ، وليست بديلاً عن النسخة الاحتياطية الكاملة. لا يوجد حذف أو تحويل للقراءة النشطة؛ النسخ الظلية لا تمس السجلات الأصلية.</small>
+            </details>
             <details class="admin-fold" id="adminIntegrationsFold">
                 <summary>⚙️ التكاملات وواتساب والتذكيرات</summary>
                 <div class="admin-fold-body">
@@ -906,6 +948,11 @@
 
         <!-- ==================== تبويب الأستاذ ==================== -->
         <div id="tab-professor" class="tab-content">
+            <!-- V45.46.1: حالة التحقق منفصلة عن اتصال Firebase العام؛ لا تتجاوز حماية الإجازة. -->
+            <div class="card" style="border:1px solid #f59e0b;background:#fffbeb;padding:9px;margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <div id="profLeaveVerificationStatus" role="status" aria-live="polite" style="font-size:12px;font-weight:800;flex:1;min-width:180px;line-height:1.6;">⏳ جارٍ التحقق من إجازات الطلبة...</div>
+                <button type="button" id="profLeaveRetryButton" class="btn-info btn-sm" onclick="retryStudentLeaveListener()" style="width:auto;min-width:145px;">🔄 إعادة فحص الإجازات</button>
+            </div>
             <!-- (نفس المحتوى السابق، لم يتغير) -->
             <div class="grid-2">
                 <div>
@@ -1118,7 +1165,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.43-atomic-qr-corrections-preview';
+        const APP_VERSION = '45.46.1-leave-sync-recovery-preview';
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -1248,6 +1295,16 @@
         let approvedLeaves = [];
         let leaveCloudReady = false;
         let leaveListenerStarted = false;
+        // V45.46.1: lifecycle مستقل لمستمع الإجازات: منع تعليق القفل بعد خطأ قراءة.
+        let leaveListenerRef = null;
+        let leaveListenerHandler = null;
+        let leaveListenerGeneration = 0;
+        let leaveListenerRetryTimer = null;
+        let leaveListenerWatchdogTimer = null;
+        let leaveListenerRetryAttempt = 0;
+        let leaveListenerLastError = '';
+        let leaveSeenTransportOnline = false;
+        let leaveReconnectReadInFlight = false;
         let leaveRegisterPage = 0;
         let leaveRegisterPdfBusy = false;
         let isScanning = false;
@@ -1405,18 +1462,28 @@
                 if (!firebase.apps || firebase.apps.length === 0) firebase.initializeApp(firebaseConfig);
                 database = firebase.database();
                 database.ref('.info/connected').on('value', snap => {
+                    const wasOnline = firebaseTransportConnected;
                     firebaseTransportConnected = snap.val() === true;
                     cloudConnected = firebaseTransportConnected;
                     if (firebaseTransportConnected) {
+                        // بدأ التحقق قبل تحميل جميع سجلات الحضور (قد يستغرق ذلك طويلاً).
+                        if (!leaveListenerStarted) startStudentLeaveListener();
+                        else if (!wasOnline && leaveSeenTransportOnline) recheckStudentLeavesAfterReconnect();
+                        leaveSeenTransportOnline = true;
+                        refreshLeaveVerificationUi();
                         setStartupStatus(cloudInitialReadComplete?'✅ متصل بالسحابة':'⏳ متصل بـ Firebase — جارٍ إكمال قراءة البيانات', cloudInitialReadComplete?'online':'');
                         if (state.initialLoadDone && cloudInitialReadComplete) pushToFirebase({ silent:true });
                         else if (state.initialLoadDone && !cloudInitialReadComplete) scheduleCloudRetry(1000);
-                    } else if (state.initialLoadDone) {
-                        setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
+                    } else {
+                        // لا نعتبر محتوى snapshot مخبّأ صالحاً لإجازات جديدة أثناء الانقطاع.
+                        setLeaveVerificationReady(false);
+                        if (state.initialLoadDone) setStartupStatus('🟠 تعمل النسخة المحلية الآن — ستتم المزامنة تلقائيا عند عودة الاتصال', 'local');
                     }
-                }, () => {
+                }, err => {
                     firebaseTransportConnected = false;
                     cloudConnected = false;
+                    leaveListenerLastError = String(err?.message||'تعذر مراقبة اتصال Firebase');
+                    setLeaveVerificationReady(false);
                 });
                 return true;
             })().catch(err => {
@@ -6628,28 +6695,139 @@
             const ref=database.ref('/studentLeaves/'+id);
             try{const result=await ref.transaction(current=>current?.status==='approved'?{...current,status:'cancelled',cancelledById:String(state.currentUser.id),cancelledByName:String(state.currentUser.name||''),cancelledAt:firebase.database.ServerValue.TIMESTAMP}:undefined,undefined,false);if(!result.committed){leaveMessage('الإجازة غير معتمدة أو أُلغيت سابقاً.',true);return;}recordAudit('إلغاء إجازة إلكترونية',{leaveId:id});renderLeaveChoices();if(document.getElementById('adminLeaveRegister')?.open)renderLeaveRegister();}catch(err){leaveMessage('تعذر إلغاء الإجازة في Firebase.',true);}
         }
-        function startStudentLeaveListener(){
-            if(leaveListenerStarted||!database)return;
-            leaveListenerStarted=true;
-            database.ref('/studentLeaves').on('value',snap=>{
-                approvedLeaves=Object.values(snap.val()||{}).filter(x=>x&&typeof x==='object');
-                leaveCloudReady=true;
-                if(state.currentUser?.role==='professor'){
-                    scheduleIncrementalUiRefresh('attendances',200);
-                    if(typeof getProfessorSubject==='function' && getProfessorSubject()){
-                        const currentSubject=getProfessorSubject();
-                        const container=document.getElementById('profGroupsContainer');
-                        if(container && String(container.dataset.subjectId||'')===String(currentSubject.id)){
-                            const preserved=captureProfessorViewState();
-                            renderProfessorGroups(getStudentsForProfessor());
-                            if(typeof restoreProfessorViewState==='function')restoreProfessorViewState(preserved);
-                        }
-                    }
-                }
-                if(document.getElementById('studentLeaveDialog')?.open)renderLeaveChoices();
-                if(document.getElementById('adminLeaveRegister')?.open)renderLeaveRegister();
-            },err=>{leaveCloudReady=false;console.error('تعذر قراءة الإجازات:',err);if(document.getElementById('adminLeaveRegister')?.open)renderLeaveRegister();});
+        // V45.46.1: حالة مستقلة للقراءة الحية؛ لا نعامل انقطاع الإجازات كقائمة فارغة.
+        function refreshLeaveVerificationUi(){
+            const status=document.getElementById('profLeaveVerificationStatus');
+            const button=document.getElementById('profLeaveRetryButton');
+            if(status){
+                const ready=leaveCloudReady && firebaseTransportConnected;
+                status.textContent=ready
+                    ?'✅ تم التحقق من سجل الإجازات السحابي — حماية الإجازات مفعّلة.'
+                    :!firebaseTransportConnected
+                        ?'⛔ اتصال Firebase غير متاح؛ التسجيل مؤقتاً مقفل لحماية الإجازات.'
+                        :leaveListenerLastError
+                            ?'⚠️ تعذر قراءة إجازات الطلبة: '+leaveListenerLastError.slice(0,160)+' — جارٍ إعادة المحاولة تلقائياً.'
+                            :'⏳ Firebase متصل؛ جارٍ التحقق من إجازات الطلبة قبل السماح بالتسجيل.';
+                status.style.color=ready?'#166534':'#92400e';
+            }
+            if(button)button.disabled=!database||!firebaseTransportConnected;
         }
+        function refreshProfessorLeaveSafety(){
+            if(state.currentUser?.role!=='professor')return;
+            scheduleIncrementalUiRefresh('attendances',150);
+            const currentSubject=typeof getProfessorSubject==='function'?getProfessorSubject():null;
+            const container=document.getElementById('profGroupsContainer');
+            if(currentSubject && container && String(container.dataset.subjectId||'')===String(currentSubject.id)){
+                const preserved=typeof captureProfessorViewState==='function'?captureProfessorViewState():null;
+                renderProfessorGroups(getStudentsForProfessor());
+                if(preserved && typeof restoreProfessorViewState==='function')restoreProfessorViewState(preserved);
+            }
+        }
+        function setLeaveVerificationReady(ready){
+            const previous=leaveCloudReady;
+            leaveCloudReady=!!ready && firebaseTransportConnected;
+            refreshLeaveVerificationUi();
+            if(previous!==leaveCloudReady)refreshProfessorLeaveSafety();
+            if(document.getElementById('adminLeaveRegister')?.open)renderLeaveRegister();
+        }
+        function clearStudentLeaveTimers(){
+            if(leaveListenerRetryTimer){clearTimeout(leaveListenerRetryTimer);leaveListenerRetryTimer=null;}
+            if(leaveListenerWatchdogTimer){clearTimeout(leaveListenerWatchdogTimer);leaveListenerWatchdogTimer=null;}
+        }
+        function detachStudentLeaveListener(){
+            ++leaveListenerGeneration; // تجاهل ردود الاشتراك القديم بعد إلغائه.
+            if(leaveListenerRef && leaveListenerHandler){
+                try{leaveListenerRef.off('value',leaveListenerHandler);}catch(e){console.warn('تعذر إزالة اشتراك إجازات قديم:',e);}
+            }
+            leaveListenerRef=null;
+            leaveListenerHandler=null;
+            leaveListenerStarted=false;
+            clearStudentLeaveTimers();
+        }
+        function scheduleStudentLeaveRetry(){
+            if(leaveListenerRetryTimer || !database)return;
+            // backoff من 3 ثوانٍ إلى 60 ثانية؛ لا تكرار قراءة في حلقة سريعة.
+            const delay=Math.min(60000,3000*Math.pow(2,Math.min(5,leaveListenerRetryAttempt++)));
+            leaveListenerRetryTimer=setTimeout(()=>{
+                leaveListenerRetryTimer=null;
+                if(firebaseTransportConnected)startStudentLeaveListener(true);
+                // عند انقطاع النقل يستأنف مع حدث .info/connected.
+            },delay);
+        }
+        function studentLeaveReadFailed(err,generation){
+            if(generation!==leaveListenerGeneration)return;
+            leaveListenerLastError=String(err?.code||err?.message||err||'فشل قراءة الإجازات');
+            console.error('تعذر قراءة الإجازات:',err);
+            detachStudentLeaveListener();
+            setLeaveVerificationReady(false);
+            scheduleStudentLeaveRetry();
+        }
+        function applyStudentLeaveSnapshot(snap,generation){
+            if(generation!==leaveListenerGeneration)return;
+            if(!firebaseTransportConnected){setLeaveVerificationReady(false);return;}
+            const raw=snap.val();
+            if(raw!==null && (typeof raw!=='object'||Array.isArray(raw))){
+                studentLeaveReadFailed(new Error('بنية سجل الإجازات غير صالحة'),generation);return;
+            }
+            approvedLeaves=Object.values(raw||{}).filter(x=>x&&typeof x==='object'&&!Array.isArray(x));
+            leaveListenerLastError='';
+            leaveListenerRetryAttempt=0;
+            if(leaveListenerWatchdogTimer){clearTimeout(leaveListenerWatchdogTimer);leaveListenerWatchdogTimer=null;}
+            const wasReady=leaveCloudReady;
+            setLeaveVerificationReady(true);
+            // عند تغيير محتوى الإجازات ونحن متصلون: حدّث الواجهة مرة واحدة؛
+            // انتقال غير جاهز ← جاهز يطلق التحديث في setLeaveVerificationReady.
+            if(wasReady)refreshProfessorLeaveSafety();
+            if(document.getElementById('studentLeaveDialog')?.open)renderLeaveChoices();
+            if(document.getElementById('adminLeaveRegister')?.open)renderLeaveRegister();
+        }
+        function startStudentLeaveListener(force=false){
+            if(!database || !firebaseTransportConnected){setLeaveVerificationReady(false);return false;}
+            if(leaveListenerStarted && !force)return true;
+            if(leaveListenerStarted || force)detachStudentLeaveListener();
+            clearStudentLeaveTimers();
+            const generation=++leaveListenerGeneration;
+            const ref=database.ref('/studentLeaves');
+            leaveListenerStarted=true;
+            leaveListenerRef=ref;
+            leaveListenerHandler=snap=>applyStudentLeaveSnapshot(snap,generation);
+            setLeaveVerificationReady(false);
+            try{
+                ref.on('value',leaveListenerHandler,err=>studentLeaveReadFailed(err,generation));
+                // في حال لم يصل الرد ولا الخطأ، أعِد المحاولة دون فتح التسجيل.
+                if(generation===leaveListenerGeneration && !leaveCloudReady){
+                    leaveListenerWatchdogTimer=setTimeout(()=>{
+                        if(generation!==leaveListenerGeneration || leaveCloudReady)return;
+                        studentLeaveReadFailed(new Error('انتهت مهلة التحقق من الإجازات (45 ثانية)'),generation);
+                    },45000);
+                }
+                return true;
+            }catch(err){studentLeaveReadFailed(err,generation);return false;}
+        }
+        function recheckStudentLeavesAfterReconnect(){
+            if(!database || !firebaseTransportConnected)return;
+            if(!leaveListenerStarted){startStudentLeaveListener();return;}
+            if(leaveReconnectReadInFlight)return;
+            const generation=leaveListenerGeneration;
+            leaveReconnectReadInFlight=true;
+            // مستمع Firebase يعاود المزامنة بنفسه؛ القراءة الواحدة تعيد التحقق إذا لم يرد حدث تغيّر.
+            database.ref('/studentLeaves').once('value').then(snap=>{
+                if(generation===leaveListenerGeneration && firebaseTransportConnected)applyStudentLeaveSnapshot(snap,generation);
+            }).catch(err=>studentLeaveReadFailed(err,generation)).finally(()=>{leaveReconnectReadInFlight=false;});
+        }
+        function retryStudentLeaveListener(){
+            if(!database || !firebaseTransportConnected){refreshLeaveVerificationUi();return false;}
+            leaveListenerRetryAttempt=0;
+            leaveListenerLastError='';
+            return startStudentLeaveListener(true);
+        }
+        window.getStudentLeaveSyncDiagnostics=()=>({
+            transportConnected:firebaseTransportConnected,
+            checked:leaveCloudReady,
+            listenerStarted:leaveListenerStarted,
+            retryAttempt:leaveListenerRetryAttempt,
+            lastError:leaveListenerLastError
+        });
 
         function renderAdmin() {
             const configuredLevels = getConfiguredLevels();
@@ -11937,6 +12115,433 @@
             updateSyncConflictButton();scheduleRenderRefresh();
             return ok;
         }
+
+
+        // ==================== V45.45 WEEKLY ARCHIVE (READ-ONLY) ====================
+        // Independent weekly preview and on-demand Firebase query. No migration,
+        // no cloud write, no mutation of state / lastSyncedCollections, no listeners.
+        // Keeping current hot/cold cutover disabled is intentional: older clients,
+        // offline edits and history-dependent reports must first be migrated safely.
+        const WEEKLY_ARCHIVE_FORMAT = 'mus-weekly-attendance-readonly-v1';
+        const WEEKLY_ARCHIVE_MAX_PREVIEW = 45;
+        let weeklyArchiveCloudSnapshot = null;
+        let weeklyArchiveFileSnapshot = null;
+        let weeklyArchiveCloudRequest = 0;
+
+        function weeklyArchiveWeekBounds(dateISO) {
+            if (!isValidAttendanceDate(dateISO)) return null;
+            const d = new Date(dateISO + 'T12:00:00Z');
+            d.setUTCDate(d.getUTCDate() - d.getUTCDay()); // Sunday to Saturday.
+            const first = d.toISOString().slice(0, 10);
+            d.setUTCDate(d.getUTCDate() + 6);
+            return {start: first, end: d.toISOString().slice(0, 10)};
+        }
+        function weeklyArchiveSelection() {
+            return weeklyArchiveWeekBounds(document.getElementById('weeklyArchiveDate')?.value || getLocalDateISO());
+        }
+        function weeklyArchiveStatus(message, severity='info') {
+            const node=document.getElementById('weeklyArchiveStatus');
+            if (!node) return;
+            node.textContent=String(message);
+            node.style.borderColor=severity==='error'?'#fca5a5':severity==='success'?'#86efac':'#bfdbfe';
+            node.style.color=severity==='error'?'#991b1b':'#334155';
+        }
+        function weeklyArchiveRecordsFromLocal(bounds) {
+            // Preserve ALL legacy records and explicit-present/superseded revisions.
+            // Do not call getLogicalAttendanceRecords(), which intentionally hides some.
+            return (state.attendances||[]).filter(r =>
+                r && typeof r==='object' && isValidAttendanceDate(r.date) &&
+                r.date>=bounds.start && r.date<=bounds.end
+            );
+        }
+        function weeklyArchiveSummarize(records) {
+            const summary={count:records.length,absent:0,explicitPresent:0,enrollment:0,superseded:0,legacy:0};
+            for(const r of records){
+                if(isEnrollmentRecord(r))summary.enrollment++;
+                if(r?.superseded===true)summary.superseded++;
+                if(Number(r?.hours||0)>0)summary.absent++;
+                if(r?.explicitState==='present' || r?.cancelled===true)summary.explicitPresent++;
+                if(!r?.sessionTime && !r?.sessionKey)summary.legacy++;
+            }
+            return summary;
+        }
+        function weeklyArchiveStatusLine(source,records){
+            const s=weeklyArchiveSummarize(records);
+            return `${source}: ${s.count} سجلاً (غياب: ${s.absent}، حضور صريح/إلغاء: ${s.explicitPresent}، روابط تسجيل: ${s.enrollment}، سجلات متجاوزة: ${s.superseded}، إرثية بلا وقت: ${s.legacy}). بعض الفئات تتداخل.`;
+        }
+        function weeklyArchiveRenderRows(records,source){
+            const target=document.getElementById('weeklyArchivePreview');
+            if(!target)return;
+            const sorted=[...records].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')) ||
+                String(b.sessionTime||'').localeCompare(String(a.sessionTime||'')) || String(a.id||'').localeCompare(String(b.id||'')));
+            const studentMap=new Map((state.students||[]).map(s=>[String(s.id),String(s.name||'')]));
+            const subjectMap=new Map((state.subjects||[]).map(s=>[String(s.id),String(s.name||'')]));
+            const body=sorted.slice(0,WEEKLY_ARCHIVE_MAX_PREVIEW).map(r=>{
+                const status=isEnrollmentRecord(r)?'رابط تسجيل':r.superseded===true?'نسخة متجاوزة':Number(r.hours||0)>0?'غياب '+String(r.hours)+' ساعة':'حضور/إلغاء';
+                return `<tr><td>${escapeHtml(r.date||'')}</td><td>${escapeHtml(r.sessionTime||r.sessionKey||'—')}</td>`+
+                    `<td>${escapeHtml(studentMap.get(String(r.studentId))||r.studentId||'')}</td>`+
+                    `<td>${escapeHtml(subjectMap.get(String(r.subjectId))||r.subjectId||'')}</td><td>${escapeHtml(status)}</td></tr>`;
+            }).join('');
+            target.innerHTML=`<div style="margin-bottom:4px;color:#475569">${escapeHtml(source)}: عرض ${Math.min(sorted.length,WEEKLY_ARCHIVE_MAX_PREVIEW)} من ${sorted.length} سجل — للقراءة فقط.</div>`+
+                `<div class="report-table-wrapper"><table class="report-table" style="min-width:640px"><thead><tr><th>التاريخ</th><th>الساعة</th><th>الطالب</th><th>المادة</th><th>الحالة</th></tr></thead><tbody>${body||'<tr><td colspan="5">لا توجد سجلات لهذا الأسبوع</td></tr>'}</tbody></table></div>`;
+        }
+        function weeklyArchiveClearPreviewOnly(){
+            weeklyArchiveCloudRequest++;
+            weeklyArchiveCloudSnapshot=null;
+            weeklyArchiveFileSnapshot=null;
+            const preview=document.getElementById('weeklyArchivePreview');
+            if(preview)preview.textContent='';
+            const file=document.getElementById('weeklyArchiveFileInput');
+            if(file)file.value='';
+        }
+        function weeklyArchiveBuildIndex(){
+            const target=document.getElementById('weeklyArchiveIndex');
+            if(!target)return;
+            const weeks=new Map();let undated=0;
+            for(const r of state.attendances||[]){
+                if(!r||!isValidAttendanceDate(r.date)){undated++;continue;}
+                const bounds=weeklyArchiveWeekBounds(r.date);
+                if(!weeks.has(bounds.start))weeks.set(bounds.start,{...bounds,count:0});
+                weeks.get(bounds.start).count++;
+            }
+            const recent=[...weeks.values()].sort((a,b)=>b.start.localeCompare(a.start));
+            const active=weeklyArchiveWeekBounds(getLocalDateISO());
+            const secondStart=new Date(active.start+'T12:00:00Z');secondStart.setUTCDate(secondStart.getUTCDate()-7);
+            const warmStart=secondStart.toISOString().slice(0,10);
+            // Limit rows; this is only a local catalog, not an authority for cloud completeness.
+            const rows=recent.slice(0,90).map(w=>{
+                const category=w.start===active.start?'حالي (HOT)':w.start===warmStart?'سابق (WARM)':'سابق (COLD مرشح)';
+                return `<tr><td>${escapeHtml(w.start)}</td><td>${escapeHtml(w.end)}</td><td>${w.count}</td><td>${escapeHtml(category)}</td>`+
+                    `<td><button type="button" class="btn-sm btn-info" onclick="weeklyArchiveChooseWeek('${w.start}')">عرض</button></td></tr>`;
+            }).join('');
+            target.innerHTML=`<details><summary style="font-weight:900;cursor:pointer">فهرس الأسابيع من النسخة المحلية: ${weeks.size} أسبوع (تواريخ غير مصنفة: ${undated})</summary>`+
+                `<small>الفهرس محلي وتقريبي، ولا يدل وحده على اكتمال السحابة. يظهر آخر 90 أسبوعًا فقط، ولا تُحذف الأسابيع الأخرى.</small>`+
+                `<div class="report-table-wrapper"><table class="report-table" style="min-width:520px"><thead><tr><th>من</th><th>إلى</th><th>السجلات</th><th>التصنيف</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="5">لا يوجد سجل مؤرخ</td></tr>'}</tbody></table></div></details>`;
+        }
+        function weeklyArchiveToggle(open){
+            if(!open){weeklyArchiveClearPreviewOnly();return;}
+            if(state.currentUser?.role!=='admin'){
+                const details=document.getElementById('weeklyArchiveWorkspace');if(details)details.open=false;
+                return;
+            }
+            const dateInput=document.getElementById('weeklyArchiveDate');
+            if(dateInput&&!dateInput.value)dateInput.value=getLocalDateISO();
+            weeklyArchiveDateChanged();
+            weeklyArchiveBuildIndex();
+        }
+        function weeklyArchiveChooseWeek(start){
+            if(!requireAppRole('admin'))return;
+            const input=document.getElementById('weeklyArchiveDate');if(input)input.value=start;
+            weeklyArchiveDateChanged();
+            weeklyArchiveShowLocal();
+        }
+        function weeklyArchiveDateChanged(){
+            weeklyArchiveClearPreviewOnly();
+            const bounds=weeklyArchiveSelection();
+            const label=document.getElementById('weeklyArchiveWeekLabel');
+            if(label)label.textContent=bounds?`الأسبوع: ${bounds.start} إلى ${bounds.end}`:'التاريخ المدخل غير صالح';
+            weeklyArchiveStatus('لم يُحمّل هذا الأسبوع بعد. اختر المعاينة المحلية أو الاستدعاء من Firebase.');
+        }
+        function weeklyArchiveShowLocal(){
+            if(!requireAppRole('admin'))return;
+            const bounds=weeklyArchiveSelection();
+            if(!bounds){weeklyArchiveStatus('التاريخ المدخل غير صالح.','error');return;}
+            weeklyArchiveClearPreviewOnly();
+            const records=weeklyArchiveRecordsFromLocal(bounds);
+            weeklyArchiveStatus(weeklyArchiveStatusLine('النسخة المحلية المتاحة',records)+'\nلا يُعد هذا دليلاً على التطابق مع Firebase؛ قد تكون هناك تحديثات معلقة أو أجهزة أخرى.');
+            weeklyArchiveRenderRows(records,'محلي');
+        }
+        async function weeklyArchiveReadCloud(){
+            if(!requireAppRole('admin'))return;
+            const bounds=weeklyArchiveSelection();
+            if(!bounds){weeklyArchiveStatus('التاريخ المدخل غير صالح.','error');return;}
+            if(!database || !firebaseTransportConnected){weeklyArchiveStatus('Firebase غير متصل؛ المعاينة المحلية متاحة.','error');return;}
+            weeklyArchiveClearPreviewOnly();
+            const token=weeklyArchiveCloudRequest;
+            const btn=document.getElementById('weeklyArchiveCloudButton');if(btn)btn.disabled=true;
+            weeklyArchiveStatus('جارٍ تحميل الأسبوع المحدد فقط من /attendances باستعلام read-only؛ لا يوجد أي تعديل سحابي...');
+            try{
+                // Database rules should index date (.indexOn) for efficient execution.
+                const query=database.ref('/attendances').orderByChild('date').startAt(bounds.start).endAt(bounds.end);
+                const snapshot=await withTimeout(query.once('value'),Math.max(CLOUD_OPERATION_TIMEOUT_MS,30000),'انتهت مهلة تحميل الأسبوع');
+                if(token!==weeklyArchiveCloudRequest)return;
+                const raw=snapshot.val();
+                if(raw!==null && (typeof raw!=='object'))throw new Error('صيغة سجلات Firebase غير متوقعة');
+                const records=[],firebaseKeys=[];let invalid=0,duplicateIds=0;
+                const ids=new Set();
+                Object.entries(raw||{}).forEach(([key,r])=>{
+                    if(!r||typeof r!=='object'||!isValidAttendanceDate(r.date)||r.date<bounds.start||r.date>bounds.end){invalid++;return;}
+                    const id=String(r.id||key);
+                    if(ids.has(id))duplicateIds++;
+                    ids.add(id);
+                    records.push(r); firebaseKeys.push(key); // keep exact Firebase keys as export metadata; do not rewrite cloud data.
+                });
+                if(invalid||duplicateIds)throw new Error(`القراءة تحتوي ${invalid} سجلات خارج النطاق/غير صالحة و${duplicateIds} معرفات مكررة؛ لا يمكن اعتمادها للتصدير.`);
+                const local=weeklyArchiveRecordsFromLocal(bounds);
+                const localById=new Map(local.map(r=>[String(r.id||''),r]));
+                const cloudById=new Map(records.map(r=>[String(r.id||''),r]));
+                let missingLocal=0,missingCloud=0,changed=0;
+                cloudById.forEach((r,id)=>{if(!localById.has(id))missingLocal++;else if(!sameRecord(r,localById.get(id)))changed++;});
+                localById.forEach((r,id)=>{if(!cloudById.has(id))missingCloud++;});
+                weeklyArchiveCloudSnapshot={bounds,records,firebaseKeys};
+                const exact=missingLocal===0&&missingCloud===0&&changed===0&&records.length===local.length;
+                weeklyArchiveStatus(weeklyArchiveStatusLine('القراءة المباشرة من Firebase',records)+'\n'+
+                    (exact?'✅ المعرفات والمحتوى متطابقان مع النسخة المحلية وقت القراءة.':
+                        `⚠️ توجد اختلافات مع النسخة المحلية: مفقود محلياً ${missingLocal}، مفقود سحابياً ${missingCloud}، مختلف المحتوى ${changed}. لا يوجد دمج أو تعديل تلقائي.`)+
+                    '\nالتطابق لحظة القراءة فقط، وليس قفلاً ضد تعديل جهاز آخر. لا تُحذف السجلات الأصلية تحت أي ظرف.', exact?'success':'info');
+                weeklyArchiveRenderRows(records,'Firebase (قراءة عند الطلب)');
+            }catch(error){if(token===weeklyArchiveCloudRequest){weeklyArchiveCloudSnapshot=null;weeklyArchiveStatus('تعذر قراءة الأسبوع: '+String(error.message||error)+'\nلم تتغير البيانات المحلية أو السحابية.','error');}}
+            finally{if(btn)btn.disabled=false;}
+        }
+        async function weeklyArchiveDigest(text){
+            if(!globalThis.crypto?.subtle || !globalThis.TextEncoder)return '';
+            const bytes=new TextEncoder().encode(text);
+            const digest=await crypto.subtle.digest('SHA-256',bytes);
+            return [...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('');
+        }
+        async function weeklyArchiveExport(source){
+            if(!requireAppRole('admin'))return;
+            const bounds=weeklyArchiveSelection();
+            if(!bounds){weeklyArchiveStatus('تاريخ الأسبوع غير صالح','error');return;}
+            let records;
+            if(source==='cloud'){
+                if(!weeklyArchiveCloudSnapshot || weeklyArchiveCloudSnapshot.bounds.start!==bounds.start){
+                    weeklyArchiveStatus('يجب أولاً الضغط على «استدعاء هذا الأسبوع من Firebase» والانتظار حتى اكتمال القراءة.','error');return;
+                }
+                records=weeklyArchiveCloudSnapshot.records;
+            }else if(source==='local'){
+                records=weeklyArchiveRecordsFromLocal(bounds);
+            }else return;
+            // Snapshot only: never touch /attendances, state or sync baseline.
+            const cloned=JSON.parse(JSON.stringify(records));
+            const serial=JSON.stringify(cloned);
+            const sha256=await weeklyArchiveDigest(serial);
+            const payload={
+                format:WEEKLY_ARCHIVE_FORMAT,
+                version:1,
+                generatedAt:new Date().toISOString(),
+                source:source==='cloud'?'firebase-live-week-query':'local-browser-snapshot',
+                weekStart:bounds.start,weekEnd:bounds.end,
+                recordsCount:cloned.length,
+                digestAlgorithm:sha256?'SHA-256':'UNAVAILABLE',
+                recordsSha256:sha256||null,
+                firebaseKeys:source==='cloud'?weeklyArchiveCloudSnapshot.firebaseKeys:null,
+                note:'READ ONLY ARCHIVE PREVIEW: not a complete backup; active Firebase records remain unchanged.',
+                attendances:cloned
+            };
+            const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json;charset=utf-8'});
+            const url=URL.createObjectURL(blob),a=document.createElement('a');
+            a.href=url;a.download=`MUS_WEEK_${bounds.start}_${source}.json`;
+            document.body.appendChild(a);a.click();a.remove();
+            setTimeout(()=>URL.revokeObjectURL(url),3000);
+            weeklyArchiveStatus(`تم تجهيز نسخة ${source==='cloud'?'سحابية مقروءة':'محلية'} للأسبوع (${cloned.length} سجل). ${sha256?'SHA-256 داخل الملف.':'لم تتوفر SHA-256 في هذا السياق؛ يجب التحقق يدوياً.'}\nلم نغيّر أي سجل أو مسار Firebase.`, 'success');
+        }
+        async function weeklyArchiveImportFile(event){
+            if(!requireAppRole('admin'))return;
+            const file=event?.target?.files?.[0];if(!file)return;
+            weeklyArchiveClearPreviewOnly();
+            if(file.size>40*1024*1024){weeklyArchiveStatus('الملف يتجاوز 40 MB؛ لم تتم قراءته.','error');return;}
+            try{
+                const parsed=JSON.parse(await file.text());
+                if(parsed?.format!==WEEKLY_ARCHIVE_FORMAT || parsed.version!==1 || !Array.isArray(parsed.attendances) ||
+                    !isValidAttendanceDate(parsed.weekStart) || !isValidAttendanceDate(parsed.weekEnd))throw new Error('صيغة ملف الأسبوع غير متوافقة');
+                const bounds=weeklyArchiveWeekBounds(parsed.weekStart);
+                if(!bounds || bounds.start!==parsed.weekStart || bounds.end!==parsed.weekEnd || parsed.recordsCount!==parsed.attendances.length)
+                    throw new Error('نطاق التاريخ أو عدد السجلات في الملف غير مطابق');
+                const ids=new Set();
+                for(const r of parsed.attendances){
+                    if(!r || typeof r!=='object' || !isValidAttendanceDate(r.date) || r.date<bounds.start || r.date>bounds.end)
+                        throw new Error('يوجد سجل بتاريخ غير صالح أو خارج الأسبوع');
+                    const id=String(r.id||'');if(id){if(ids.has(id))throw new Error('معرّف مكرر في ملف الأرشيف');ids.add(id);} // Preserve legacy records with missing ID unchanged.
+                }
+                if(parsed.firebaseKeys!==null && parsed.firebaseKeys!==undefined &&
+                    (!Array.isArray(parsed.firebaseKeys) || parsed.firebaseKeys.length!==parsed.attendances.length ||
+                     parsed.firebaseKeys.some(key=>typeof key!=='string'||!key)))throw new Error('مفاتيح Firebase الأصلية ناقصة أو غير صالحة');
+                const digest=await weeklyArchiveDigest(JSON.stringify(parsed.attendances));
+                if(parsed.digestAlgorithm==='SHA-256'){
+                    if(!digest)throw new Error('التحقق من SHA-256 غير مدعوم على هذه الصفحة؛ افتح الملف من HTTPS.');
+                    if(digest!==parsed.recordsSha256)throw new Error('فشل تطابق SHA-256؛ قد يكون الملف تغيّر');
+                }
+                const picker=document.getElementById('weeklyArchiveDate');if(picker)picker.value=bounds.start;
+                const label=document.getElementById('weeklyArchiveWeekLabel');if(label)label.textContent=`الأسبوع: ${bounds.start} إلى ${bounds.end}`;
+                weeklyArchiveFileSnapshot={bounds,records:parsed.attendances};
+                weeklyArchiveRenderRows(parsed.attendances,'ملف أرشيف محلي (معزول)');
+                weeklyArchiveStatus(weeklyArchiveStatusLine('ملف الأرشيف الخارجي',parsed.attendances)+'\n'+
+                    (parsed.digestAlgorithm==='SHA-256'?'✅ بصمة SHA-256 مطابقة.':'⚠️ الملف لا يحمل بصمة SHA-256؛ تعذر إثبات سلامته تشفيريًا.')+
+                    '\nمهم: فتح الملف لا يستعيد الغياب ولا يعدل أي بيانات داخل البرنامج أو Firebase.','success');
+            }catch(error){weeklyArchiveFileSnapshot=null;weeklyArchiveStatus('تعذر فتح الملف: '+String(error.message||error)+' — لم تتغير بيانات البرنامج.','error');}
+            finally{if(event?.target)event.target.value='';}
+        }
+        function weeklyArchiveClear(){
+            if(!requireAppRole('admin'))return;
+            weeklyArchiveClearPreviewOnly();
+            weeklyArchiveStatus('تم إفراغ ذاكرة معاينة الأرشيف فقط. البيانات المحلية وسجلات Firebase لم تتغير.');
+        }
+        // ==================== V45.46 WEEKLY ARCHIVE: VERIFIED SHADOW COPY ====================
+        // Important: this subsystem NEVER deletes or relocates /attendances; its copy
+        // operation is manually initiated and fails closed. Cutover to hot/warm loading
+        // is not safe while old HTML clients and history-based reporting coexist.
+        const WEEKLY_FULL_BACKUP_FORMAT = 'mus-firebase-full-readable-snapshot-v1';
+        const WEEKLY_SHADOW_FORMAT = 'mus-weekly-shadow-copy-v1';
+        let weeklyFullBackupPending=null;
+        let weeklyVerifiedBackupProof=null;
+        let weeklyMigrationBusy=false;
+        function weeklyStableData(value){
+            if(Array.isArray(value))return value.map(weeklyStableData);
+            if(value&&typeof value==='object'){
+                const out={};
+                for(const key of Object.keys(value).sort()){
+                    if(value[key]!==undefined)out[key]=weeklyStableData(value[key]);
+                }
+                return out;
+            }
+            return value;
+        }
+        async function weeklyRequiredHash(value){
+            const result=await weeklyArchiveDigest(JSON.stringify(weeklyStableData(value)));
+            if(!result||!/^[0-9a-f]{64}$/.test(result))throw new Error('لا تتوفر SHA-256: يلزم HTTPS ومتصفح يدعم WebCrypto.');
+            return result;
+        }
+        function weeklyShadowValidateSource(raw,bounds){
+            if(raw!==null && raw!==undefined && (typeof raw!=='object'||Array.isArray(raw)))throw new Error('بنية الأسبوع السحابي ليست خريطة سجلات؛ أوقف النسخ.');
+            const records={}; const ids=new Set();
+            for(const [key,rec] of Object.entries(raw||{})){
+                if(!key || /[.#$\[\]\/]/.test(key))throw new Error('مفتاح Firebase غير صالح.');
+                if(!rec||typeof rec!=='object'||Array.isArray(rec)||!isValidAttendanceDate(rec.date) || rec.date<bounds.start || rec.date>bounds.end)
+                    throw new Error('سجل غير صالح أو خارج نطاق الأسبوع: '+key);
+                const id=String(rec.id||key);
+                if(ids.has(id))throw new Error('معرّف سجل مكرر في المصدر: '+id);
+                ids.add(id);
+                records[key]=rec;
+            }
+            return records;
+        }
+        async function weeklyShadowReadSource(db,bounds){
+            const ref=db.ref('/attendances').orderByChild('date').startAt(bounds.start).endAt(bounds.end);
+            const snapshot=await withTimeout(ref.once('value'),Math.max(30000,CLOUD_OPERATION_TIMEOUT_MS),'انتهت مهلة استدعاء الأسبوع');
+            return weeklyShadowValidateSource(snapshot.val(),bounds);
+        }
+        async function weeklyShadowCheckStableSource(db,bounds,expectedHash){
+            const live=await weeklyShadowReadSource(db,bounds);
+            if(await weeklyRequiredHash(live)!==expectedHash)throw new Error('تغيرت بيانات الأسبوع على جهاز آخر أثناء النسخ؛ تم الاحتفاظ بالأصل دون حذفه. أعد الفحص.');
+            return live;
+        }
+        function weeklyFullBackupSetStatus(text,severity='info'){
+            const node=document.getElementById('weeklyArchiveBackupStatus');
+            if(!node)return;
+            node.textContent=text;node.style.color=severity==='error'?'#991b1b':severity==='success'?'#166534':'#334155';
+        }
+        function weeklyShadowSetStatus(text,severity='info'){
+            const node=document.getElementById('weeklyArchiveMigrationStatus');
+            if(!node)return;
+            node.textContent=text;node.style.color=severity==='error'?'#991b1b':severity==='success'?'#166534':'#334155';
+        }
+        function weeklyDownloadJSON(payload,filename){
+            const blob=new Blob([JSON.stringify(payload)],{type:'application/json;charset=utf-8'});
+            const url=URL.createObjectURL(blob),link=document.createElement('a');
+            link.href=url;link.download=filename;document.body.appendChild(link);link.click();link.remove();
+            setTimeout(()=>URL.revokeObjectURL(url),15000);
+            return blob.size;
+        }
+        async function weeklyArchiveDownloadFullBackup(){
+            if(!requireAppRole('admin'))return;
+            if(weeklyMigrationBusy)return;
+            weeklyVerifiedBackupProof=null;weeklyFullBackupPending=null;
+            if(!database||!firebaseTransportConnected){weeklyFullBackupSetStatus('Firebase غير متصل.','error');return;}
+            if(!confirm('سيُنزَّل ملف يحتوي كل البيانات السحابية التي يتيح Firebase لهذا الحساب قراءتها، وقد يحتوي بيانات شخصية. احتفظ به بأمان ولا تشاركه. الاستمرار؟'))return;
+            weeklyMigrationBusy=true;
+            try{
+                weeklyFullBackupSetStatus('جارٍ أخذ قراءة واحدة من جذر Firebase؛ لا كتابة أو حذف...');
+                const snap=await withTimeout(database.ref('/').once('value'),120000,'انتهت مهلة قراءة النسخة الاحتياطية الكاملة');
+                const full=snap.val();
+                if(!full||typeof full!=='object'||Array.isArray(full)||!('attendances' in full)||!('students' in full)||!('subjects' in full))
+                    throw new Error('لم تكتمل المجموعات الرئيسية في النسخة؛ أوقف الترحيل. راجع قواعد القراءة.');
+                const sha256=await weeklyRequiredHash(full);
+                const payload={format:WEEKLY_FULL_BACKUP_FORMAT,version:1,projectId:firebaseConfig.projectId,
+                    capturedAt:new Date().toISOString(),hashAlgorithm:'SHA-256',rootSha256:sha256,
+                    warning:'SENSITIVE STUDENT DATA. FULL READABLE SNAPSHOT, RESTORE NOT YET TESTED.',data:full};
+                const bytes=weeklyDownloadJSON(payload,'MUS_FIREBASE_FULL_BACKUP_'+new Date().toISOString().slice(0,10)+'.json');
+                weeklyFullBackupPending={sha256,projectId:firebaseConfig.projectId};
+                weeklyFullBackupSetStatus('تم إنشاء ملف النسخة الاحتياطية وحجمها '+(bytes/1048576).toFixed(2)+' MB. أعد فتح الملف نفسه من زر التحقق. لا يمكن نسخ أسبوع قبل التحقق.');
+            }catch(e){weeklyFullBackupPending=null;weeklyFullBackupSetStatus('فشل إنشاء النسخة الاحتياطية: '+String(e.message||e),'error');}
+            finally{weeklyMigrationBusy=false;}
+        }
+        async function weeklyArchiveVerifyFullBackupFile(event){
+            if(!requireAppRole('admin'))return;
+            weeklyVerifiedBackupProof=null;
+            const file=event?.target?.files?.[0];if(!file)return;
+            try{
+                if(!weeklyFullBackupPending)throw new Error('يجب تنزيل نسخة كاملة جديدة أولاً من الجلسة الحالية.');
+                if(file.size>150*1024*1024)throw new Error('حجم الملف كبير جدًا للتحقق داخل المتصفح. استخدم أدوات Firebase الإدارية للنسخ والاستعادة.');
+                const parsed=JSON.parse(await file.text());
+                if(parsed.format!==WEEKLY_FULL_BACKUP_FORMAT||parsed.version!==1 || parsed.projectId!==firebaseConfig.projectId ||
+                   !parsed.data||typeof parsed.data!=='object'||Array.isArray(parsed.data))throw new Error('صيغة النسخة الاحتياطية أو مشروعها غير متطابق.');
+                const digest=await weeklyRequiredHash(parsed.data);
+                if(digest!==parsed.rootSha256||digest!==weeklyFullBackupPending.sha256)throw new Error('بصمة النسخة لا تطابق ملف Firebase المُصدّر في هذه الجلسة.');
+                weeklyVerifiedBackupProof={sha256:digest,checkedAt:Date.now(),projectId:firebaseConfig.projectId};
+                weeklyFullBackupSetStatus('تم التحقق من تطابق SHA-256 لملف النسخة الكاملة المتاح قراءتها. هذه الخطوة ليست اختبار استعادة ولا تضمن أن قواعد Firebase تسمح بتصدير جميع المسارات.','success');
+            }catch(e){weeklyFullBackupSetStatus('فشل التحقق؛ تم تعطيل النسخ الظلي: '+String(e.message||e),'error');}
+            finally{if(event?.target)event.target.value='';}
+        }
+        async function weeklyShadowVerifiedCopy(db,bounds,backupProof){
+            if(!db)throw new Error('Firebase غير متاح');
+            if(!backupProof?.sha256 || backupProof.projectId!==firebaseConfig.projectId ||
+               Date.now()-backupProof.checkedAt>60*60*1000)throw new Error('النسخة الاحتياطية الكاملة غير مثبتة أو منتهية الصلاحية (ساعة واحدة).');
+            const nowBounds=weeklyArchiveWeekBounds(getLocalDateISO());
+            const warm=new Date(nowBounds.start+'T12:00:00Z');warm.setUTCDate(warm.getUTCDate()-7);
+            if(bounds.start>=warm.toISOString().slice(0,10))throw new Error('لا يُسمح بأرشفة الأسبوع الحالي أو السابق؛ ما زال قابلاً للتعديل.');
+            const source=await weeklyShadowReadSource(db,bounds);
+            if(!Object.keys(source).length)throw new Error('لم يجد Firebase سجلات صالحة لهذا الأسبوع. لا تُنشأ نسخة فارغة.');
+            const sourceHash=await weeklyRequiredHash(source);
+            await weeklyShadowCheckStableSource(db,bounds,sourceHash);
+            const destPath='/weeklyArchiveV1/weeks/'+bounds.start+'/snapshots/'+sourceHash;
+            const metadata={format:WEEKLY_SHADOW_FORMAT,version:1,weekStart:bounds.start,weekEnd:bounds.end,
+                projectId:firebaseConfig.projectId,sourcePath:'/attendances',sourceSha256:sourceHash,
+                fullBackupSha256:backupProof.sha256,recordsCount:Object.keys(source).length,
+                status:'VERIFIED_SHADOW_COPY_NOT_CUTOVER',createdAt:Date.now()};
+            const payload={metadata,records:source};
+            // One conditional Firebase transaction: never overwrite any different existing snapshot.
+            // A timeout may mean an uncertain commit: on failure, only read/verify; never delete the source.
+            const target=db.ref(destPath);
+            const result=await withTimeout(target.transaction(old=>{
+                if(old!==null && old!==undefined)return; // never overwrite
+                return payload;
+            },undefined,false),120000,'انتهت مهلة نسخ الأسبوع؛ نتيجة الكتابة تحتاج تحققًا يدويًا');
+            if(!result.committed){
+                const existing=(await withTimeout(target.once('value'),30000,'انتهت مهلة التحقق من نسخة موجودة')).val();
+                if(!existing||await weeklyRequiredHash(existing.records)!==sourceHash ||
+                    existing.metadata?.sourceSha256!==sourceHash)throw new Error('تعارض في مسار الأرشيف؛ لم تُستبدل النسخة الموجودة.');
+            }
+            const archived=(await withTimeout(target.once('value'),30000,'انتهت مهلة إعادة قراءة النسخة المؤرشفة')).val();
+            if(!archived || !archived.records || archived.metadata?.sourceSha256!==sourceHash ||
+               archived.metadata?.recordsCount!==Object.keys(source).length ||
+               await weeklyRequiredHash(archived.records)!==sourceHash)
+                throw new Error('فشل تطابق النسخة الظلية بعد كتابتها؛ الأصل بقي دون تغيير.');
+            await weeklyShadowCheckStableSource(db,bounds,sourceHash);
+            return {status:'VERIFIED_SHADOW_COPY_NOT_CUTOVER',weekStart:bounds.start,
+                originalPath:'/attendances',archivePath:destPath,recordsCount:Object.keys(source).length,sha256:sourceHash,
+                backupSha256:backupProof.sha256,sourcePreserved:true};
+        }
+        async function weeklyArchiveStageVerifiedCopy(){
+            if(!requireAppRole('admin'))return;
+            if(weeklyMigrationBusy)return;
+            const bounds=weeklyArchiveSelection();
+            const button=document.getElementById('weeklyArchiveCopyButton');
+            if(!bounds){weeklyShadowSetStatus('تاريخ الأسبوع غير صالح.','error');return;}
+            if(!database||!firebaseTransportConnected){weeklyShadowSetStatus('Firebase غير متصل.','error');return;}
+            if(!weeklyVerifiedBackupProof){weeklyShadowSetStatus('يجب تنزيل نسخة احتياطية كاملة وإعادة فتح ملفها للتحقق أولًا.','error');return;}
+            if(!confirm('سيُنشأ أرشيف أسبوعي جديد في Firebase دون حذف أو تعديل /attendances. لا يفعّل هذا ترحيل البيانات النشطة أو يغيّر التقارير. المتابعة؟'))return;
+            weeklyMigrationBusy=true;if(button)button.disabled=true;
+            try{
+                weeklyShadowSetStatus('جارٍ Copy → Verify: قراءة المصدر، بصمة SHA-256، النسخ المشروط، إعادة قراءة المصدر والأرشيف...');
+                const result=await weeklyShadowVerifiedCopy(database,bounds,weeklyVerifiedBackupProof);
+                weeklyShadowSetStatus('تم نسخ الأسبوع والتحقق منه: '+result.recordsCount+' سجل. بصمة '+result.sha256+'\nالمسار: '+result.archivePath+'\nالأصل /attendances ما زال محفوظًا. Cutover مؤجل إلى حين اختبارات جميع الأجهزة والتقارير وقواعد Firebase.','success');
+            }catch(e){weeklyShadowSetStatus('تعذر إكمال النسخ والتحقق: '+String(e.message||e)+'\nالأصل لم يُحذف. قد توجد نسخة ظل غير معتمدة تحتاج مراجعة، ولا يجوز استنتاج نجاح النسخ من انتهاء المهلة.','error');}
+            finally{weeklyMigrationBusy=false;if(button)button.disabled=false;}
+        }
+        // =======================================================================
+
+        // ======================================================================
 
         // ==============================================================
         //  INITIALIZATION
