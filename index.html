@@ -472,6 +472,18 @@
             #profGroupsContainer .btn-present,#profGroupsContainer .btn-absent{padding:7px 6px!important;font-size:9px!important;}
         }
 
+        /* V45.41: سجل الإجازات؛ يدعم الهواتف والجداول الطويلة دون التأثير في واجهة الأستاذ */
+        .leave-register-filters { display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:7px;margin:12px 0; }
+        .leave-register-filters label { margin:0;font-size:11px; }
+        .leave-register-filters input,.leave-register-filters select { margin-top:5px;width:100%;min-width:0;font-size:12px; }
+        .leave-register-actions { display:flex;flex-wrap:wrap;gap:7px;align-items:center; }
+        .leave-register-actions button { width:auto;min-width:88px; }
+        .leave-register-table td { white-space:normal;min-width:75px;font-size:11px;line-height:1.5; }
+        .leave-register-table td:nth-child(3) { min-width:190px;text-align:right; }
+        .leave-register-table td:nth-child(6) { min-width:185px; }
+        .leave-register-table td:nth-child(10) { min-width:160px; }
+        .leave-register-table th { position:sticky;top:0; }
+        @media(max-width:600px){ .leave-register-filters{grid-template-columns:1fr 1fr} .leave-register-filters label:first-child{grid-column:1/-1} .leave-register-actions button{flex:1 1 44%;} }
     </style>
 </head>
 <body>
@@ -479,7 +491,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.40</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.41</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -529,7 +541,40 @@
               <h3>إجازات الطلبة الإلكترونية</h3>
               <p style="font-size:12px">امسح باركود الطالب، حدد تاريخ الإجازة، ثم اختر المحاضرات المشمولة يدوياً. الإجازة ليست حضوراً فعلياً. تنبيه: يتطلب التشغيل قواعد أمان Firebase تسمح للرئيس فقط بالاعتماد والإلغاء.</p>
               <button type="button" onclick="openLeaveDialog()" class="btn-info">فتح ماسح الباركود وإدارة الإجازة</button>
+              <button type="button" onclick="openLeaveRegister()" class="btn-secondary">عرض سجل جميع الإجازات</button>
             </div>
+            <!-- V45.41: سجل مركزي لإجازات رئيس القسم دون اشتراك Firebase إضافي -->
+            <details class="card leave-register" id="adminLeaveRegister" style="border:2px solid #93c5fd;background:#f8fbff" ontoggle="if(this.open)renderLeaveRegister()">
+              <summary style="font-weight:900;cursor:pointer;font-size:16px;color:#1e3a8a">سجل الإجازات المركزي — البحث والتقارير</summary>
+              <p style="font-size:11px;color:#475569;margin-top:8px">تُعرض الإجازات المعتمدة والملغاة لكل الطلبة. بيانات المرحلة والشعب القديمة التي لم تُحفظ عند الاعتماد تُستكمل من توزيع الطالب الحالي عندما يكون متاحاً.</p>
+              <div class="leave-register-filters">
+                <label>بحث بالاسم أو الرقم أو المادة<input id="leaveRegisterSearch" type="search" placeholder="اسم الطالب / الرقم / المادة / الأستاذ" oninput="leaveRegisterFilterChanged()"></label>
+                <label>المرحلة<select id="leaveRegisterLevel" onchange="leaveRegisterFilterChanged()"><option value="">جميع المراحل</option></select></label>
+                <label>الشعبة النظرية<select id="leaveRegisterTheory" onchange="leaveRegisterFilterChanged()"><option value="">جميع الشعب</option></select></label>
+                <label>المجموعة العملية<select id="leaveRegisterPractical" onchange="leaveRegisterFilterChanged()"><option value="">جميع المجاميع</option></select></label>
+                <label>من تاريخ<input type="date" id="leaveRegisterFrom" onchange="leaveRegisterFilterChanged()"></label>
+                <label>إلى تاريخ<input type="date" id="leaveRegisterTo" onchange="leaveRegisterFilterChanged()"></label>
+                <label>حالة الإجازة<select id="leaveRegisterStatus" onchange="leaveRegisterFilterChanged()"><option value="">الكل</option><option value="approved">معتمدة</option><option value="cancelled">ملغاة</option></select></label>
+              </div>
+              <div class="leave-register-actions">
+                <button class="btn-sm btn-info" onclick="leaveRegisterToday()">إجازات اليوم</button>
+                <button class="btn-sm btn-secondary" onclick="resetLeaveRegisterFilters()">إظهار جميع الإجازات</button>
+                <button class="btn-sm btn-excel" onclick="exportLeaveRegisterExcel()">تصدير Excel</button>
+                <button class="btn-sm btn-pdf" id="leaveRegisterPdfButton" onclick="exportLeaveRegisterPDF()">تصدير PDF</button>
+              </div>
+              <div id="leaveRegisterSummary" aria-live="polite" style="font-size:12px;font-weight:800;color:#1e3a8a;margin:10px 0"></div>
+              <div class="report-table-wrapper" style="max-height:65vh;overflow:auto;border:1px solid #cbd5e1;border-radius:8px">
+                <table class="report-table leave-register-table" style="min-width:1350px">
+                  <thead><tr><th>#</th><th>التاريخ</th><th>اسم الطالب / المعرف</th><th>المرحلة</th><th>النظري / العملي</th><th>المادة / وقت المحاضرة</th><th>الأستاذ</th><th>السبب</th><th>الحالة</th><th>اعتمدها / تاريخ الاعتماد</th><th>الإجراء</th></tr></thead>
+                  <tbody id="leaveRegisterRows"></tbody>
+                </table>
+              </div>
+              <div class="leave-register-actions" style="justify-content:center;margin-top:10px">
+                <button class="btn-sm btn-secondary" id="leaveRegisterPrev" onclick="changeLeaveRegisterPage(-1)">السابق</button>
+                <span id="leaveRegisterPageLabel" style="font-size:12px;font-weight:900"></span>
+                <button class="btn-sm btn-secondary" id="leaveRegisterNext" onclick="changeLeaveRegisterPage(1)">التالي</button>
+              </div>
+            </details>
             <dialog id="studentLeaveDialog" style="width:min(740px,95vw);max-height:90vh;overflow:auto;border:2px solid #2563eb;border-radius:12px;padding:16px" dir="rtl">
               <h3>منح إجازة لطالب</h3><button onclick="closeLeaveDialog()" class="btn-secondary">إغلاق</button>
               <div id="leaveScanner" style="max-width:380px;margin:10px auto"></div>
@@ -1047,7 +1092,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.40-electronic-student-leaves';
+        const APP_VERSION = '45.41-central-leave-register';
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -1177,6 +1222,8 @@
         let approvedLeaves = [];
         let leaveCloudReady = false;
         let leaveListenerStarted = false;
+        let leaveRegisterPage = 0;
+        let leaveRegisterPdfBusy = false;
         let isScanning = false;
         let scannerStartPromise=null;
         let scannerStopPromise=null;
@@ -5954,6 +6001,216 @@
 
 
         // V45.40: إجازات مستقلة؛ لا تُحوَّل إلى حضور أو غياب وتُحفظ مباشرة على المسار المخصص.
+        // V45.41: عرض السجل من ذاكرة مستمع studentLeaves الموجود، دون اتصال إضافي بقاعدة البيانات.
+        const LEAVE_REGISTER_PAGE_SIZE = 25;
+        function openLeaveRegister(){
+            if(state.currentUser?.role!=='admin')return;
+            const panel=document.getElementById('adminLeaveRegister');
+            if(!panel)return;
+            panel.open=true;
+            renderLeaveRegister();
+            panel.scrollIntoView({behavior:'smooth',block:'start'});
+        }
+        function leaveRegisterStudent(record){
+            return (state.students||[]).find(s=>String(s.id)===String(record.studentId))||null;
+        }
+        function leaveRegisterViewRow(record){
+            const student=leaveRegisterStudent(record);
+            const subject=(state.subjects||[]).find(s=>String(s.id)===String(record.subjectId));
+            const professor=(state.professors||[]).find(p=>String(p.id)===String(subject?.professorId));
+            const level=record.studentLevel??student?.level??'';
+            const theory=record.theoreticalGroup??(student?studentTheoreticalGroup(student):'');
+            const practical=record.practicalGroup??(student?studentPracticalGroup(student):'');
+            return {
+                ...record,
+                studentName:record.studentName||student?.name||'طالب غير معروف',
+                level:String(level),theory:String(theory||''),practical:String(practical||''),
+                subjectName:record.subjectName||subject?.name||'مادة غير معروفة',
+                professorName:record.professorName||professor?.name||'غير مثبت',
+                groupName:String(record.groupName||''),
+                statusLabel:record.status==='approved'?'معتمدة':record.status==='cancelled'?'ملغاة':'حالة غير معروفة',
+                approvalLabel:record.approvedAt?new Date(Number(record.approvedAt)).toLocaleString('ar-IQ',{timeZone:'Asia/Baghdad',hour12:true}):'غير مؤرخ',
+                cancellationLabel:record.cancelledAt?new Date(Number(record.cancelledAt)).toLocaleString('ar-IQ',{timeZone:'Asia/Baghdad',hour12:true}):''
+            };
+        }
+        function leaveRegisterAllRows(){
+            if(state.currentUser?.role!=='admin'||!leaveCloudReady)return [];
+            return approvedLeaves.filter(r=>r&&r.id&&r.studentId&&['approved','cancelled'].includes(r.status))
+                .map(leaveRegisterViewRow)
+                .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||Number(b.approvedAt||0)-Number(a.approvedAt||0)||String(a.id).localeCompare(String(b.id)));
+        }
+        function leaveRegisterRefreshSelect(id,values,placeholder){
+            const select=document.getElementById(id);if(!select)return;
+            const original=select.value;
+            select.replaceChildren();
+            const all=document.createElement('option');all.value='';all.textContent=placeholder;select.append(all);
+            [...new Set(values.filter(v=>String(v||'').trim()).map(v=>String(v).trim()))]
+              .sort((a,b)=>a.localeCompare(b,'ar',{numeric:true})).forEach(value=>{
+                const option=document.createElement('option');option.value=value;
+                option.textContent=id==='leaveRegisterLevel'?getLevelName(Number(value)):value;
+                select.append(option);
+              });
+            if([...select.options].some(o=>o.value===original))select.value=original;
+        }
+        function leaveRegisterFilterChanged(){leaveRegisterPage=0;renderLeaveRegister();}
+        function leaveRegisterToday(){
+            if(state.currentUser?.role!=='admin')return;
+            const date=getLocalDateISO();
+            document.getElementById('leaveRegisterFrom').value=date;
+            document.getElementById('leaveRegisterTo').value=date;
+            leaveRegisterFilterChanged();
+        }
+        function resetLeaveRegisterFilters(){
+            if(state.currentUser?.role!=='admin')return;
+            for(const id of ['leaveRegisterSearch','leaveRegisterLevel','leaveRegisterTheory','leaveRegisterPractical','leaveRegisterFrom','leaveRegisterTo','leaveRegisterStatus']){
+                const el=document.getElementById(id);if(el)el.value='';
+            }
+            leaveRegisterFilterChanged();
+        }
+        function leaveRegisterFilteredRows(){
+            const rows=leaveRegisterAllRows();
+            const value=id=>String(document.getElementById(id)?.value||'').trim();
+            const query=normalizeMatchText(value('leaveRegisterSearch'));
+            const level=value('leaveRegisterLevel'),theory=value('leaveRegisterTheory'),practical=value('leaveRegisterPractical');
+            const from=value('leaveRegisterFrom'),to=value('leaveRegisterTo'),status=value('leaveRegisterStatus');
+            if(from&&to&&from>to)return {rows:[],invalidDate:true};
+            return {rows:rows.filter(r=>{
+                if(level&&r.level!==level)return false;
+                if(theory&&r.theory!==theory)return false;
+                if(practical&&r.practical!==practical)return false;
+                if(from&&String(r.date||'')<from)return false;
+                if(to&&String(r.date||'')>to)return false;
+                if(status&&r.status!==status)return false;
+                if(query&&!normalizeMatchText([r.studentName,r.studentId,r.subjectName,r.professorName,r.approvedByName,r.groupName,r.reason].join(' ')).includes(query))return false;
+                return true;
+            }),invalidDate:false};
+        }
+        function renderLeaveRegister(){
+            const panel=document.getElementById('adminLeaveRegister');
+            if(!panel?.open || state.currentUser?.role!=='admin')return;
+            const body=document.getElementById('leaveRegisterRows');
+            const summary=document.getElementById('leaveRegisterSummary');
+            if(!body||!summary)return;
+            body.replaceChildren();
+            if(!leaveCloudReady){summary.textContent='تعذّر التحقق من سجل الإجازات السحابي؛ لا تعرض النسخة الحالية كبيانات مؤكدة. تحقق من اتصال Firebase وصلاحيات القراءة.';
+                document.getElementById('leaveRegisterPageLabel').textContent='—';
+                for(const id of ['leaveRegisterPrev','leaveRegisterNext'])document.getElementById(id).disabled=true;
+                return;}
+            const all=leaveRegisterAllRows();
+            leaveRegisterRefreshSelect('leaveRegisterLevel',all.map(r=>r.level),'جميع المراحل');
+            leaveRegisterRefreshSelect('leaveRegisterTheory',all.map(r=>r.theory),'جميع الشعب النظرية');
+            leaveRegisterRefreshSelect('leaveRegisterPractical',all.map(r=>r.practical),'جميع المجاميع العملية');
+            const {rows,invalidDate}=leaveRegisterFilteredRows();
+            if(invalidDate){summary.textContent='تاريخ البداية أكبر من تاريخ النهاية؛ صحح الفلاتر.';return;}
+            const totalPages=Math.max(1,Math.ceil(rows.length/LEAVE_REGISTER_PAGE_SIZE));
+            leaveRegisterPage=Math.min(leaveRegisterPage,totalPages-1);
+            const pageRows=rows.slice(leaveRegisterPage*LEAVE_REGISTER_PAGE_SIZE,(leaveRegisterPage+1)*LEAVE_REGISTER_PAGE_SIZE);
+            const approved=rows.filter(r=>r.status==='approved').length;
+            summary.textContent=`السجلات المطابقة: ${rows.length} (معتمدة ${approved}، ملغاة ${rows.length-approved}) — الطلبة: ${new Set(rows.map(r=>r.studentId)).size} — إجمالي السجل: ${all.length}`;
+            if(!pageRows.length){const tr=document.createElement('tr');const td=document.createElement('td');td.colSpan=11;td.textContent='لا توجد إجازات مطابقة. تحقق من التاريخ والفلاتر.';tr.append(td);body.append(tr);}
+            pageRows.forEach((r,i)=>{
+                const tr=document.createElement('tr');
+                const columns=[
+                    String(leaveRegisterPage*LEAVE_REGISTER_PAGE_SIZE+i+1),String(r.date||''),`${r.studentName} — ${r.studentId}`,
+                    r.level?getLevelName(Number(r.level)):'غير محددة',
+                    `نظري: ${r.theory||'—'} / عملي: ${r.practical||'—'}`,
+                    `${r.subjectName} — ${r.sessionTime||'—'} (${r.groupName||'—'})`,r.professorName,
+                    String(r.reason||'—'),r.statusLabel,
+                    `${r.approvedByName||'غير محدد'} — ${r.approvalLabel}`,
+                ];
+                columns.forEach((value,index)=>{const td=document.createElement('td');td.textContent=value;
+                    if(index===8){td.style.fontWeight='900';td.style.color=r.status==='approved'?'#166534':'#991b1b';}
+                    tr.append(td);});
+                const action=document.createElement('td');
+                if(r.status==='approved'){
+                    const btn=document.createElement('button');btn.className='btn-danger btn-sm';btn.textContent='إلغاء الإجازة';
+                    btn.onclick=()=>cancelStudentLeave(r.id);action.append(btn);
+                }else{const desc=document.createElement('span');desc.textContent=`أُلغيت ${r.cancellationLabel||''}`;action.append(desc);}
+                tr.append(action);body.append(tr);
+            });
+            const previous=document.getElementById('leaveRegisterPrev'),next=document.getElementById('leaveRegisterNext');
+            previous.disabled=leaveRegisterPage<=0;next.disabled=leaveRegisterPage>=totalPages-1;
+            document.getElementById('leaveRegisterPageLabel').textContent=`صفحة ${leaveRegisterPage+1} من ${totalPages}`;
+        }
+        function changeLeaveRegisterPage(delta){
+            if(state.currentUser?.role!=='admin')return;
+            leaveRegisterPage=Math.max(0,leaveRegisterPage+delta);
+            renderLeaveRegister();
+        }
+        function leaveRegisterExportRows(){
+            if(state.currentUser?.role!=='admin'||!leaveCloudReady){alert('لا يمكن تصدير سجل غير متحقق من تحميله سحابياً.');return null;}
+            const result=leaveRegisterFilteredRows();
+            if(result.invalidDate){alert('صحح نطاق التاريخ أولاً.');return null;}
+            if(!result.rows.length){alert('لا توجد إجازات مطابقة للتصدير.');return null;}
+            return result.rows;
+        }
+        function leaveRegisterFileName(extension){return `سجل_إجازات_طلبة_الفيزياء_${getLocalDateISO()}.${extension}`;}
+        function leaveRegisterExcelSafe(value){
+            const s=String(value??'');return /^[\s\u200e\u200f]*[=+@-]/.test(s)?"'"+s:s;
+        }
+        function exportLeaveRegisterExcel(){
+            const rows=leaveRegisterExportRows();if(!rows)return;
+            if(!requireOptionalLibrary(()=>typeof XLSX!=='undefined'&&!!XLSX.utils,'Excel'))return;
+            try{
+                const sheet=XLSX.utils.json_to_sheet(rows.map((r,i)=>({
+                    'ت':i+1,'تاريخ الإجازة':r.date,'اسم الطالب':leaveRegisterExcelSafe(r.studentName),
+                    'معرف الطالب':leaveRegisterExcelSafe(r.studentId),'المرحلة':r.level?getLevelName(Number(r.level)):'غير محددة',
+                    'الشعبة النظرية':leaveRegisterExcelSafe(r.theory),'المجموعة العملية':leaveRegisterExcelSafe(r.practical),
+                    'المادة':leaveRegisterExcelSafe(r.subjectName),'مجموعة المحاضرة':leaveRegisterExcelSafe(r.groupName),
+                    'الوقت':leaveRegisterExcelSafe(r.sessionTime),'الأستاذ':leaveRegisterExcelSafe(r.professorName),
+                    'سبب الإجازة':leaveRegisterExcelSafe(r.reason),'الحالة':r.statusLabel,
+                    'اعتمدها':leaveRegisterExcelSafe(r.approvedByName),'تاريخ الاعتماد':r.approvalLabel,
+                    'ألغيت بواسطة':leaveRegisterExcelSafe(r.cancelledByName||r.cancelledById||''),'تاريخ الإلغاء':r.cancellationLabel
+                })));
+                sheet['!cols']=[{wch:5},...Array(16).fill({wch:22})];
+                const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,sheet,'إجازات الطلبة');
+                XLSX.writeFile(wb,leaveRegisterFileName('xlsx'));
+            }catch(error){console.error(error);alert('تعذر تصدير Excel: '+error.message);}
+        }
+        async function exportLeaveRegisterPDF(){
+            if(leaveRegisterPdfBusy)return;
+            const rows=leaveRegisterExportRows();if(!rows)return;
+            if(!requireOptionalLibrary(()=>typeof html2canvas==='function'&&!!window.jspdf?.jsPDF,'PDF'))return;
+            if(rows.length>200&&!confirm(`سيتم إنشاء PDF من ${rows.length} سجلاً وقد يستغرق بعض الوقت. هل تستمر؟`))return;
+            const button=document.getElementById('leaveRegisterPdfButton');leaveRegisterPdfBusy=true;button.disabled=true;
+            const printArea=document.createElement('div');
+            printArea.style.cssText='position:fixed;left:-20000px;top:0;width:1400px;padding:20px;box-sizing:border-box;background:white;direction:rtl;font-family:Tahoma,Arial,sans-serif;color:#111827';
+            document.body.append(printArea);
+            try{
+                const pdf=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4',compress:true});
+                const pageWidth=pdf.internal.pageSize.getWidth(),pageHeight=pdf.internal.pageSize.getHeight();
+                const chunkSize=17;
+                for(let start=0;start<rows.length;start+=chunkSize){
+                    // Every page is rendered separately: avoids excessive canvas allocations for long registries.
+                    printArea.replaceChildren();
+                    const heading=document.createElement('h3');heading.textContent='قسم الفيزياء — سجل إجازات الطلبة الإلكترونية';heading.style.cssText='text-align:center;font-size:22px;margin:0 0 8px';printArea.append(heading);
+                    const meta=document.createElement('p');meta.style.cssText='text-align:center;font-size:14px;margin:0 0 12px';meta.textContent=`التصدير: ${getLocalDateISO()} — العدد المطابق: ${rows.length} — صفحة ${Math.floor(start/chunkSize)+1}`;printArea.append(meta);
+                    const table=document.createElement('table');table.style.cssText='border-collapse:collapse;table-layout:fixed;width:100%;font-size:13px;line-height:1.35';
+                    const head=document.createElement('thead'),tr=document.createElement('tr');
+                    for(const label of ['التاريخ','الطالب','المرحلة','الشعبة / العملي','المادة والوقت','الأستاذ','السبب','الحالة','المعتمد']){
+                        const th=document.createElement('th');th.textContent=label;th.style.cssText='border:1px solid #94a3b8;background:#e2e8f0;padding:5px;word-break:break-word';tr.append(th);
+                    }
+                    head.append(tr);table.append(head);
+                    const tbody=document.createElement('tbody');
+                    rows.slice(start,start+chunkSize).forEach(r=>{
+                        const tr=document.createElement('tr');
+                        for(const value of [r.date,r.studentName,r.level?getLevelName(Number(r.level)):'—',`${r.theory||'—'} / ${r.practical||'—'}`,`${r.subjectName} / ${r.sessionTime||''}`,r.professorName,r.reason||'—',r.statusLabel,r.approvedByName||'—']){
+                            const td=document.createElement('td');td.textContent=String(value||'—');td.style.cssText='border:1px solid #94a3b8;padding:6px 4px;word-break:break-word;text-align:center;vertical-align:middle';tr.append(td);
+                        }
+                        tbody.append(tr);
+                    });
+                    table.append(tbody);printArea.append(table);
+                    const canvas=await html2canvas(printArea,{scale:1.35,useCORS:false,backgroundColor:'#fff',logging:false});
+                    const maxWidth=pageWidth-12,maxHeight=pageHeight-12;
+                    const renderedHeight=Math.min(maxHeight,canvas.height*(maxWidth/canvas.width));
+                    if(start)pdf.addPage();
+                    pdf.addImage(canvas.toDataURL('image/jpeg',0.88),'JPEG',6,6,maxWidth,renderedHeight,undefined,'FAST');
+                }
+                pdf.save(leaveRegisterFileName('pdf'));
+            }catch(err){console.error(err);alert('تعذر تصدير PDF: '+err.message);}
+            finally{printArea.remove();leaveRegisterPdfBusy=false;button.disabled=false;}
+        }
+
         function leaveLectureTime(lecture){
             const minutes=Number(lecture?.startMinutes);
             if(!Number.isFinite(minutes)||minutes<0||minutes>=1440)return '';
@@ -6059,7 +6316,9 @@
                     const ref=database.ref('/studentLeaves/'+id);
                     const existing=(await ref.once('value')).val();
                     if(existing?.status==='approved')continue;
-                    const record={id, ...option,studentName:student.name,reason:document.getElementById('leaveReason').value,status:'approved',sessionKey:option.key,approvedById:String(state.currentUser.id),approvedByName:String(state.currentUser.name),approvedAt:firebase.database.ServerValue.TIMESTAMP};
+                    const subject=state.subjects.find(s=>String(s.id)===String(option.subjectId));
+                    const professor=state.professors.find(p=>String(p.id)===String(subject?.professorId));
+                    const record={id, ...option,studentName:student.name,studentLevel:student.level,theoreticalGroup:studentTheoreticalGroup(student),practicalGroup:studentPracticalGroup(student),professorName:professor?.name||'',reason:document.getElementById('leaveReason').value,status:'approved',sessionKey:option.key,approvedById:String(state.currentUser.id),approvedByName:String(state.currentUser.name),approvedAt:firebase.database.ServerValue.TIMESTAMP};
                     await ref.transaction(current=>current?.status==='approved'?undefined:record,undefined,false);
                 }
                 leaveMessage('تم إرسال طلب اعتماد الإجازات إلى Firebase. تحقق من ظهورها ضمن سجل الإجازات.');
@@ -6072,7 +6331,7 @@
             if(state.currentUser?.role!=='admin'||!database||!leaveCloudReady)return;
             if(!confirm('إلغاء الإجازة المعتمدة؟ سيُسجل تاريخ الإلغاء دون حذف السجل.'))return;
             const ref=database.ref('/studentLeaves/'+id);
-            try{await ref.transaction(current=>current?.status==='approved'?{...current,status:'cancelled',cancelledById:String(state.currentUser.id),cancelledAt:firebase.database.ServerValue.TIMESTAMP}:undefined,undefined,false);recordAudit('إلغاء إجازة إلكترونية',{leaveId:id});renderLeaveChoices();}catch(err){leaveMessage('تعذر إلغاء الإجازة في Firebase.',true);}
+            try{const result=await ref.transaction(current=>current?.status==='approved'?{...current,status:'cancelled',cancelledById:String(state.currentUser.id),cancelledByName:String(state.currentUser.name||''),cancelledAt:firebase.database.ServerValue.TIMESTAMP}:undefined,undefined,false);if(!result.committed){leaveMessage('الإجازة غير معتمدة أو أُلغيت سابقاً.',true);return;}recordAudit('إلغاء إجازة إلكترونية',{leaveId:id});renderLeaveChoices();if(document.getElementById('adminLeaveRegister')?.open)renderLeaveRegister();}catch(err){leaveMessage('تعذر إلغاء الإجازة في Firebase.',true);}
         }
         function startStudentLeaveListener(){
             if(leaveListenerStarted||!database)return;
@@ -6093,7 +6352,8 @@
                     }
                 }
                 if(document.getElementById('studentLeaveDialog')?.open)renderLeaveChoices();
-            },err=>{leaveCloudReady=false;console.error('تعذر قراءة الإجازات:',err);});
+                if(document.getElementById('adminLeaveRegister')?.open)renderLeaveRegister();
+            },err=>{leaveCloudReady=false;console.error('تعذر قراءة الإجازات:',err);if(document.getElementById('adminLeaveRegister')?.open)renderLeaveRegister();});
         }
 
         function renderAdmin() {
