@@ -479,7 +479,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.38</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.40</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -525,6 +525,25 @@
 <table><thead><tr><th>تحديد</th><th>الطالب</th><th>الحالة المطلوبة</th></tr></thead><tbody id="headAttendanceRows"></tbody></table>
 <button onclick="saveHeadAttendance()" class="btn-success">حفظ تعديلات رئيس القسم</button><p id="headAttendanceResult" aria-live="polite"></p></dialog>
         <div id="tab-admin" class="tab-content">
+            <div class="card" style="border:2px solid #2563eb;background:#eff6ff" id="adminLeavesPanel">
+              <h3>إجازات الطلبة الإلكترونية</h3>
+              <p style="font-size:12px">امسح باركود الطالب، حدد تاريخ الإجازة، ثم اختر المحاضرات المشمولة يدوياً. الإجازة ليست حضوراً فعلياً. تنبيه: يتطلب التشغيل قواعد أمان Firebase تسمح للرئيس فقط بالاعتماد والإلغاء.</p>
+              <button type="button" onclick="openLeaveDialog()" class="btn-info">فتح ماسح الباركود وإدارة الإجازة</button>
+            </div>
+            <dialog id="studentLeaveDialog" style="width:min(740px,95vw);max-height:90vh;overflow:auto;border:2px solid #2563eb;border-radius:12px;padding:16px" dir="rtl">
+              <h3>منح إجازة لطالب</h3><button onclick="closeLeaveDialog()" class="btn-secondary">إغلاق</button>
+              <div id="leaveScanner" style="max-width:380px;margin:10px auto"></div>
+              <button onclick="startLeaveScanner()" class="btn-info">فتح الكاميرا لمسح الباركود</button>
+              <label>باركود الطالب / رقمه</label><input id="leaveStudentCode" placeholder="امسح أو أدخل الرمز" oninput="renderLeaveChoices()">
+              <label>تاريخ الإجازة (اليوم أو يوم قادم)</label><input type="date" id="leaveDate" onchange="renderLeaveChoices()">
+              <label>سبب الإجازة</label><select id="leaveReason"><option value="شخصية">شخصية</option><option value="مرضية">مرضية</option><option value="رسمية">رسمية</option><option value="أخرى">أخرى</option></select>
+              <div id="leaveStudentSummary" style="padding:8px;margin:8px 0"></div>
+              <div id="leaveLectureChoices" style="padding:8px"></div>
+              <button id="leaveApproveButton" class="btn-success" onclick="approveSelectedStudentLeave()">اعتماد المحاضرات المحددة</button>
+              <div id="leaveHistory" style="padding:8px"></div>
+              <p id="leaveMessage" role="status"></p>
+            </dialog>
+
             <div class="card" style="background:#f0fdf4; border:2px solid #48bb78;">
                 <div class="flex-between">
                     <h4 style="margin:0;">📦 إدارة البيانات</h4>
@@ -1028,7 +1047,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.37-data-preserving-firebase-reconnect';
+        const APP_VERSION = '45.40-electronic-student-leaves';
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -1154,6 +1173,10 @@
         };
 
         let html5QrCode = null;
+        let leaveQrScanner = null;
+        let approvedLeaves = [];
+        let leaveCloudReady = false;
+        let leaveListenerStarted = false;
         let isScanning = false;
         let scannerStartPromise=null;
         let scannerStopPromise=null;
@@ -2708,6 +2731,7 @@
         function listenToFirebase() {
             if (!database || cloudListenersStarted) return;
             cloudListenersStarted = true;
+            startStudentLeaveListener();
 
             CLOUD_SYNC_COLLECTIONS.forEach(name => {
                 const ref=database.ref('/'+name);
@@ -4358,6 +4382,8 @@
             const student=state.students.find(st=>String(st.id)===String(studentId));
             if(!student)return {ok:false,reason:'الطالب غير موجود في قاعدة الطلبة.'};
             if(isStudentOfficiallyDeleted(studentId))return {ok:false,reason:'الطالب محذوف نهائياً.'};
+            if(state.currentUser?.role==='professor' && !leaveCloudReady)return {ok:false,reason:'تعذر التحقق من الإجازات المعتمدة؛ لا يُسمح بالتعديل قبل استعادة اتصال الإجازات.'};
+            if(state.currentUser?.role==='professor' && leaveForAttendance(studentId,subject,context))return {ok:false,reason:'إجازة معتمدة من رئيس القسم لهذه المحاضرة؛ تعديل حالة الطالب ممنوع.'};
             if(!subject||!state.subjects.some(s=>String(s.id)===String(subject.id)))return {ok:false,reason:'المادة غير موجودة.'};
             if(!isValidAttendanceDate(context?.date)||!normalizeSessionTime(context?.sessionTime))return {ok:false,reason:'تاريخ المحاضرة أو وقتها غير صالح.'};
             if(state.currentUser?.role==='professor' && String(context.date)<getLocalDateISO()){
@@ -5924,6 +5950,150 @@
                 scheduleRenderRefresh('attendances');return cloud;
             }catch(e){alert(e.message||'تعذر الحفظ؛ راجع حالة المزامنة.');return false;}
             finally{headAttendanceBusy=false;}
+        }
+
+
+        // V45.40: إجازات مستقلة؛ لا تُحوَّل إلى حضور أو غياب وتُحفظ مباشرة على المسار المخصص.
+        function leaveLectureTime(lecture){
+            const minutes=Number(lecture?.startMinutes);
+            if(!Number.isFinite(minutes)||minutes<0||minutes>=1440)return '';
+            return String(Math.floor(minutes/60)).padStart(2,'0')+':'+String(minutes%60).padStart(2,'0');
+        }
+        function leaveKey(studentId,subjectId,date,sessionTime){
+            return [String(studentId),String(subjectId),String(date),normalizeSessionTime(sessionTime)].join('|');
+        }
+        function activeApprovedLeave(studentId,subjectId,date,sessionTime){
+            const key=leaveKey(studentId,subjectId,date,sessionTime);
+            return approvedLeaves.find(x=>x && x.status==='approved' && x.sessionKey===key)||null;
+        }
+        function leaveForAttendance(studentId,subject,context){
+            if(!subject||!context?.date||!context?.sessionTime)return null;
+            return activeApprovedLeave(studentId,subject.id,context.date,context.sessionTime);
+        }
+        function studentLeaveScheduleOptions(student,date){
+            if(!student || !/^\d{4}-\d{2}-\d{2}$/.test(date))return [];
+            const plan=getStructuredScheduleForDate(date);
+            const wanted=normalizeMatchText(arabicDayNameForDateISO(date));
+            const options=[];
+            (plan.lectures||[]).forEach(lecture=>{
+                if(normalizeMatchText(lecture.dayName||'')!==wanted)return;
+                const time=leaveLectureTime(lecture);
+                if(!time)return;
+                for(const subject of state.subjects||[]){
+                    if(Number(subject.level)!==Number(student.level))continue;
+                    const prof=state.professors.find(p=>String(p.id)===String(subject.professorId))||null;
+                    if(!prof || !lectureMatchesSubjectForAttendance(lecture,subject,prof))continue;
+                    if(!studentMatchesSubject(student,subject))continue;
+                    const group=lectureAttendanceGroup(lecture,subject);
+                    const expected=professorGroupNameForStudent(student,subject);
+                    if(group && normalizeGroupName(group,'')!==normalizeGroupName(expected,''))continue;
+                    const key=leaveKey(student.id,subject.id,date,time);
+                    if(!options.some(o=>o.key===key))options.push({key,studentId:String(student.id),subjectId:String(subject.id),subjectName:subject.name,date,sessionTime:normalizeSessionTime(time),groupName:group||expected,lectureId:String(lecture.id||''),scheduleVersionId:String(plan.version?.id||'')});
+                }
+            });
+            return options.sort((a,b)=>a.sessionTime.localeCompare(b.sessionTime));
+        }
+        function leaveSelectedStudent(){
+            const code=String(document.getElementById('leaveStudentCode')?.value||'').trim();
+            if(!code)return null;
+            const candidates=state.students.filter(st=>String(st.barcode||st.id)===code || String(st.id)===code);
+            return candidates.length===1&&!isStudentOfficiallyDeleted(candidates[0].id,candidates[0].barcode)?candidates[0]:null;
+        }
+        function leaveMessage(message,error=false){const el=document.getElementById('leaveMessage');if(el){el.style.color=error?'#b91c1c':'#166534';el.textContent=message;}}
+        function openLeaveDialog(){
+            if(state.currentUser?.role!=='admin')return;
+            document.getElementById('leaveDate').value=getLocalDateISO();
+            document.getElementById('studentLeaveDialog').showModal();
+            renderLeaveChoices();
+        }
+        async function closeLeaveDialog(){
+            if(leaveQrScanner){try{await leaveQrScanner.stop();}catch(e){}try{await leaveQrScanner.clear();}catch(e){}leaveQrScanner=null;}
+            document.getElementById('studentLeaveDialog')?.close();
+        }
+        async function startLeaveScanner(){
+            if(state.currentUser?.role!=='admin')return;
+            if(typeof Html5Qrcode==='undefined'){leaveMessage('مكتبة الكاميرا غير جاهزة. أدخل الباركود يدوياً.',true);return;}
+            if(leaveQrScanner)return;
+            try{
+                leaveQrScanner=new Html5Qrcode('leaveScanner');
+                await leaveQrScanner.start({facingMode:'environment'},{fps:8,qrbox:{width:230,height:150}},async code=>{
+                    document.getElementById('leaveStudentCode').value=String(code).trim();
+                    renderLeaveChoices();
+                    if(leaveQrScanner){const scanner=leaveQrScanner;leaveQrScanner=null;try{await scanner.stop();await scanner.clear();}catch(e){}}
+                },()=>{});
+            }catch(err){leaveQrScanner=null;leaveMessage('تعذر تشغيل الكاميرا؛ تحقق من إذن الكاميرا وHTTPS أو أدخل الرمز يدوياً.',true);}
+        }
+        function renderLeaveChoices(){
+            const student=leaveSelectedStudent(), date=document.getElementById('leaveDate')?.value;
+            const summary=document.getElementById('leaveStudentSummary'), panel=document.getElementById('leaveLectureChoices'), history=document.getElementById('leaveHistory');
+            if(!summary||!panel)return;
+            if(!student){summary.textContent='أدخل باركود طالب فريد وصحيح.';panel.innerHTML='';if(history)history.innerHTML='';return;}
+            summary.textContent=`الطالب: ${student.name} — المرحلة ${student.level} — النظري ${studentTheoreticalGroup(student)} — العملي ${studentPracticalGroup(student)}`;
+            const options=studentLeaveScheduleOptions(student,date);
+            panel.replaceChildren();
+            if(!options.length){panel.textContent='لا توجد محاضرات مطابقة في الجدول المنشور لهذا الطالب بهذا التاريخ؛ لن تُنشأ إجازة عامة أو افتراضية.';}
+            options.forEach((option,index)=>{
+                const item=document.createElement('label');item.style.cssText='display:flex;gap:8px;align-items:center;padding:9px;background:white;border:1px solid #cbd5e1;margin:6px 0;border-radius:7px';
+                const cb=document.createElement('input');cb.type='checkbox';cb.className='leaveLectureOption';cb.style.width='auto';cb.dataset.optionIndex=String(index);cb.disabled=!!activeApprovedLeave(student.id,option.subjectId,date,option.sessionTime);
+                const label=document.createElement('span');label.textContent=`${option.subjectName} — ${option.groupName} — ${option.sessionTime}${cb.disabled?' (إجازة معتمدة مسبقاً)':''}`;
+                item.append(cb,label);panel.append(item);
+            });
+            panel.dataset.options=JSON.stringify(options);
+            if(history){history.replaceChildren();const records=approvedLeaves.filter(r=>String(r.studentId)===String(student.id)&&r.status==='approved').sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,20);history.textContent=records.length?'إجازات معتمدة (آخر 20): ': 'لا توجد إجازات سابقة.';records.forEach(r=>{const div=document.createElement('div');div.textContent=`${r.date} — ${r.subjectName} — ${r.sessionTime} — ${r.reason} `;const btn=document.createElement('button');btn.className='btn-sm btn-danger';btn.textContent='إلغاء';btn.onclick=()=>cancelStudentLeave(r.id);div.append(btn);history.append(div);});}
+        }
+        async function approveSelectedStudentLeave(){
+            if(state.currentUser?.role!=='admin'||!database||!leaveCloudReady){leaveMessage('الاعتماد متاح فقط لرئيس القسم بعد اكتمال الاتصال السحابي.',true);return;}
+            const student=leaveSelectedStudent(),date=document.getElementById('leaveDate').value;
+            if(!student){leaveMessage('لم يتم تحديد طالب صحيح.',true);return;}
+            const options=studentLeaveScheduleOptions(student,date);
+            const indices=[...document.querySelectorAll('.leaveLectureOption:checked')].map(x=>Number(x.dataset.optionIndex));
+            if(!indices.length){leaveMessage('اختر محاضرة واحدة على الأقل يدوياً.',true);return;}
+            const selected=indices.map(i=>options[i]).filter(Boolean);
+            if(!selected.length){leaveMessage('تغير الجدول؛ أعد اختيار المحاضرات.',true);return;}
+            const btn=document.getElementById('leaveApproveButton');btn.disabled=true;
+            try{
+                for(const option of selected){
+                    if(activeApprovedLeave(student.id,option.subjectId,date,option.sessionTime))continue;
+                    // Ensure the cloud record, not the local list, is the authority for approval.
+                    const id='leave_'+Array.from(new TextEncoder().encode(option.key)).map(b=>b.toString(16).padStart(2,'0')).join('');
+                    const ref=database.ref('/studentLeaves/'+id);
+                    const existing=(await ref.once('value')).val();
+                    if(existing?.status==='approved')continue;
+                    const record={id, ...option,studentName:student.name,reason:document.getElementById('leaveReason').value,status:'approved',sessionKey:option.key,approvedById:String(state.currentUser.id),approvedByName:String(state.currentUser.name),approvedAt:firebase.database.ServerValue.TIMESTAMP};
+                    await ref.transaction(current=>current?.status==='approved'?undefined:record,undefined,false);
+                }
+                leaveMessage('تم إرسال طلب اعتماد الإجازات إلى Firebase. تحقق من ظهورها ضمن سجل الإجازات.');
+                await database.ref('/studentLeaves').once('value').then(snap=>{approvedLeaves=Object.values(snap.val()||{});renderLeaveChoices();});
+                recordAudit('اعتماد إجازة إلكترونية',{studentId:student.id,date,lectureCount:selected.length});
+            }catch(err){console.error(err);leaveMessage('فشل الاعتماد السحابي؛ لم يُعلن نجاح الإجازة. راجع قواعد Firebase والاتصال.',true);}
+            finally{btn.disabled=false;}
+        }
+        async function cancelStudentLeave(id){
+            if(state.currentUser?.role!=='admin'||!database||!leaveCloudReady)return;
+            if(!confirm('إلغاء الإجازة المعتمدة؟ سيُسجل تاريخ الإلغاء دون حذف السجل.'))return;
+            const ref=database.ref('/studentLeaves/'+id);
+            try{await ref.transaction(current=>current?.status==='approved'?{...current,status:'cancelled',cancelledById:String(state.currentUser.id),cancelledAt:firebase.database.ServerValue.TIMESTAMP}:undefined,undefined,false);recordAudit('إلغاء إجازة إلكترونية',{leaveId:id});renderLeaveChoices();}catch(err){leaveMessage('تعذر إلغاء الإجازة في Firebase.',true);}
+        }
+        function startStudentLeaveListener(){
+            if(leaveListenerStarted||!database)return;
+            leaveListenerStarted=true;
+            database.ref('/studentLeaves').on('value',snap=>{
+                approvedLeaves=Object.values(snap.val()||{}).filter(x=>x&&typeof x==='object');
+                leaveCloudReady=true;
+                if(state.currentUser?.role==='professor'){
+                    scheduleIncrementalUiRefresh('attendances',200);
+                    if(typeof getProfessorSubject==='function' && getProfessorSubject()){
+                        const currentSubject=getProfessorSubject();
+                        const container=document.getElementById('profGroupsContainer');
+                        if(container && String(container.dataset.subjectId||'')===String(currentSubject.id)){
+                            const preserved=captureProfessorViewState();
+                            renderProfessorGroups(getStudentsForProfessor());
+                            if(typeof restoreProfessorViewState==='function')restoreProfessorViewState(preserved);
+                        }
+                    }
+                }
+                if(document.getElementById('studentLeaveDialog')?.open)renderLeaveChoices();
+            },err=>{leaveCloudReady=false;console.error('تعذر قراءة الإجازات:',err);});
         }
 
         function renderAdmin() {
@@ -9068,8 +9238,8 @@
             return {code:'ok',label:'مكتمل داخل النظام — تحقق من إرسال واتساب',cls:'submission-ok',latest:latestCompleted,workflow};
         }
 
-        // V45.38: لا نعدّ غياباً مكتمل التسجيل لمجرد وجود غياب طالب واحد.
-        // يجب توفر سجل حضور/غياب صريح لكل طالب في كل شعبة ومحاضرة منشورة حتى لحظة التحقق.
+        // V45.39: غياب العلامة يعني حضوراً افتراضياً فقط بعد بدء المحاضرة.
+        // يتحول إلى سجل حضور صريح عند تأكيد إرسال المادة، وليس قبل بدء المحاضرة.
         function getProfessorDailyCompletion(dateISO=getProfessorAttendanceWorkDate()) {
             const issues=[];const sessions=[];
             const subjects=getProfessorSubjects();
@@ -9089,11 +9259,44 @@
                         const future=dateISO===today && Number(lecture.startMinutes)>now;
                         sessions.push({subjectId:String(subject.id),group,time,missing:missing.length,future,label});
                         if(future)issues.push(`${label}: المحاضرة لم تبدأ بعد`);
-                        else if(missing.length)issues.push(`${label}: لم تُسجّل حالة ${missing.length} طالب`);
+                        // الحالات غير المحددة تُحسب حضوراً افتراضياً بعد بدء المحاضرة؛ تُثبَّت عند التأكيد.
                     }
                 }
             }
             return {ready:issues.length===0 && sessions.length>0,issues:issues.length?issues:(!sessions.length?['لا توجد محاضرات منشورة للأستاذ في هذا التاريخ.']:[]),sessions};
+        }
+
+        // V45.39: أنشئ حضوراً صريحاً للمحاضرات التي بدأت فقط، دون تغيير الغياب المسجل.
+        // نتحقق من جميع عمليات الإضافة قبل إجراء أول تعديل، لتفادي الحفظ الجزئي.
+        function finalizeImplicitPresenceForSubject(subject, dateISO=getProfessorAttendanceWorkDate()) {
+            const today=getLocalDateISO();
+            const nowMinutes=getBaghdadClock().minutes;
+            const students=state.students.filter(st=>studentMatchesSubject(st,subject));
+            const groups=[...new Set(students.map(st=>professorGroupNameForStudent(st,subject)))];
+            const pending=[];
+            for(const group of groups){
+                const members=students.filter(st=>professorGroupNameForStudent(st,subject)===group);
+                for(const lecture of getScheduledAttendanceLectures(subject,group,dateISO)){
+                    if(dateISO===today && Number(lecture.startMinutes)>nowMinutes)continue;
+                    const time=formatMinutes24(lecture.startMinutes);
+                    const context={ok:true,date:dateISO,sessionTime:time,groupName:group,subjectId:subject.id,
+                        professorId:subject.professorId,lecture,lectureId:String(lecture.id||''),
+                        scheduleVersionId:String(lecture._scheduleVersionId||''),
+                        schedulePublishedAt:Number(lecture._schedulePublishedAt)||null,scheduleVerified:true,manualOverride:false};
+                    for(const student of members){
+                        if(findAttendanceForSession(student.id,subject.id,dateISO,time))continue;
+                        const check=validateAttendanceWriteIntegrity(student.id,subject,context);
+                        if(!check.ok)throw new Error(`تعذر اعتماد حضور ${student.name}: ${check.reason}`);
+                        pending.push({student,context});
+                    }
+                }
+            }
+            for(const {student,context} of pending){
+                upsertAttendanceState(student.id,subject,context,0,0,'implicit-present-on-submission');
+            }
+            if(pending.length)recordAudit('اعتماد الحضور الافتراضي عند إرسال المادة',{
+                subjectId:subject.id,date:dateISO,presentCount:pending.length});
+            return pending.length;
         }
 
         function renderProfessorSubmissionStatus(subject) {
@@ -9114,7 +9317,7 @@
             const locked=isProfessorSubjectLockedAfterSubmission(subject);
             const dailyCompletion=getProfessorDailyCompletion();
             const dailyNotice=document.getElementById('profDailyCompletionNotice');
-            if(dailyNotice){dailyNotice.textContent=dailyCompletion.ready?`✅ اكتملت حالات الطلبة في ${dailyCompletion.sessions.length} محاضرة مجدولة. يمكن الإرسال إلى النظام.`:`⛔ أكمل جميع محاضرات هذا اليوم قبل الإرسال: ${dailyCompletion.issues.slice(0,5).join(' | ')}`;dailyNotice.style.background=dailyCompletion.ready?'#dcfce7':'#fee2e2';}
+            if(dailyNotice){dailyNotice.textContent=dailyCompletion.ready?`✅ ${dailyCompletion.sessions.length} محاضرة مجدولة؛ الطلبة غير المحددين يُعتمدون حاضرين تلقائياً عند الإرسال.`:`⛔ أكمل جميع محاضرات هذا اليوم قبل الإرسال: ${dailyCompletion.issues.slice(0,5).join(' | ')}`;dailyNotice.style.background=dailyCompletion.ready?'#dcfce7':'#fee2e2';}
             if(button){
                 const needsNewSubmission=(st.code==='reopened'||st.code==='dirty'||st.code==='pending');
                 button.style.display=(needsNewSubmission&&(!locked||st.code==='dirty'))?'block':'none';
@@ -9697,14 +9900,19 @@
                     const statusIcon = status==='جيد'?'🟢':status==='تنبيه'?'🔵':status==='إنذار أولي'?'🟡':status==='إنذار نهائي'?'🟠':'🔴';
                     const sessionRecord = context.ok?findAttendanceForSession(st.id,sub?.id,context.date,context.sessionTime):null;
                     const hasAbsence = Number(sessionRecord?.hours) > 0;
-                    const isPresent=!!sessionRecord&&!hasAbsence;
+                    const isPresent=context.ok&&!hasAbsence&&!leaveForAttendance(st.id,sub,context);
                     const studentGroupContext = `📖 الشعبة ${studentTheoreticalGroup(st)||'غير محددة'} · 🔬 العملي ${studentPracticalGroup(st)||'غير موزع'}`;
                     const encodedStudent=encodeURIComponent(String(st.id));
+                    const approvedLeave=context.ok?leaveForAttendance(st.id,sub,context):null;
+                    const leaveLocked=!!approvedLeave || !leaveCloudReady;
+                    const leaveBadge=approvedLeave?'<span class="badge bg-blue" style="font-size:10px">إجازة معتمدة — محمي</span>':'';
+                    const rowStyle=approvedLeave?'style="background:#dbeafe!important;border:2px solid #60a5fa!important;opacity:.83"':'';
+                    const rowDisabled=disabled || (leaveLocked?'disabled aria-disabled="true"':'');
                     if (state.quickMode) {
-                        html += `<div class="student-quick-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-seq">${groupStudents.indexOf(st)+1}</span><span class="student-label">${escapeHtml(st.name)}</span> <span class="student-status-icon">${statusIcon}</span><span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="present" aria-pressed="${isPresent?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present ${isPresent?'attendance-selected':hasAbsence?'attendance-dimmed':''}">✅ حاضر</button><button data-attendance-control="1" ${disabled} title="${actionTitle}" data-attendance-action="absent" aria-pressed="${hasAbsence?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent ${hasAbsence?'attendance-selected':isPresent?'attendance-dimmed':''}">❌ غائب</button></div></div>`;
+                        html += `<div class="student-quick-item" ${rowStyle} data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-seq">${groupStudents.indexOf(st)+1}</span><span class="student-label">${escapeHtml(st.name)}</span> ${leaveBadge} <span class="student-status-icon">${statusIcon}</span><span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="btn-group"><button data-attendance-control="1" ${rowDisabled} title="${approvedLeave?'إجازة معتمدة':actionTitle}" data-attendance-action="present" aria-pressed="${isPresent?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'present')" class="btn-present ${isPresent?'attendance-selected':hasAbsence?'attendance-dimmed':''}">✅ حاضر</button><button data-attendance-control="1" ${rowDisabled} title="${approvedLeave?'إجازة معتمدة':actionTitle}" data-attendance-action="absent" aria-pressed="${hasAbsence?'true':'false'}" onclick="quickRecord(decodeURIComponent('${encodedStudent}'),'absent')" class="btn-absent ${hasAbsence?'attendance-selected':isPresent?'attendance-dimmed':''}">❌ غائب</button></div></div>`;
                     } else {
-                        const todayBadge = hasAbsence ? '<span data-attendance-session-badge="1" class="badge bg-red" style="font-size:8px;">غائب في هذه المحاضرة</span>' : isPresent ? '<span data-attendance-session-badge="1" class="badge bg-green" style="font-size:8px;">حاضر في هذه المحاضرة</span>' : '<span data-attendance-session-badge="1" class="badge" style="font-size:8px;background:#e2e8f0;color:#475569;">لم تُسجل حالته</span>';
-                        html += `<div class="student-item" data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-seq">${groupStudents.indexOf(st)+1}</span>👨‍🎓 ${escapeHtml(st.name)} <span class="student-status-icon">${statusIcon}</span> ${todayBadge}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="student-actions" style="display:flex;gap:4px;flex-wrap:wrap;"><button data-attendance-control="1" ${disabled} title="${actionTitle}" onclick="markStudentAbsent(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-warning" style="font-size:10px;">📝</button><span data-remove-absence-slot="1">${hasAbsence?`<button data-attendance-control="1" ${sessionLocked?'disabled aria-disabled="true"':''} title="${sessionLocked?(context.reason||'الجلسة غير متاحة'):'إزالة غياب هذه المحاضرة'}" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:''}</span></div></div>`;
+                        const todayBadge = hasAbsence ? '<span data-attendance-session-badge="1" class="badge bg-red" style="font-size:8px;">غائب في هذه المحاضرة</span>' : isPresent ? '<span data-attendance-session-badge="1" class="badge bg-green" style="font-size:8px;">حاضر في هذه المحاضرة</span>' : '<span data-attendance-session-badge="1" class="badge" style="font-size:8px;background:#e2e8f0;color:#475569;">لا توجد محاضرة متاحة</span>';
+                        html += `<div class="student-item" ${rowStyle} data-student-id="${escapeHtml(String(st.id))}"><span class="student-name"><span class="student-seq">${groupStudents.indexOf(st)+1}</span>👨‍🎓 ${escapeHtml(st.name)} ${leaveBadge} <span class="student-status-icon">${statusIcon}</span> ${todayBadge}<span class="prof-group-context">${escapeHtml(studentGroupContext)}</span></span><div class="student-actions" style="display:flex;gap:4px;flex-wrap:wrap;"><button data-attendance-control="1" ${rowDisabled} title="${approvedLeave?'إجازة معتمدة':actionTitle}" onclick="markStudentAbsent(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-warning" style="font-size:10px;">📝</button><span data-remove-absence-slot="1">${hasAbsence?`<button data-attendance-control="1" ${sessionLocked||leaveLocked?'disabled aria-disabled="true"':''} title="${sessionLocked?(context.reason||'الجلسة غير متاحة'):'إزالة غياب هذه المحاضرة'}" onclick="removeCurrentSessionAbsence(decodeURIComponent('${encodedStudent}'))" class="btn-sm btn-secondary" style="font-size:10px;">↩ إزالة الغياب</button>`:''}</span></div></div>`;
                     }
                 });
                 html += `</div></div>`;
@@ -9740,7 +9948,7 @@
             const statusIcon=status==='جيد'?'🟢':status==='تنبيه'?'🔵':status==='إنذار أولي'?'🟡':status==='إنذار نهائي'?'🟠':'🔴';
             const ctx=context||resolveBulkAttendanceContext(sub,professorGroupNameForStudent(student,sub),false);
             const sessionRecord=ctx?.ok?findAttendanceForSession(student.id,sub.id,ctx.date,ctx.sessionTime):null;
-            return {status,statusIcon,hasAbsence:Number(sessionRecord?.hours)>0,isPresent:!!sessionRecord&&Number(sessionRecord?.hours)<=0,context:ctx};
+            return {status,statusIcon,hasAbsence:Number(sessionRecord?.hours)>0,isPresent:!!ctx?.ok&&!(Number(sessionRecord?.hours)>0),context:ctx};
         }
 
         function updateProfessorStudentAttendanceRow(studentId) {
@@ -9765,7 +9973,7 @@
             if(sessionBadge){
                 if(visual.hasAbsence){sessionBadge.className='badge bg-red';sessionBadge.style.fontSize='8px';sessionBadge.textContent='غائب في هذه المحاضرة';}
                 else if(visual.isPresent){sessionBadge.className='badge bg-green';sessionBadge.style.fontSize='8px';sessionBadge.textContent='حاضر في هذه المحاضرة';}
-                else{sessionBadge.className='badge';sessionBadge.style.cssText='font-size:8px;background:#e2e8f0;color:#475569;';sessionBadge.textContent='لم تُسجل حالته';}
+                else{sessionBadge.className='badge';sessionBadge.style.cssText='font-size:8px;background:#e2e8f0;color:#475569;';sessionBadge.textContent='لا توجد محاضرة متاحة';}
             }
             const removeSlot=row.querySelector('[data-remove-absence-slot]');
             if(removeSlot){
@@ -10341,6 +10549,10 @@
                 await attendancePersistenceQueue.catch(()=>false);
                 const confirmCheck=getProfessorDailyCompletion();
                 if(!confirmCheck.ready){alert('لم يكتمل تسجيل جميع محاضرات اليوم:\n'+confirmCheck.issues.join('\n'));return false;}
+                // V45.39: تثبيت الحضور الافتراضي قبل إنشاء بصمة الإرسال والمزامنة.
+                // عند أي تعارض أو صلاحية غير كافية يتوقف الإرسال دون اعتماد ناقص.
+                try { finalizeImplicitPresenceForSubject(sub); }
+                catch(error){ alert('تعذر تثبيت الحضور الافتراضي، ولم يُؤكد الإرسال: '+String(error?.message||error)); return false; }
                 const students = getStudentsForProfessor();
                 const realRecords = getSubjectOperationalAttendanceRecords(sub.id);
                 const previousSubmission=getLatestSubmission(sub.id,state.currentUser?.id);
