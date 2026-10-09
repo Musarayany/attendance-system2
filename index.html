@@ -484,6 +484,19 @@
         .leave-register-table td:nth-child(10) { min-width:160px; }
         .leave-register-table th { position:sticky;top:0; }
         @media(max-width:600px){ .leave-register-filters{grid-template-columns:1fr 1fr} .leave-register-filters label:first-child{grid-column:1/-1} .leave-register-actions button{flex:1 1 44%;} }
+        /* V45.42 student QR file: independent from existing professor attendance UI */
+        .student-profile-fold{margin:12px 0;border:1px solid #b9cbe1;border-radius:10px;background:#f8fbff;padding:9px;}
+        .student-profile-fold>summary{cursor:pointer;font-weight:900;color:#1e3a8a;padding:6px;font-size:13px;}
+        .student-profile-table-container{max-height:44vh;overflow:auto;background:white;border:1px solid #cbd5e1;border-radius:8px;}
+        .student-profile-table{width:100%;min-width:650px;border-collapse:collapse;font-size:11px;}
+        .student-profile-table th,.student-profile-table td{padding:7px 5px;border-bottom:1px solid #e2e8f0;text-align:right;vertical-align:middle;}
+        .student-profile-table th{position:sticky;top:0;background:#eaf2fd;color:#1e3a8a;z-index:1;}
+        .student-profile-table input[type=checkbox]{width:18px;height:18px;}
+        .student-profile-table tr.profile-not-editable{opacity:.65;background:#f1f5f9;}
+        .student-profile-leave-row{margin:5px 0;padding:7px;border-bottom:1px solid #e2e8f0;font-size:11px;}
+        .student-profile-correction-controls{display:grid;grid-template-columns:1fr;gap:8px;margin:11px 0;}
+        .student-profile-correction-controls textarea{width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:8px;font-size:12px;resize:vertical;}
+        .student-profile-message{padding:8px 5px;font-size:11px;font-weight:700;color:#334155;white-space:pre-line;}
     </style>
 </head>
 <body>
@@ -491,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.41</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.43</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -538,9 +551,9 @@
 <button onclick="saveHeadAttendance()" class="btn-success">حفظ تعديلات رئيس القسم</button><p id="headAttendanceResult" aria-live="polite"></p></dialog>
         <div id="tab-admin" class="tab-content">
             <div class="card" style="border:2px solid #2563eb;background:#eff6ff" id="adminLeavesPanel">
-              <h3>إجازات الطلبة الإلكترونية</h3>
+              <h3>الملف الإلكتروني للطالب — إجازات وغيابات</h3>
               <p style="font-size:12px">امسح باركود الطالب، حدد تاريخ الإجازة، ثم اختر المحاضرات المشمولة يدوياً. الإجازة ليست حضوراً فعلياً. تنبيه: يتطلب التشغيل قواعد أمان Firebase تسمح للرئيس فقط بالاعتماد والإلغاء.</p>
-              <button type="button" onclick="openLeaveDialog()" class="btn-info">فتح ماسح الباركود وإدارة الإجازة</button>
+              <button type="button" onclick="openLeaveDialog()" class="btn-info">فتح الملف الإلكتروني ومسح QR للطالب</button>
               <button type="button" onclick="openLeaveRegister()" class="btn-secondary">عرض سجل جميع الإجازات</button>
             </div>
             <!-- V45.41: سجل مركزي لإجازات رئيس القسم دون اشتراك Firebase إضافي -->
@@ -575,8 +588,8 @@
                 <button class="btn-sm btn-secondary" id="leaveRegisterNext" onclick="changeLeaveRegisterPage(1)">التالي</button>
               </div>
             </details>
-            <dialog id="studentLeaveDialog" style="width:min(740px,95vw);max-height:90vh;overflow:auto;border:2px solid #2563eb;border-radius:12px;padding:16px" dir="rtl">
-              <h3>منح إجازة لطالب</h3><button onclick="closeLeaveDialog()" class="btn-secondary">إغلاق</button>
+            <dialog id="studentLeaveDialog" oncancel="event.preventDefault();closeLeaveDialog()" style="width:min(740px,95vw);max-height:90vh;overflow:auto;border:2px solid #2563eb;border-radius:12px;padding:16px" dir="rtl">
+              <h3>الملف الإلكتروني للطالب — الإجازات وتصحيح الغيابات</h3><button onclick="closeLeaveDialog()" class="btn-secondary">إغلاق</button>
               <div id="leaveScanner" style="max-width:380px;margin:10px auto"></div>
               <button onclick="startLeaveScanner()" class="btn-info">فتح الكاميرا لمسح الباركود</button>
               <label>باركود الطالب / رقمه</label><input id="leaveStudentCode" placeholder="امسح أو أدخل الرمز" oninput="renderLeaveChoices()">
@@ -585,8 +598,21 @@
               <div id="leaveStudentSummary" style="padding:8px;margin:8px 0"></div>
               <div id="leaveLectureChoices" style="padding:8px"></div>
               <button id="leaveApproveButton" class="btn-success" onclick="approveSelectedStudentLeave()">اعتماد المحاضرات المحددة</button>
-              <div id="leaveHistory" style="padding:8px"></div>
               <p id="leaveMessage" role="status"></p>
+              <details open class="student-profile-fold"><summary>سجل إجازات الطالب (المعتمدة والملغاة)</summary>
+                <div id="leaveHistory" style="padding:8px"></div>
+              </details>
+              <details open class="student-profile-fold"><summary>سجل الغيابات القديمة وتصحيحها بقرار رئيس القسم</summary>
+                <div id="studentProfileAbsenceSummary" aria-live="polite" class="student-profile-message"></div>
+                <div class="student-profile-table-container"><table class="student-profile-table"><thead><tr><th>تحديد</th><th>التاريخ والوقت</th><th>المادة والأستاذ</th><th>المجموعة</th><th>الحالة المسجلة</th></tr></thead><tbody id="studentProfileAbsences"></tbody></table></div>
+                <div class="student-profile-correction-controls">
+                  <label>التصحيح المطلوب<select id="studentProfileCorrectionType" onchange="renderStudentProfileAbsences()"><option value="excused">تحويل الغياب إلى غائب بعذر</option><option value="present">تصحيح الغياب إلى حاضر (إذا ثبت الحضور الفعلي)</option></select></label>
+                  <label>سبب التصحيح (إلزامي، لا يقل عن 8 أحرف)<textarea id="studentProfileCorrectionReason" rows="2" placeholder="اذكر رقم الكتاب أو السبب أو المستند الداعم"></textarea></label>
+                  <button type="button" id="studentProfileCorrectionSave" class="btn-warning" onclick="saveStudentProfileCorrections()">اعتماد تصحيح الغيابات المحددة</button>
+                </div>
+                <div id="studentProfileCorrectionStatus" class="student-profile-message" role="status" aria-live="polite"></div>
+                <small>عملية التصحيح الجماعي تُرسل ككتابة سحابية واحدة تشمل السجلات والتدقيق، لكن منع التعديل المتزامن من جهاز آخر يتطلب قواعد Firebase خادمية صحيحة. إذا كانت النتيجة غير مؤكدة، لا تُعِد الإرسال قبل التحقق من معرّف العملية. لا تُنشأ سجلات حضور قديمة دون سجل سابق.</small>
+              </details>
             </dialog>
 
             <div class="card" style="background:#f0fdf4; border:2px solid #48bb78;">
@@ -1092,7 +1118,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.41-central-leave-register';
+        const APP_VERSION = '45.43-atomic-qr-corrections-preview';
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -6000,6 +6026,257 @@
         }
 
 
+        // V45.42 — الملف الإلكتروني: قراءة غير مغيرة للسجلات القديمة، وتعديل مسجّل فقط بعد اختيار واعتماد الرئيس.
+        let studentProfileSelected=new Map();
+        let studentProfileSelectedStudentId='';
+        let studentProfileCorrectionBusy=false;
+        function studentProfileResetSelection(){
+            studentProfileSelected.clear();studentProfileSelectedStudentId='';
+            const status=document.getElementById('studentProfileCorrectionStatus');if(status)status.textContent='';
+        }
+        function studentProfileAttendanceRows(studentId){
+            if(state.currentUser?.role!=='admin'||!studentId)return [];
+            return getLogicalAttendanceRecords().filter(r=>
+                String(r.studentId)===String(studentId) && Number(r.hours)>0 &&
+                typeof r.date==='string' && r.date<=getLocalDateISO() && r.cancelled!==true
+            ).sort((a,b)=>String(b.date).localeCompare(String(a.date)) ||
+                String(b.sessionTime||'').localeCompare(String(a.sessionTime||'')) || String(a.id).localeCompare(String(b.id)));
+        }
+        function studentProfileCanEditAbsence(row,student,desired){
+            if(!row||!student||String(row.studentId)!==String(student.id)||Number(row.hours)<=0)return false;
+            if(row.superseded===true||row.cancelled===true||!isValidAttendanceDate(row.date)||row.date>getLocalDateISO())return false;
+            if(!normalizeSessionTime(row.sessionTime) || attendanceRecordSessionKey(row)==='legacy')return false;
+            if(baghdadLectureEpoch(row.date,Number(row.sessionTime.slice(0,2))*60+Number(row.sessionTime.slice(3,5)))>Date.now())return false;
+            if(!String(row.lectureGroup||'').trim())return false; // سياق المجموعة القديمة شرط لتجنب نقل الغياب إلى شعبة مختلفة.
+            if(!state.subjects.some(s=>String(s.id)===String(row.subjectId)))return false;
+            if(isStudentOfficiallyDeleted(student.id,student.barcode))return false;
+            if(!leaveCloudReady||activeApprovedLeave(student.id,row.subjectId,row.date,row.sessionTime))return false;
+            if(desired==='excused'&&Number(row.excused)===1)return false;
+            return desired==='present'||desired==='excused';
+        }
+        function studentProfileSetCorrectionStatus(message,error=false){
+            const el=document.getElementById('studentProfileCorrectionStatus');
+            if(el){el.textContent=message;el.style.color=error?'#991b1b':'#166534';}
+        }
+        function studentProfileSelectAbsence(id,selected){
+            if(studentProfileCorrectionBusy||state.currentUser?.role!=='admin')return;
+            const student=leaveSelectedStudent();
+            if(!student||String(student.id)!==String(studentProfileSelectedStudentId))return;
+            const row=studentProfileAttendanceRows(student.id).find(r=>String(r.id)===String(id));
+            const desired=document.getElementById('studentProfileCorrectionType')?.value||'excused';
+            if(selected&&studentProfileCanEditAbsence(row,student,desired)){
+                studentProfileSelected.set(String(id),{
+                    attendanceSnapshot:headAttendanceSnapshot(student.id,row.subjectId,row.date,row.sessionTime),
+                    recordSnapshot:JSON.stringify(stableComparable(row)),
+                    studentSnapshot:JSON.stringify(stableComparable(student)),
+                    subjectSnapshot:JSON.stringify(stableComparable(state.subjects.find(s=>String(s.id)===String(row.subjectId))))
+                });
+            }else studentProfileSelected.delete(String(id));
+            renderStudentProfileAbsences();
+        }
+        function renderStudentProfileAbsences(){
+            const tbody=document.getElementById('studentProfileAbsences');
+            const summary=document.getElementById('studentProfileAbsenceSummary');
+            const button=document.getElementById('studentProfileCorrectionSave');
+            if(!tbody||!summary)return;
+            const student=leaveSelectedStudent();
+            if(!student||state.currentUser?.role!=='admin'){
+                studentProfileSelected.clear();studentProfileSelectedStudentId='';
+                tbody.replaceChildren();summary.textContent='امسح رمز QR للطالب أو أدخل معرّفه لعرض الغيابات القديمة.';
+                if(button)button.disabled=true;
+                return;
+            }
+            if(studentProfileSelectedStudentId!==String(student.id)){
+                studentProfileSelected.clear();studentProfileSelectedStudentId=String(student.id);
+            }
+            const records=studentProfileAttendanceRows(student.id);
+            const desired=document.getElementById('studentProfileCorrectionType')?.value||'excused';
+            for(const id of studentProfileSelected.keys()){
+                const row=records.find(r=>String(r.id)===String(id));
+                if(!studentProfileCanEditAbsence(row,student,desired))studentProfileSelected.delete(id);
+            }
+            summary.textContent=`الغيابات المسجلة: ${records.length} | غير المعذورة: ${records.filter(r=>!Number(r.excused)).length} | بعذر: ${records.filter(r=>Number(r.excused)).length} | المحدد للتصحيح: ${studentProfileSelected.size}`;
+            const fragment=document.createDocumentFragment();
+            if(!records.length){const tr=document.createElement('tr');const td=document.createElement('td');td.colSpan=5;td.textContent='لا توجد سجلات غياب سابقة لهذا الطالب.';tr.append(td);fragment.append(tr);}
+            records.forEach(row=>{
+                const sub=state.subjects.find(s=>String(s.id)===String(row.subjectId));
+                const prof=state.professors.find(p=>String(p.id)===String(sub?.professorId));
+                const editable=studentProfileCanEditAbsence(row,student,desired);
+                const tr=document.createElement('tr');if(!editable)tr.className='profile-not-editable';
+                const cell=()=>{const td=document.createElement('td');tr.append(td);return td;};
+                const td=cell(),checkbox=document.createElement('input');checkbox.type='checkbox';
+                checkbox.checked=studentProfileSelected.has(String(row.id));checkbox.disabled=!editable||studentProfileCorrectionBusy;
+                checkbox.setAttribute('aria-label','تحديد غياب '+String(row.date));
+                checkbox.addEventListener('change',()=>studentProfileSelectAbsence(row.id,checkbox.checked));td.append(checkbox);
+                cell().textContent=String(row.date)+' — '+String(row.sessionTime||'وقت غير موثق');
+                cell().textContent=(sub?.name||'مادة غير معروفة')+' — '+(prof?.name||'أستاذ غير معروف');
+                cell().textContent=String(row.lectureGroup||'مجموعة غير مثبتة');
+                cell().textContent=(Number(row.excused)===1?'غائب بعذر':'غائب')+(editable?'':' — للمراجعة اليدوية');
+                fragment.append(tr);
+            });
+            tbody.replaceChildren(fragment);
+            if(button)button.disabled=studentProfileCorrectionBusy||studentProfileSelected.size===0;
+        }
+        // V45.43: الكتابة المتعددة المسارات ذرية في RTDB (نجاح الجميع أو رفض الجميع).
+        // التحقق من الإصدار/الإجازات هنا احترازي فقط. لا يصبح CAS خادمياً إلا بقواعد Firebase
+        // مع Authentication موثوق؛ لا تعتمد صلاحية role المخزنة في HTML كحماية خادمية.
+        const QR_CORRECTION_PENDING_KEY='physics_qr_correction_pending_v4543';
+        function qrPendingCorrectionId(){
+            try{return String(localStorage.getItem(QR_CORRECTION_PENDING_KEY)||'');}catch(_){return '';}
+        }
+        function qrSetPendingCorrectionId(id){
+            try{if(id)localStorage.setItem(QR_CORRECTION_PENDING_KEY,String(id));else localStorage.removeItem(QR_CORRECTION_PENDING_KEY);}catch(_){}
+        }
+        async function qrVerifyCorrectionBatch(batchId, expectedIds=[]){
+            if(!database||!firebaseTransportConnected)return false;
+            const snap=await withTimeout(database.ref('/attendanceCorrectionBatches/'+firebaseRecordKey(batchId)).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة التحقق من عملية تصحيح');
+            const batch=snap.val();
+            if(!batch||batch.status!=='committed'||String(batch.id)!==String(batchId))return false;
+            if(expectedIds.length){
+                const ids=(batch.attendanceIds||[]).map(String);
+                if(ids.length!==expectedIds.length||!expectedIds.every(id=>ids.includes(String(id))))return false;
+            }
+            return true;
+        }
+        async function qrCheckPendingCorrection(){
+            const pending=qrPendingCorrectionId();
+            if(!pending)return true;
+            try{
+                if(await qrVerifyCorrectionBatch(pending)){
+                    qrSetPendingCorrectionId('');
+                    studentProfileSetCorrectionStatus('تم التحقق من نجاح دفعة التصحيح السابقة ('+pending+'). راجع السجلات قبل تصحيح آخر.');
+                    return false; // تحتاج الصفحة إلى إعادة فتح بعد تأكيد العملية السابقة.
+                }
+            }catch(e){console.warn('تعذر التحقق من تصحيح معلق:',e);}
+            studentProfileSetCorrectionStatus('توجد عملية تصحيح لم يُحسم مصيرها ('+pending+'). لا تُعِد التصحيح أو تبدأ عملية أخرى قبل فحص المسار attendanceCorrectionBatches في Firebase أو استعادة اتصال ثابت.',true);
+            return false;
+        }
+        function qrBuildAtomicCorrectionUpdates(checked, student, desired, reason, batchId){
+            const updates=Object.create(null), now=Date.now(), attendanceIds=[], revisions=[];
+            const authorId=String(state.currentUser.id||''),authorName=sanitizeText(state.currentUser.name||'',120);
+            for(const item of checked){
+                const before=item.before;
+                // تغيير الحالة فقط مع الحفاظ على المعرّف وبيانات المحاضرة التاريخية.
+                const after=JSON.parse(JSON.stringify(before));
+                after.hours=desired==='present'?0:Number(before.hours);
+                after.excused=desired==='excused'?1:0;
+                after.explicitState=desired==='present'?'present':'absent';
+                after.updatedAt=Math.max(now,Number(before.updatedAt||0)+1);
+                after.lastUpdatedById=authorId;
+                after.lastUpdatedByName=authorName;
+                after.source='head-student-qr-correction';
+                after.qrCorrection={batchId,expectedUpdatedAt:Number(before.updatedAt||0),changedAt:now,byId:authorId,
+                    fromHours:Number(before.hours||0),fromExcused:Number(before.excused||0),toHours:Number(after.hours),toExcused:Number(after.excused),reason};
+                const auditId=makeId('log');
+                const summary={batchId,attendanceId:String(before.id),studentId:String(student.id),subjectId:String(before.subjectId),date:String(before.date),sessionTime:String(before.sessionTime),
+                    before:{hours:Number(before.hours),excused:Number(before.excused)},after:{hours:Number(after.hours),excused:Number(after.excused)},reason};
+                const audit={id:auditId,action:'تصحيح غياب قديم عبر QR بقرار رئيس القسم',details:JSON.stringify(summary),detailsData:summary,
+                    userId:authorId,userName:authorName,role:'admin',date:getLocalDateISO(),
+                    time:new Date().toLocaleTimeString('ar-IQ',{timeZone:'Asia/Baghdad'}),createdAt:now};
+                updates['attendances/'+firebaseRecordKey(before.id)]=firebaseTransportValue(after);
+                updates['auditLogs/'+firebaseRecordKey(auditId)]=firebaseTransportValue(audit);
+                attendanceIds.push(String(before.id));
+                revisions.push({attendanceId:String(before.id),fromHours:Number(before.hours),fromExcused:Number(before.excused),toHours:Number(after.hours),toExcused:Number(after.excused),expectedUpdatedAt:Number(before.updatedAt||0)});
+            }
+            // إثبات دائم لمعرف الدفعة والعدد؛ محفوظ في العملية الذرية نفسها.
+            updates['attendanceCorrectionBatches/'+firebaseRecordKey(batchId)]={id:batchId,status:'committed',studentId:String(student.id),
+                attendanceIds,revisions,action:desired,reason,byId:authorId,byName:authorName,at:firebase.database.ServerValue.TIMESTAMP};
+            return updates;
+        }
+        async function saveStudentProfileCorrections(){
+            if(state.currentUser?.role!=='admin'||studentProfileCorrectionBusy)return false;
+            const student=leaveSelectedStudent(),desired=document.getElementById('studentProfileCorrectionType')?.value;
+            const reason=String(document.getElementById('studentProfileCorrectionReason')?.value||'').trim();
+            if(!student||String(student.id)!==studentProfileSelectedStudentId||!studentProfileSelected.size){studentProfileSetCorrectionStatus('حدد غياباً قديماً واحداً على الأقل.',true);return false;}
+            if(!['present','excused'].includes(desired)||reason.length<8||reason.length>500){studentProfileSetCorrectionStatus('اكتب سبباً واضحاً للتصحيح من 8 إلى 500 حرف.',true);return false;}
+            if(!database||!cloudInitialReadComplete||!firebaseTransportConnected||!leaveCloudReady){studentProfileSetCorrectionStatus('لا يمكن تصحيح السجلات القديمة أثناء انقطاع Firebase. أعد الاتصال أولاً.',true);return false;}
+            const requested=[...studentProfileSelected.entries()];
+            if(requested.length>30){studentProfileSetCorrectionStatus('الحد الأعلى 30 غياباً لكل عملية.',true);return false;}
+            studentProfileCorrectionBusy=true;
+            const button=document.getElementById('studentProfileCorrectionSave');if(button)button.disabled=true;
+            const input=document.getElementById('leaveStudentCode');if(input)input.disabled=true;
+            const leaveApprove=document.getElementById('leaveApproveButton');if(leaveApprove)leaveApprove.disabled=true;
+            try{
+                if(!await qrCheckPendingCorrection())return false;
+                // انتظار أي عمليات سحابية سبقت فتح الملف، فلا نصحح فوق تعديلات محلية غير محسومة.
+                await saveQueue;
+                if(state.isSyncing||buildFirebaseChanges().length||Object.keys(syncConflicts).length)throw new Error('هناك حفظ أو تعارضات سحابية معلقة. أنهِها قبل التصحيح.');
+                const checked=[];
+                for(const [id,snapshot] of requested){
+                    const row=studentProfileAttendanceRows(student.id).find(r=>String(r.id)===id);
+                    if(!studentProfileCanEditAbsence(row,student,desired))throw new Error('أحد السجلات غير قابل للتعديل أو مرتبط بإجازة معتمدة.');
+                    const sub=state.subjects.find(s=>String(s.id)===String(row.subjectId));
+                    if(JSON.stringify(stableComparable(row))!==snapshot.recordSnapshot ||
+                        headAttendanceSnapshot(student.id,row.subjectId,row.date,row.sessionTime)!==snapshot.attendanceSnapshot ||
+                        JSON.stringify(stableComparable(student))!==snapshot.studentSnapshot ||
+                        JSON.stringify(stableComparable(sub))!==snapshot.subjectSnapshot)
+                        throw new Error('تغير سجل الطالب أو المادة بعد تحديده؛ أعد فتح الملف ومراجعته.');
+                    if(Object.values(syncConflicts).some(c=>[c.before,c.after,c.remote].some(r=>r&&(
+                        (c.name==='students'&&String(r.id)===String(student.id))||
+                        (c.name==='attendances'&&String(r.studentId)===String(student.id)&&String(r.subjectId)===String(row.subjectId))))))
+                        throw new Error('هناك تعارض مزامنة يخص الطالب؛ عالجه أولاً.');
+                    // نقرأ حالة الإجازة المحددة من السحابة قبل التصحيح؛ ليست قفلاً ذرياً حتى تُفعّل Rules المناسبة.
+                    const leaveId='leave_'+Array.from(new TextEncoder().encode(leaveKey(student.id,row.subjectId,row.date,row.sessionTime))).map(b=>b.toString(16).padStart(2,'0')).join('');
+                    const leave=(await withTimeout(database.ref('/studentLeaves/'+leaveId).once('value'))).val();
+                    if(leave?.status==='approved')throw new Error('اعتمدت إجازة لهذا الطالب وهذه المحاضرة على Firebase. التصحيح متوقف.');
+                    const remote=(await withTimeout(database.ref('/attendances/'+firebaseRecordKey(id)).once('value'))).val();
+                    if(!remote||!sameRecord(remote,row))throw new Error('تغير سجل غياب في Firebase أو لم يُعثر عليه. أعد المراجعة.');
+                    const context={date:row.date,sessionTime:row.sessionTime,groupName:row.lectureGroup,
+                        subjectId:sub.id,professorId:sub.professorId,lectureId:row.lectureId||'',
+                        scheduleVersionId:row.scheduleVersionId||'',schedulePublishedAt:row.schedulePublishedAt||null,
+                        scheduleVerified:row.scheduleVerified===true,manualOverride:row.manualOverride===true,adminHistoricalExisting:true};
+                    const integrity=validateAttendanceWriteIntegrity(student.id,sub,context);
+                    if(!integrity.ok)throw new Error(integrity.reason);
+                    checked.push({row,sub,before:JSON.parse(JSON.stringify(remote))});
+                }
+                if(String(leaveSelectedStudent()?.id||'')!==String(student.id))throw new Error('تغير الطالب المعروض؛ أعد العملية.');
+                if(!firebaseTransportConnected||!leaveCloudReady)throw new Error('انقطع اتصال Firebase أثناء المراجعة.');
+                const details=checked.map(e=>`${e.row.date} ${e.row.sessionTime} / ${e.sub.name} / ${e.row.lectureGroup}`).join('\n');
+                if(!confirm(`تأكيد تصحيح ${checked.length} غياب باسم رئيس القسم إلى «${desired==='present'?'حاضر':'غائب بعذر'}»؟\nالسبب: ${reason}\n${details}`))return false;
+                const batchId=makeId('qrfix');
+                const updates=qrBuildAtomicCorrectionUpdates(checked,student,desired,reason,batchId);
+                qrSetPendingCorrectionId(batchId);
+                // RTDB update() من الجذر: تغيير السجلات + التدقيق + سجل الدفعة في كتابة ذرية واحدة.
+                // على عكس saveAll() لا نغيّر state قبل تأكيد كتابة Firebase.
+                try{
+                    await withTimeout(database.ref('/').update(updates),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تصحيح QR؛ نتيجة العملية غير مؤكدة');
+                }catch(writeError){
+                    // رفض صلاحيات قطعي من الخادم = لم تُقبل الكتابة الذرية؛ لا تبقَ معلقة بلا سبب.
+                    if(String(writeError?.code||'').toUpperCase().includes('PERMISSION_DENIED')){
+                        qrSetPendingCorrectionId('');
+                        throw new Error('رفضت قواعد Firebase كتابة الدفعة كاملة. لم يُطبّق التصحيح؛ راجع قواعد الصلاحيات.');
+                    }
+                    let committed=false;
+                    try{committed=await qrVerifyCorrectionBatch(batchId,checked.map(x=>x.row.id));}catch(_){}
+                    if(!committed)throw new Error('لم يتأكد مصير عملية '+batchId+'؛ لا تُعدها. افحص Firebase عند عودة الاتصال. '+String(writeError.message||''));
+                }
+                if(!await qrVerifyCorrectionBatch(batchId,checked.map(x=>x.row.id)))throw new Error('وصل رد الكتابة ولكن تعذّر إثبات سجل الدفعة '+batchId+'. لا تُعِد الإرسال.');
+                // تحقق من كل سجل بعد الكتابة قبل إعلان النجاح؛ لا نعتمد على Echo المستمعات فقط.
+                for(const item of checked){
+                    const actual=(await withTimeout(database.ref('/attendances/'+firebaseRecordKey(item.row.id)).once('value'))).val();
+                    if(!actual||String(actual.qrCorrection?.batchId)!==batchId||Number(actual.hours)!==(desired==='present'?0:Number(item.before.hours))||Number(actual.excused)!==(desired==='excused'?1:0))
+                        throw new Error('اختلاف سجل بعد حفظ دفعة '+batchId+'؛ تحقق من وجود تعديل متزامن قبل أي إعادة محاولة.');
+                    applyRemoteChild('attendances',actual,firebaseRecordKey(item.row.id));
+                }
+                qrSetPendingCorrectionId('');
+                studentProfileSelected.clear();
+                document.getElementById('studentProfileCorrectionReason').value='';
+                let localSaved=true;
+                try{localSaved=await persistLocalState('qr-atomic-cloud-confirmed',true);}catch(err){localSaved=false;console.warn('تم تأكيد الحفظ السحابي لكن تعذّر تحديث النسخة المحلية:',err);}
+                studentProfileSetCorrectionStatus('تم اعتماد '+checked.length+' تصحيحاً على Firebase مع سجل التدقيق. رقم العملية: '+batchId+(localSaved?'':' — تعذر تحديث النسخة المحلية؛ حدّث الصفحة بعد التأكد من الاتصال.'));
+                scheduleRenderRefresh('attendances');
+                return true;
+            }catch(error){
+                studentProfileSetCorrectionStatus('لم يُعلن نجاح التصحيح: '+String(error.message||error),true);
+                return false;
+            }finally{
+                studentProfileCorrectionBusy=false;
+                const input=document.getElementById('leaveStudentCode');if(input)input.disabled=false;
+                const leaveApprove=document.getElementById('leaveApproveButton');if(leaveApprove)leaveApprove.disabled=false;
+                renderStudentProfileAbsences();
+            }
+        }
+
         // V45.40: إجازات مستقلة؛ لا تُحوَّل إلى حضور أو غياب وتُحفظ مباشرة على المسار المخصص.
         // V45.41: عرض السجل من ذاكرة مستمع studentLeaves الموجود، دون اتصال إضافي بقاعدة البيانات.
         const LEAVE_REGISTER_PAGE_SIZE = 25;
@@ -6259,21 +6536,25 @@
         function leaveMessage(message,error=false){const el=document.getElementById('leaveMessage');if(el){el.style.color=error?'#b91c1c':'#166534';el.textContent=message;}}
         function openLeaveDialog(){
             if(state.currentUser?.role!=='admin')return;
+            studentProfileResetSelection();
             document.getElementById('leaveDate').value=getLocalDateISO();
             document.getElementById('studentLeaveDialog').showModal();
             renderLeaveChoices();
         }
         async function closeLeaveDialog(){
+            if(studentProfileCorrectionBusy)return;
+            if(studentProfileSelected.size && !confirm('توجد غيابات محددة لم تُصحّح. إلغاء التحديد وإغلاق الملف؟'))return;
+            studentProfileResetSelection();
             if(leaveQrScanner){try{await leaveQrScanner.stop();}catch(e){}try{await leaveQrScanner.clear();}catch(e){}leaveQrScanner=null;}
             document.getElementById('studentLeaveDialog')?.close();
         }
         async function startLeaveScanner(){
-            if(state.currentUser?.role!=='admin')return;
+            if(state.currentUser?.role!=='admin'||studentProfileCorrectionBusy)return;
             if(typeof Html5Qrcode==='undefined'){leaveMessage('مكتبة الكاميرا غير جاهزة. أدخل الباركود يدوياً.',true);return;}
             if(leaveQrScanner)return;
             try{
                 leaveQrScanner=new Html5Qrcode('leaveScanner');
-                await leaveQrScanner.start({facingMode:'environment'},{fps:8,qrbox:{width:230,height:150}},async code=>{
+                await leaveQrScanner.start({facingMode:'environment'},{fps:8,qrbox:{width:220,height:220}},async code=>{
                     document.getElementById('leaveStudentCode').value=String(code).trim();
                     renderLeaveChoices();
                     if(leaveQrScanner){const scanner=leaveQrScanner;leaveQrScanner=null;try{await scanner.stop();await scanner.clear();}catch(e){}}
@@ -6284,7 +6565,7 @@
             const student=leaveSelectedStudent(), date=document.getElementById('leaveDate')?.value;
             const summary=document.getElementById('leaveStudentSummary'), panel=document.getElementById('leaveLectureChoices'), history=document.getElementById('leaveHistory');
             if(!summary||!panel)return;
-            if(!student){summary.textContent='أدخل باركود طالب فريد وصحيح.';panel.innerHTML='';if(history)history.innerHTML='';return;}
+            if(!student){summary.textContent='أدخل باركود طالب فريد وصحيح.';panel.innerHTML='';if(history)history.innerHTML='';studentProfileResetSelection();renderStudentProfileAbsences();return;}
             summary.textContent=`الطالب: ${student.name} — المرحلة ${student.level} — النظري ${studentTheoreticalGroup(student)} — العملي ${studentPracticalGroup(student)}`;
             const options=studentLeaveScheduleOptions(student,date);
             panel.replaceChildren();
@@ -6296,9 +6577,23 @@
                 item.append(cb,label);panel.append(item);
             });
             panel.dataset.options=JSON.stringify(options);
-            if(history){history.replaceChildren();const records=approvedLeaves.filter(r=>String(r.studentId)===String(student.id)&&r.status==='approved').sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,20);history.textContent=records.length?'إجازات معتمدة (آخر 20): ': 'لا توجد إجازات سابقة.';records.forEach(r=>{const div=document.createElement('div');div.textContent=`${r.date} — ${r.subjectName} — ${r.sessionTime} — ${r.reason} `;const btn=document.createElement('button');btn.className='btn-sm btn-danger';btn.textContent='إلغاء';btn.onclick=()=>cancelStudentLeave(r.id);div.append(btn);history.append(div);});}
+            if(history){
+                history.replaceChildren();
+                const records=approvedLeaves.filter(r=>String(r.studentId)===String(student.id)).sort((a,b)=>String(b.date).localeCompare(String(a.date))||Number(b.approvedAt||0)-Number(a.approvedAt||0));
+                const intro=document.createElement('div');intro.textContent=records.length?`إجمالي الإجازات: ${records.length}، بينها ${records.filter(r=>r.status==='approved').length} معتمدة.`:'لا توجد إجازات سابقة.';history.append(intro);
+                records.forEach(r=>{
+                    const div=document.createElement('div');div.className='student-profile-leave-row';
+                    div.textContent=`${r.date||''} — ${r.subjectName||''} — ${r.sessionTime||''} — ${r.reason||''} — ${r.status==='approved'?'معتمدة':r.status==='cancelled'?'ملغاة':'غير معروفة'} `;
+                    if(r.status==='approved'){
+                        const btn=document.createElement('button');btn.className='btn-sm btn-danger';btn.textContent='إلغاء الإجازة';btn.onclick=()=>cancelStudentLeave(r.id);div.append(btn);
+                    }
+                    history.append(div);
+                });
+            }
+            renderStudentProfileAbsences();
         }
         async function approveSelectedStudentLeave(){
+            if(studentProfileCorrectionBusy)return;
             if(state.currentUser?.role!=='admin'||!database||!leaveCloudReady){leaveMessage('الاعتماد متاح فقط لرئيس القسم بعد اكتمال الاتصال السحابي.',true);return;}
             const student=leaveSelectedStudent(),date=document.getElementById('leaveDate').value;
             if(!student){leaveMessage('لم يتم تحديد طالب صحيح.',true);return;}
