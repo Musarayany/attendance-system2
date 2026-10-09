@@ -473,7 +473,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.35.1</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — Stable V45.37</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1022,7 +1022,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.35.1-data-preserving-fixes';
+        const APP_VERSION = '45.37-data-preserving-firebase-reconnect';
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -2383,6 +2383,17 @@
         // V45.30: القراءة الأولية التراكمية.
         // المجموعة التي تُقرأ بنجاح لا يعاد تنزيلها في المحاولة التالية؛
         // يعاد فقط ما بقي ناقصاً، مع بقاء حاجز منع الكتابة حتى اكتمال الجميع.
+        // V45.36: تشخيص محلي للقراءات الأولية، دون تحميل بيانات إضافية أو إرسالها.
+        const firebaseUsageDiagnostics = {initialReadAttempts:Object.create(null), initialReadSuccess:Object.create(null), reconnectsReused:0, startedAt:Date.now()};
+        window.getFirebaseUsageDiagnostics = () => ({
+            initialReadAttempts:{...firebaseUsageDiagnostics.initialReadAttempts},
+            initialReadSuccess:{...firebaseUsageDiagnostics.initialReadSuccess},
+            reconnectsReused:firebaseUsageDiagnostics.reconnectsReused,
+            listenerActive:cloudListenersStarted,
+            initialReadComplete:cloudInitialReadComplete,
+            connected:firebaseTransportConnected,
+            uptimeMinutes:Math.round((Date.now()-firebaseUsageDiagnostics.startedAt)/60000)
+        });
         async function readCloudCollections() {
             if (!database) throw new Error('الاتصال السحابي غير جاهز');
 
@@ -2398,6 +2409,7 @@
             const INITIAL_READ_CONCURRENCY = 2;
 
             const readOne = async name => {
+                firebaseUsageDiagnostics.initialReadAttempts[name]=(firebaseUsageDiagnostics.initialReadAttempts[name]||0)+1;
                 try{
                     const snapshot=await withTimeout(
                         database.ref('/' + name).once('value'),
@@ -2407,6 +2419,7 @@
                     const value=snapshot.val();
                     initialCloudReadCache[name]=value;
                     initialCloudReadCompleted.add(name);
+                    firebaseUsageDiagnostics.initialReadSuccess[name]=(firebaseUsageDiagnostics.initialReadSuccess[name]||0)+1;
                     if(Array.isArray(value))legacyCloudCollections.add(name);
                     return true;
                 }catch(error){
@@ -2749,6 +2762,19 @@
                 try {
                     setStartupStatus('⏳ النسخة المحلية جاهزة — جارٍ فحص التحديثات السحابية...');
                     await initializeFirebaseRuntime();
+                    // V45.36: استمرار الاتصال على نفس صفحة المتصفح لا يستلزم قراءة
+                    // جميع المجموعات من جديد؛ Firebase SDK يعيد مزامنة listeners
+                    // القائمة بعد استعادة النقل. لا نتخطى التحميل الأول أبداً.
+                    if (cloudInitialReadComplete && cloudListenersStarted && state.initialLoadDone) {
+                        firebaseUsageDiagnostics.reconnectsReused++;
+                        cloudConnected = firebaseTransportConnected;
+                        setSyncStatus(firebaseTransportConnected
+                            ? '✅ مستمعات Firebase الحالية تعمل — لا حاجة لإعادة تحميل جميع السجلات'
+                            : '⏳ مستمعات Firebase محفوظة — بانتظار إعادة الاتصال',
+                            firebaseTransportConnected ? '#2f855a' : '#b45309');
+                        if (firebaseTransportConnected) pushToFirebase({silent:true});
+                        return firebaseTransportConnected;
+                    }
                     const loaded = await loadFromFirebase();
                     if (!loaded) return false;
                     await enforceDeletedStudentsCloudCleanup();
