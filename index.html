@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.2 التسوية التلقائية للغياب والإجازة</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.3 (إرسال آمن مع الإجازات) التسوية التلقائية للغياب والإجازة</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1166,7 +1166,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.46.2-retroactive-leave-settlement-preview';
+        const APP_VERSION = '45.46.3-leave-safe-submission-preview';
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -10145,6 +10145,10 @@
         // يتحول إلى سجل حضور صريح عند تأكيد إرسال المادة، وليس قبل بدء المحاضرة.
         function getProfessorDailyCompletion(dateISO=getProfessorAttendanceWorkDate()) {
             const issues=[];const sessions=[];
+            // V45.46.3: The absence of verified leave data must not be interpreted as no leaves.
+            // Block submission before implicit presence or any side effects when verification is unavailable.
+            if(!leaveCloudReady || !firebaseTransportConnected)
+                return {ready:false,issues:['لا يمكن إكمال إرسال الغيابات قبل التحقق من سجل الإجازات في Firebase. أعد فحص الإجازات وانتظر الاتصال.'],sessions};
             const subjects=getProfessorSubjects();
             const today=getLocalDateISO();
             const now=getBaghdadClock().minutes;
@@ -10158,9 +10162,12 @@
                     for(const lecture of lectures){
                         const time=formatMinutes24(lecture.startMinutes);
                         const label=`${subject.name} — ${subject.groupType==='عملي'?'المجموعة العملية':'الشعبة النظرية'} ${group} — ${time}`;
-                        const missing=people.filter(st=>!findAttendanceForSession(st.id,subject.id,dateISO,time));
+                        // A covered student is neither implicitly present nor a missing attendance entry.
+                        const leaveCovered=people.filter(st=>!!activeApprovedLeave(st.id,subject.id,dateISO,time)).length;
+                        const missing=people.filter(st=>!activeApprovedLeave(st.id,subject.id,dateISO,time)
+                            && !findAttendanceForSession(st.id,subject.id,dateISO,time));
                         const future=dateISO===today && Number(lecture.startMinutes)>now;
-                        sessions.push({subjectId:String(subject.id),group,time,missing:missing.length,future,label});
+                        sessions.push({subjectId:String(subject.id),group,time,missing:missing.length,leaveCovered,future,label});
                         if(future)issues.push(`${label}: المحاضرة لم تبدأ بعد`);
                         // الحالات غير المحددة تُحسب حضوراً افتراضياً بعد بدء المحاضرة؛ تُثبَّت عند التأكيد.
                     }
@@ -10172,6 +10179,9 @@
         // V45.39: أنشئ حضوراً صريحاً للمحاضرات التي بدأت فقط، دون تغيير الغياب المسجل.
         // نتحقق من جميع عمليات الإضافة قبل إجراء أول تعديل، لتفادي الحفظ الجزئي.
         function finalizeImplicitPresenceForSubject(subject, dateISO=getProfessorAttendanceWorkDate()) {
+            // Fail closed: an unverified leave list could incorrectly mark protected students present.
+            if(!leaveCloudReady || !firebaseTransportConnected)
+                throw new Error('سجل الإجازات السحابي غير متحقق منه؛ لن يُثبَّت حضور افتراضي لأي طالب.');
             const today=getLocalDateISO();
             const nowMinutes=getBaghdadClock().minutes;
             const students=state.students.filter(st=>studentMatchesSubject(st,subject));
@@ -10187,6 +10197,9 @@
                         scheduleVersionId:String(lecture._scheduleVersionId||''),
                         schedulePublishedAt:Number(lecture._schedulePublishedAt)||null,scheduleVerified:true,manualOverride:false};
                     for(const student of members){
+                        // An approved leave is an explicit third state, not attendance.
+                        // Skip ONLY this student/session without writing or rewriting any record.
+                        if(leaveForAttendance(student.id,subject,context))continue;
                         if(findAttendanceForSession(student.id,subject.id,dateISO,time))continue;
                         const check=validateAttendanceWriteIntegrity(student.id,subject,context);
                         if(!check.ok)throw new Error(`تعذر اعتماد حضور ${student.name}: ${check.reason}`);
