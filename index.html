@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.1 استعادة التحقق من الإجازات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.2 التسوية التلقائية للغياب والإجازة</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -597,7 +597,8 @@
               <label>سبب الإجازة</label><select id="leaveReason"><option value="شخصية">شخصية</option><option value="مرضية">مرضية</option><option value="رسمية">رسمية</option><option value="أخرى">أخرى</option></select>
               <div id="leaveStudentSummary" style="padding:8px;margin:8px 0"></div>
               <div id="leaveLectureChoices" style="padding:8px"></div>
-              <button id="leaveApproveButton" class="btn-success" onclick="approveSelectedStudentLeave()">اعتماد المحاضرات المحددة</button>
+              <button id="leaveApproveButton" class="btn-success" onclick="approveSelectedStudentLeave()">اعتماد المحاضرات المحددة وتسوية الغياب السابق</button>
+              <small>إذا كان هناك غياب غير معذور مطابق للمحاضرة، سيُحوّل إلى «غائب بعذر» دون حذف سجل الأستاذ. عند وجود تعارض أو فشل في التوثيق تُعرض مراجعة مطلوبة؛ لا يُعدّ الاعتماد بمفرده إثباتاً لنجاح التسوية.</small>
               <p id="leaveMessage" role="status"></p>
               <details open class="student-profile-fold"><summary>سجل إجازات الطالب (المعتمدة والملغاة)</summary>
                 <div id="leaveHistory" style="padding:8px"></div>
@@ -1165,7 +1166,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.46.1-leave-sync-recovery-preview';
+        const APP_VERSION = '45.46.2-retroactive-leave-settlement-preview';
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -1305,6 +1306,7 @@
         let leaveListenerLastError = '';
         let leaveSeenTransportOnline = false;
         let leaveReconnectReadInFlight = false;
+        let leaveSettlementBusy = false; // V45.46.2: منع تكرار التسوية من نفس النافذة
         let leaveRegisterPage = 0;
         let leaveRegisterPdfBusy = false;
         let isScanning = false;
@@ -2542,8 +2544,7 @@
                 time: new Date().toLocaleTimeString('ar-IQ',{timeZone:'Asia/Baghdad'}),
                 createdAt: Date.now()
             });
-            // إبقاء السجل بحجم عملي داخل المتصفح وقاعدة البيانات.
-            if (state.auditLogs.length > 2000) state.auditLogs = state.auditLogs.slice(-2000);
+            // V45.46.2: لا نقص سجل التدقيق تلقائياً؛ القص قد ينشر حذفاً للبيانات التاريخية.
         }
 
         // ==============================================================
@@ -6600,7 +6601,7 @@
             const candidates=state.students.filter(st=>String(st.barcode||st.id)===code || String(st.id)===code);
             return candidates.length===1&&!isStudentOfficiallyDeleted(candidates[0].id,candidates[0].barcode)?candidates[0]:null;
         }
-        function leaveMessage(message,error=false){const el=document.getElementById('leaveMessage');if(el){el.style.color=error?'#b91c1c':'#166534';el.textContent=message;}}
+        function leaveMessage(message,error=false){const el=document.getElementById('leaveMessage');if(el){el.style.color=error?'#b91c1c':'#166534';el.textContent=message;el.style.whiteSpace='pre-line';}}
         function openLeaveDialog(){
             if(state.currentUser?.role!=='admin')return;
             studentProfileResetSelection();
@@ -6650,8 +6651,9 @@
                 const intro=document.createElement('div');intro.textContent=records.length?`إجمالي الإجازات: ${records.length}، بينها ${records.filter(r=>r.status==='approved').length} معتمدة.`:'لا توجد إجازات سابقة.';history.append(intro);
                 records.forEach(r=>{
                     const div=document.createElement('div');div.className='student-profile-leave-row';
-                    div.textContent=`${r.date||''} — ${r.subjectName||''} — ${r.sessionTime||''} — ${r.reason||''} — ${r.status==='approved'?'معتمدة':r.status==='cancelled'?'ملغاة':'غير معروفة'} `;
+                    div.textContent=`${r.date||''} — ${r.subjectName||''} — ${r.sessionTime||''} — ${r.reason||''} — ${r.status==='approved'?'معتمدة':r.status==='cancelled'?'ملغاة':'غير معروفة'} — ${r.reconciliation?.status==='applied'?'سُوّي الغياب بعذر':r.reconciliation?.status==='no_absence'?'لا غياب سابق':r.reconciliation?.status==='already_excused'?'معذور مسبقاً':r.reconciliation?.status==='review'?'تحتاج مراجعة':'لم تُتحقق التسوية بعد'} `;
                     if(r.status==='approved'){
+                        const retry=document.createElement('button');retry.className='btn-sm btn-info';retry.textContent='فحص/إعادة تسوية الغياب';retry.onclick=()=>retryApprovedLeaveSettlement(r.id);div.append(retry);
                         const btn=document.createElement('button');btn.className='btn-sm btn-danger';btn.textContent='إلغاء الإجازة';btn.onclick=()=>cancelStudentLeave(r.id);div.append(btn);
                     }
                     history.append(div);
@@ -6659,9 +6661,157 @@
             }
             renderStudentProfileAbsences();
         }
+        // V45.46.2: reconcile a pre-existing absence WITHOUT ever treating an excuse as attendance.
+        // The attendance leaf is updated by a compare-and-set RTDB transaction.  The embedded
+        // leaveSettlement includes the previous values and a durable audit reference so an
+        // interrupted audit write can be resumed without repeating or changing the absence.
+        function leaveSettlementMatchesAttendance(record, leave){
+            if(!record||typeof record!=='object'||record.superseded===true||isEnrollmentRecord(record))return false;
+            if(String(record.studentId)!==String(leave.studentId) || String(record.subjectId)!==String(leave.subjectId) ||
+                String(record.date)!==String(leave.date) || normalizeSessionTime(record.sessionTime)!==normalizeSessionTime(leave.sessionTime))return false;
+            if(attendanceRecordSessionKey(record)==='legacy')return false;
+            return true;
+        }
+        function leaveSettlementGroupConflicts(record, leave){
+            const a=normalizeGroupName(record.lectureGroup||record.groupName||'','');
+            const b=normalizeGroupName(leave.groupName||'','');
+            // Missing historical enrollment/group is not proof that it was this lecture.
+            if(!a||!b||a!==b)return true;
+            // If both records have stable lecture ids, conflicting ids require manual review.
+            if(record.lectureId && leave.lectureId && String(record.lectureId)!==String(leave.lectureId))return true;
+            return false;
+        }
+        function leaveSettlementCandidateIds(leave){
+            const ids=new Set([attendanceCanonicalId(leave.studentId,leave.subjectId,leave.date,leave.sessionTime)]);
+            (state.attendances||[]).forEach(r=>{
+                if(leaveSettlementMatchesAttendance(r,leave) && r.id)ids.add(String(r.id));
+            });
+            return [...ids];
+        }
+        function buildLeaveSettlementAudit(record,leave,metadata){
+            const details={leaveId:String(leave.id),attendanceId:String(record.id),studentId:String(leave.studentId),
+                subjectId:String(leave.subjectId),date:String(leave.date),sessionTime:String(leave.sessionTime),
+                before:metadata.before,after:{hours:Number(record.hours),excused:Number(record.excused)},
+                approvedById:String(leave.approvedById||''),reconciledById:String(metadata.byId),
+                reason:String(leave.reason||''),action:'approve-leave-after-professor-submission'};
+            return {id:String(metadata.auditId),action:'تسوية غياب سابق إلى غائب بعذر بعد اعتماد إجازة',
+                details:JSON.stringify(details),detailsData:details,
+                userId:String(metadata.byId),userName:String(metadata.byName),role:'admin',
+                date:getLocalDateISO(),time:new Date().toLocaleTimeString('ar-IQ',{timeZone:'Asia/Baghdad'}),createdAt:Number(metadata.at)};
+        }
+        async function writeLeaveSettlementAudit(record,leave){
+            const metadata=record?.leaveSettlement;
+            if(!metadata||String(metadata.leaveId)!==String(leave.id)||!metadata.auditId)
+                throw new Error('سجل التسوية لا يتضمن مرجع تدقيق صحيحاً.');
+            const audit=buildLeaveSettlementAudit(record,leave,metadata);
+            const ref=database.ref('/auditLogs/'+firebaseRecordKey(audit.id));
+            const result=await withTimeout(ref.transaction(current=>current===null?firebaseTransportValue(audit):undefined,undefined,false));
+            if(!result.committed){
+                const existing=(await withTimeout(ref.once('value'))).val();
+                if(!existing || String(existing.id)!==audit.id || String(existing.detailsData?.attendanceId||'')!==String(record.id))
+                    throw new Error('تعارض في سجل تدقيق التسوية.');
+            }
+        }
+        async function writeLeaveReconciliationStatus(leaveId,status,detail){
+            const ref=database.ref('/studentLeaves/'+firebaseRecordKey(leaveId));
+            await withTimeout(ref.transaction(current=>{
+                if(!current || current.status!=='approved')return; // cancellation is never undone
+                return {...current,reconciliation:{status,detail:String(detail||'').slice(0,250),checkedAt:firebase.database.ServerValue.TIMESTAMP}};
+            },undefined,false));
+        }
+        async function settleApprovedStudentLeave(leave){
+            if(state.currentUser?.role!=='admin'||!database||!firebaseTransportConnected||!cloudInitialReadComplete||!leaveCloudReady)
+                throw new Error('التسوية تحتاج اتصال Firebase وقراءة مكتملة للغيابات والإجازات.');
+            if(legacyCloudCollections.has('attendances'))throw new Error('صيغة سجلات الغياب القديمة لم تُرحّل بعد. أوقف التسوية وراجع البيانات.');
+            const latestLeave=(await withTimeout(database.ref('/studentLeaves/'+firebaseRecordKey(leave.id)).once('value'))).val();
+            if(!latestLeave||latestLeave.status!=='approved')throw new Error('الإجازة غير معتمدة حالياً في Firebase.');
+            const candidateIds=leaveSettlementCandidateIds(latestLeave);
+            const candidates=[];
+            for(const id of candidateIds){
+                const snap=await withTimeout(database.ref('/attendances/'+firebaseRecordKey(id)).once('value'));
+                const value=snap.val();
+                if(value && String(value.id||'')===String(id) && leaveSettlementMatchesAttendance(value,latestLeave))
+                    candidates.push({id,record:value});
+                else if(value && String(value.studentId)===String(latestLeave.studentId) &&
+                    String(value.subjectId)===String(latestLeave.subjectId) && String(value.date)===String(latestLeave.date))
+                    throw new Error('سجل غياب يحتاج مراجعة بسبب اختلاف وقت المحاضرة أو بنيته.');
+            }
+            // A second active record for the same logical lecture is not silently overwritten.
+            const active=candidates.filter(x=>x.record.superseded!==true);
+            if(active.length>1)throw new Error('وجدت سجلات غياب متكررة للمحاضرة نفسها؛ تحتاج مراجعة رئيس القسم.');
+            if(active.some(x=>leaveSettlementGroupConflicts(x.record,latestLeave)))
+                throw new Error('مجموعة الطالب في سجل الغياب لا تطابق مجموعة الإجازة. يلزم تدقيق النقل أولاً.');
+            if(!active.length){
+                await writeLeaveReconciliationStatus(leave.id,'no_absence','لا يوجد غياب مطابق مسجل عند الفحص.');
+                return {status:'no_absence',message:'لا يوجد غياب سابق مطابق؛ الإجازة معتمدة دون إنشاء غياب أو حضور.'};
+            }
+            const {id,record:before}=active[0];
+            if(before.leaveSettlement?.leaveId && String(before.leaveSettlement.leaveId)!==String(leave.id))
+                throw new Error('هناك تسوية سابقة مرتبطة بإجازة مختلفة؛ تحتاج مراجعة رئيس القسم.');
+            // Do not overwrite this device's unsent attendance changes or unresolved conflicts.
+            const local=(state.attendances||[]).find(r=>String(r.id)===String(id));
+            const baseline=(lastSyncedCollections.attendances||[]).find(r=>String(r.id)===String(id));
+            if(local && baseline && !sameRecord(local,baseline) && before.leaveSettlement?.leaveId!==String(leave.id))
+                throw new Error('يوجد تعديل محلي معلّق لسجل الغياب؛ انتظر المزامنة أو عالج التعارض أولاً.');
+            if(before.leaveSettlement?.leaveId!==String(leave.id) && Object.values(syncConflicts||{}).some(c=>c?.name==='attendances' &&
+                [c.before,c.after,c.remote].some(r=>r&&String(r.id)===String(id))))
+                throw new Error('يوجد تعارض مزامنة غير محسوم لسجل الغياب.');
+            let after=before;
+            if(Number(before.hours)>0 && Number(before.excused)!==1){
+                const auditId=makeId('log'),at=Date.now();
+                const meta={leaveId:String(leave.id),auditId,at,byId:String(state.currentUser.id||''),
+                    byName:sanitizeText(state.currentUser.name||'',120),
+                    before:{hours:Number(before.hours),excused:Number(before.excused)||0,updatedAt:Number(before.updatedAt)||0}};
+                const ref=database.ref('/attendances/'+firebaseRecordKey(id));
+                const result=await withTimeout(ref.transaction(current=>{
+                    // Abort rather than overwrite a concurrent professor/admin edit.
+                    if(!current || !leaveSettlementMatchesAttendance(current,latestLeave) ||
+                       leaveSettlementGroupConflicts(current,latestLeave) || !sameRecord(current,before) ||
+                       current.superseded===true || !(Number(current.hours)>0) || Number(current.excused)===1)return;
+                    return {...current,excused:1,updatedAt:Math.max(at,Number(current.updatedAt||0)+1),
+                        lastUpdatedById:meta.byId,lastUpdatedByName:meta.byName,leaveSettlement:meta};
+                },undefined,false));
+                if(!result.committed){
+                    const current=(await withTimeout(ref.once('value'))).val();
+                    if(current?.leaveSettlement?.leaveId===String(leave.id) && Number(current.excused)===1) after=current;
+                    else throw new Error('تغير سجل الغياب أثناء التسوية؛ لم يُستبدل تعديل أي جهاز. أعد الفحص.');
+                } else after=result.snapshot.val();
+            }
+            if(Number(after.hours)>0 && Number(after.excused)===1 && after.leaveSettlement?.leaveId===String(leave.id)){
+                // Audit is retried independently if the previous attempt was interrupted.
+                await writeLeaveSettlementAudit(after,latestLeave);
+                await writeLeaveReconciliationStatus(leave.id,'applied','حُوّل الغياب الموجود إلى غائب بعذر ووُثّق التغيير.');
+                return {status:'applied',message:'تم تحويل الغياب السابق إلى غائب بعذر مع حفظ سجله وتوثيقه.'};
+            }
+            if(Number(after.hours)>0 && Number(after.excused)===1){
+                await writeLeaveReconciliationStatus(leave.id,'already_excused','كان الغياب معذوراً من قبل؛ لم يُعدل.');
+                return {status:'already_excused',message:'الغياب كان بعذر مسبقاً، ولم يُعدّل.'};
+            }
+            if(!(Number(after.hours)>0)){
+                await writeLeaveReconciliationStatus(leave.id,'no_absence','لا يوجد غياب فعلي قابل للتحويل؛ السجل الموجود حضور/إلغاء.');
+                return {status:'no_absence',message:'لا يوجد غياب غير معذور؛ لم تُغيّر حالة الطالب.'};
+            }
+            throw new Error('تعذر تأكيد حالة تسوية الغياب.');
+        }
+        async function retryApprovedLeaveSettlement(leaveId){
+            if(state.currentUser?.role!=='admin'||leaveSettlementBusy)return;
+            leaveSettlementBusy=true;
+            try{
+                const latest=(await withTimeout(database.ref('/studentLeaves/'+firebaseRecordKey(leaveId)).once('value'))).val();
+                if(!latest||latest.status!=='approved')throw new Error('الإجازة ليست معتمدة.');
+                const outcome=await settleApprovedStudentLeave(latest);
+                leaveMessage(outcome.message);
+                renderLeaveChoices();
+            }catch(err){
+                console.error('تعذر استكمال تسوية الإجازة:',err);
+                leaveMessage('التسوية غير مؤكدة؛ الإجازة لم تُلغَ. '+String(err?.message||err),true);
+            }finally{leaveSettlementBusy=false;}
+        }
         async function approveSelectedStudentLeave(){
-            if(studentProfileCorrectionBusy)return;
-            if(state.currentUser?.role!=='admin'||!database||!leaveCloudReady){leaveMessage('الاعتماد متاح فقط لرئيس القسم بعد اكتمال الاتصال السحابي.',true);return;}
+            if(studentProfileCorrectionBusy||leaveSettlementBusy)return;
+            if(state.currentUser?.role!=='admin'||!database||!leaveCloudReady||!firebaseTransportConnected||!cloudInitialReadComplete){
+                leaveMessage('الاعتماد والتسوية يتطلبان اكتمال الاتصال وقراءة سجلات الغياب والإجازات.',true);return;
+            }
             const student=leaveSelectedStudent(),date=document.getElementById('leaveDate').value;
             if(!student){leaveMessage('لم يتم تحديد طالب صحيح.',true);return;}
             const options=studentLeaveScheduleOptions(student,date);
@@ -6670,28 +6820,48 @@
             const selected=indices.map(i=>options[i]).filter(Boolean);
             if(!selected.length){leaveMessage('تغير الجدول؛ أعد اختيار المحاضرات.',true);return;}
             const btn=document.getElementById('leaveApproveButton');btn.disabled=true;
+            leaveSettlementBusy=true;
+            const messages=[];
             try{
                 for(const option of selected){
-                    if(activeApprovedLeave(student.id,option.subjectId,date,option.sessionTime))continue;
-                    // Ensure the cloud record, not the local list, is the authority for approval.
                     const id='leave_'+Array.from(new TextEncoder().encode(option.key)).map(b=>b.toString(16).padStart(2,'0')).join('');
                     const ref=database.ref('/studentLeaves/'+id);
-                    const existing=(await ref.once('value')).val();
-                    if(existing?.status==='approved')continue;
+                    const existing=(await withTimeout(ref.once('value'))).val();
                     const subject=state.subjects.find(s=>String(s.id)===String(option.subjectId));
                     const professor=state.professors.find(p=>String(p.id)===String(subject?.professorId));
-                    const record={id, ...option,studentName:student.name,studentLevel:student.level,theoreticalGroup:studentTheoreticalGroup(student),practicalGroup:studentPracticalGroup(student),professorName:professor?.name||'',reason:document.getElementById('leaveReason').value,status:'approved',sessionKey:option.key,approvedById:String(state.currentUser.id),approvedByName:String(state.currentUser.name),approvedAt:firebase.database.ServerValue.TIMESTAMP};
-                    await ref.transaction(current=>current?.status==='approved'?undefined:record,undefined,false);
+                    const record={id,...option,studentName:student.name,studentLevel:student.level,
+                        theoreticalGroup:studentTheoreticalGroup(student),practicalGroup:studentPracticalGroup(student),
+                        professorName:professor?.name||'',reason:document.getElementById('leaveReason').value,
+                        status:'approved',sessionKey:option.key,approvedById:String(state.currentUser.id),
+                        approvedByName:String(state.currentUser.name),approvedAt:firebase.database.ServerValue.TIMESTAMP};
+                    if(existing?.status!=='approved'){
+                        const result=await withTimeout(ref.transaction(current=>current?.status==='approved'?undefined:record,undefined,false));
+                        if(!result.committed){
+                            const verified=(await withTimeout(ref.once('value'))).val();
+                            if(!verified||verified.status!=='approved')throw new Error('لم يتأكد اعتماد الإجازة في Firebase.');
+                        }
+                    }
+                    const approved=(await withTimeout(ref.once('value'))).val();
+                    if(!approved||approved.status!=='approved')throw new Error('فشل التحقق من الإجازة بعد الاعتماد.');
+                    try{
+                        const outcome=await settleApprovedStudentLeave(approved);
+                        messages.push(`${option.subjectName} (${option.sessionTime}): ${outcome.message}`);
+                    }catch(err){
+                        // Leave stays approved. Surface failure and keep a repairable status.
+                        try{await writeLeaveReconciliationStatus(id,'review',String(err?.message||err));}catch(e){console.warn('تعذر توثيق حالة التسوية:',e);}
+                        messages.push(`${option.subjectName} (${option.sessionTime}): الإجازة معتمدة لكن تسوية الغياب تحتاج مراجعة: ${String(err?.message||err)}`);
+                    }
                 }
-                leaveMessage('تم إرسال طلب اعتماد الإجازات إلى Firebase. تحقق من ظهورها ضمن سجل الإجازات.');
-                await database.ref('/studentLeaves').once('value').then(snap=>{approvedLeaves=Object.values(snap.val()||{});renderLeaveChoices();});
-                recordAudit('اعتماد إجازة إلكترونية',{studentId:student.id,date,lectureCount:selected.length});
-            }catch(err){console.error(err);leaveMessage('فشل الاعتماد السحابي؛ لم يُعلن نجاح الإجازة. راجع قواعد Firebase والاتصال.',true);}
-            finally{btn.disabled=false;}
+                await withTimeout(database.ref('/studentLeaves').once('value')).then(snap=>{approvedLeaves=Object.values(snap.val()||{});renderLeaveChoices();});
+                leaveMessage(messages.join('\n'),messages.some(x=>x.includes('تحتاج مراجعة')));
+                recordAudit('اعتماد إجازة إلكترونية وتسوية الغياب السابق',{studentId:student.id,date,lectureCount:selected.length});
+            }catch(err){console.error(err);leaveMessage('لم تكتمل العملية. تحقق من الإجازات المعتمدة قبل إعادة الضغط: '+String(err?.message||err),true);}
+            finally{leaveSettlementBusy=false;btn.disabled=false;}
         }
         async function cancelStudentLeave(id){
+            if(leaveSettlementBusy)return;
             if(state.currentUser?.role!=='admin'||!database||!leaveCloudReady)return;
-            if(!confirm('إلغاء الإجازة المعتمدة؟ سيُسجل تاريخ الإلغاء دون حذف السجل.'))return;
+            if(!confirm('إلغاء الإجازة المعتمدة؟ سيُسجل تاريخ الإلغاء. تنبيه: إذا حُوّل غياب سابق إلى «بعذر»، فلن يُرجع البرنامج الغياب السابق تلقائياً عند الإلغاء، ويستلزم ذلك مراجعة رئيس القسم.'))return;
             const ref=database.ref('/studentLeaves/'+id);
             try{const result=await ref.transaction(current=>current?.status==='approved'?{...current,status:'cancelled',cancelledById:String(state.currentUser.id),cancelledByName:String(state.currentUser.name||''),cancelledAt:firebase.database.ServerValue.TIMESTAMP}:undefined,undefined,false);if(!result.committed){leaveMessage('الإجازة غير معتمدة أو أُلغيت سابقاً.',true);return;}recordAudit('إلغاء إجازة إلكترونية',{leaveId:id});renderLeaveChoices();if(document.getElementById('adminLeaveRegister')?.open)renderLeaveRegister();}catch(err){leaveMessage('تعذر إلغاء الإجازة في Firebase.',true);}
         }
@@ -11317,7 +11487,7 @@
                     whatsappPreparedAt: whatsappNumber ? Date.now() : null
                 };
                 state.submissions.push(submission);
-                if (state.submissions.length > 5000) state.submissions = state.submissions.slice(-5000);
+                // V45.46.2: لا نحذف سجلات الإرسال التاريخية تلقائياً أثناء التحديث.
                 const workflowRecord=setAttendanceWorkflowState(sub,{locked:true,mode:'submitted',lastSubmissionId:String(submission.id),lastSubmittedAt:Number(submission.createdAt)||Date.now()});
                 state.notifications.push({ id: makeId('note'), msg: `${isResend?'🔄':'✅'} الأستاذ ${state.currentUser.name} ${isResend?'أعاد إرسال':'أكد إكمال'} غيابات مادة ${sub.name} داخل النظام`, time: now.toLocaleString('ar-IQ',{timeZone:'Asia/Baghdad'}), professorId:state.currentUser.id, subjectId:sub.id, submissionId:submission.id });
                 recordAudit(isResend?'إعادة إرسال الغيابات بعد التعديل':'تأكيد إكمال الغيابات وتجهيز واتساب لمسؤول الغيابات', { subject: sub.name, students: students.length, records: realRecords.length, submissionId: submission.id, previousSubmissionId:submission.resendOfSubmissionId, revisionNumber:submission.revisionNumber, workflowRevision:Number(workflowRecord?.revision)||0, whatsappPrepared: !!whatsappNumber, whatsappPopupReserved:false });
