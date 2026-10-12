@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.4 (إرسال محمي + تحقق الإصدار) التسوية التلقائية للغياب والإجازة</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.6 (تصحيح QR آمن + استعادة المعلّق)</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1019,7 +1019,7 @@
                 <div>
                     <div class="card">
                         <h4>📤 إكمال وإرسال الغيابات</h4>
-                        <div id="profSubmissionBuildVersion" role="note" style="background:#eef2ff;color:#312e81;border:1px solid #818cf8;border-radius:8px;padding:6px 9px;margin:5px 0 8px;font-size:12px;font-weight:900;text-align:center">إصدار الإرسال الآمن V45.46.5 — إذا لم يظهر هذا النص فالموقع يعمل بنسخة أقدم.</div>
+                        <div id="profSubmissionBuildVersion" role="note" style="background:#eef2ff;color:#312e81;border:1px solid #818cf8;border-radius:8px;padding:6px 9px;margin:5px 0 8px;font-size:12px;font-weight:900;text-align:center">إصدار الإرسال الآمن V45.46.6 — إصلاح تصحيح QR والتحقق من العمليات المعلّقة.</div>
                         <button id="sendToOfficerBtn" onclick="sendToOfficer()" style="background:#805ad5; width:100%; margin-bottom:4px;">✅ إرسال الغيابات إلى النظام</button><div id="profDailyCompletionNotice" role="status" style="font-size:11px;margin:5px 0;padding:7px;background:#f1f5f9;border-radius:8px;"></div>
                         <button id="undoSubmissionBtn" onclick="undoLastSubmissionOnce()" class="btn-warning" style="display:none;width:100%;margin-bottom:4px;">↩️ تراجع عن آخر إرسال وفتح التعديل</button>
                         <button id="resendWhatsAppBtn" onclick="resendLastSubmissionWhatsApp()" class="btn-info" style="display:none;width:100%;margin-bottom:4px;">📱 إعادة فتح آخر رسالة واتساب</button>
@@ -1169,7 +1169,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.46.5-qr-pending-safe-recovery';
+        const APP_VERSION = '45.46.6-qr-plain-object-fixed';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -6332,7 +6332,10 @@
             }
         }
         function qrBuildAtomicCorrectionUpdates(checked, student, desired, reason, batchId){
-            const updates=Object.create(null), now=Date.now(), attendanceIds=[], revisions=[];
+            // V45.46.6: Firebase RTDB update() requires an ordinary JavaScript object.
+            // A null-prototype object causes the SDK to throw "hasOwnProperty is not a function"
+            // before the attendance correction batch is submitted.
+            const updates={}, now=Date.now(), attendanceIds=[], revisions=[];
             const authorId=String(state.currentUser.id||''),authorName=sanitizeText(state.currentUser.name||'',120);
             for(const item of checked){
                 const before=item.before;
@@ -6415,12 +6418,30 @@
                 if(!confirm(`تأكيد تصحيح ${checked.length} غياب باسم رئيس القسم إلى «${desired==='present'?'حاضر':'غائب بعذر'}»؟\nالسبب: ${reason}\n${details}`))return false;
                 const batchId=makeId('qrfix');
                 const updates=qrBuildAtomicCorrectionUpdates(checked,student,desired,reason,batchId);
-                if(!qrSetPendingCorrectionId(batchId,{studentId:String(student.id),desired,rows:checked.map(x=>({id:String(x.before.id),before:x.before})),createdAt:Date.now()}))
+                // Validate and normalize the complete multipath payload BEFORE creating a
+                // pending marker. Keep the SDK's server timestamp sentinel intact as JSON.
+                const cloudUpdates=firebaseTransportValue(updates);
+                if(!cloudUpdates || Object.getPrototypeOf(cloudUpdates)!==Object.prototype ||
+                    !Object.keys(cloudUpdates).length || !Object.prototype.hasOwnProperty.call(cloudUpdates,'attendanceCorrectionBatches/'+firebaseRecordKey(batchId)))
+                    throw new Error('فشل تجهيز طلب التصحيح السحابي محلياً؛ لم يتم إرسال أي تعديل.');
+                if(!qrSetPendingCorrectionId(batchId,{studentId:String(student.id),desired,rows:checked.map(x=>({id:String(x.before.id),before:x.before})),createdAt:Date.now(),sourceVersion:APP_VERSION}))
                     throw new Error('تعذر حفظ معرّف التصحيح وتفاصيله في المتصفح؛ أُلغيت المحاولة قبل إرسال أي كتابة سحابية.');
                 // RTDB update() من الجذر: تغيير السجلات + التدقيق + سجل الدفعة في كتابة ذرية واحدة.
                 // على عكس saveAll() لا نغيّر state قبل تأكيد كتابة Firebase.
+                let firebaseRequest;
                 try{
-                    await withTimeout(database.ref('/').update(updates),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تصحيح QR؛ نتيجة العملية غير مؤكدة');
+                    // SDK argument validation is synchronous. If update() throws before
+                    // returning a request, NO write was initiated and the marker can be
+                    // cleared. A rejected/timed-out returned request stays pending until
+                    // verified from Firebase; never guess whether it was committed.
+                    firebaseRequest=database.ref('/').update(cloudUpdates);
+                }catch(localValidationError){
+                    if(!qrSetPendingCorrectionId(''))
+                        throw new Error('توقف تجهيز طلب Firebase قبل إرساله، لكن تعذر تحرير العلامة المحلية؛ استخدم زر فحص التصحيح المعلّق. '+String(localValidationError.message||localValidationError));
+                    throw new Error('رفض Firebase SDK تجهيز طلب التصحيح قبل إرساله؛ لم تُعدّل بيانات الغياب. '+String(localValidationError.message||localValidationError));
+                }
+                try{
+                    await withTimeout(firebaseRequest,CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تصحيح QR؛ نتيجة العملية غير مؤكدة');
                 }catch(writeError){
                     // رفض صلاحيات قطعي من الخادم = لم تُقبل الكتابة الذرية؛ لا تبقَ معلقة بلا سبب.
                     if(String(writeError?.code||'').toUpperCase().includes('PERMISSION_DENIED')){
@@ -11593,7 +11614,7 @@
                 // V45.39: تثبيت الحضور الافتراضي قبل إنشاء بصمة الإرسال والمزامنة.
                 // عند أي تعارض أو صلاحية غير كافية يتوقف الإرسال دون اعتماد ناقص.
                 try { finalizeImplicitPresenceForSubject(sub); }
-                catch(error){ alert('إصدار V45.46.4 — تعذر تثبيت الحضور الافتراضي، ولم يُؤكد الإرسال: '+String(error?.message||error)); return false; }
+                catch(error){ alert('إصدار V45.46.6 — تعذر تثبيت الحضور الافتراضي، ولم يُؤكد الإرسال: '+String(error?.message||error)); return false; }
                 const students = getStudentsForProfessor();
                 const realRecords = getSubjectOperationalAttendanceRecords(sub.id);
                 const previousSubmission=getLatestSubmission(sub.id,state.currentUser?.id);
