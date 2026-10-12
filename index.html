@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.3 (إرسال آمن مع الإجازات) التسوية التلقائية للغياب والإجازة</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.4 (إرسال محمي + تحقق الإصدار) التسوية التلقائية للغياب والإجازة</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -610,6 +610,8 @@
                   <label>التصحيح المطلوب<select id="studentProfileCorrectionType" onchange="renderStudentProfileAbsences()"><option value="excused">تحويل الغياب إلى غائب بعذر</option><option value="present">تصحيح الغياب إلى حاضر (إذا ثبت الحضور الفعلي)</option></select></label>
                   <label>سبب التصحيح (إلزامي، لا يقل عن 8 أحرف)<textarea id="studentProfileCorrectionReason" rows="2" placeholder="اذكر رقم الكتاب أو السبب أو المستند الداعم"></textarea></label>
                   <button type="button" id="studentProfileCorrectionSave" class="btn-warning" onclick="saveStudentProfileCorrections()">اعتماد تصحيح الغيابات المحددة</button>
+                  <button type="button" id="qrPendingRecoveryButton" class="btn-secondary" onclick="qrReconcilePendingCorrection()">فحص التصحيح المعلّق / استعادة إمكانية التصحيح</button>
+                  <small>زر الاسترداد لا يحذف غياباً ولا يغيّر Firebase: يفحص معرّف العملية، ويطلب إغلاق تبويبات الموقع وإعادة الفحص قبل تحرير علامة التعليق في هذا الجهاز.</small>
                 </div>
                 <div id="studentProfileCorrectionStatus" class="student-profile-message" role="status" aria-live="polite"></div>
                 <small>عملية التصحيح الجماعي تُرسل ككتابة سحابية واحدة تشمل السجلات والتدقيق، لكن منع التعديل المتزامن من جهاز آخر يتطلب قواعد Firebase خادمية صحيحة. إذا كانت النتيجة غير مؤكدة، لا تُعِد الإرسال قبل التحقق من معرّف العملية. لا تُنشأ سجلات حضور قديمة دون سجل سابق.</small>
@@ -1017,6 +1019,7 @@
                 <div>
                     <div class="card">
                         <h4>📤 إكمال وإرسال الغيابات</h4>
+                        <div id="profSubmissionBuildVersion" role="note" style="background:#eef2ff;color:#312e81;border:1px solid #818cf8;border-radius:8px;padding:6px 9px;margin:5px 0 8px;font-size:12px;font-weight:900;text-align:center">إصدار الإرسال الآمن V45.46.5 — إذا لم يظهر هذا النص فالموقع يعمل بنسخة أقدم.</div>
                         <button id="sendToOfficerBtn" onclick="sendToOfficer()" style="background:#805ad5; width:100%; margin-bottom:4px;">✅ إرسال الغيابات إلى النظام</button><div id="profDailyCompletionNotice" role="status" style="font-size:11px;margin:5px 0;padding:7px;background:#f1f5f9;border-radius:8px;"></div>
                         <button id="undoSubmissionBtn" onclick="undoLastSubmissionOnce()" class="btn-warning" style="display:none;width:100%;margin-bottom:4px;">↩️ تراجع عن آخر إرسال وفتح التعديل</button>
                         <button id="resendWhatsAppBtn" onclick="resendLastSubmissionWhatsApp()" class="btn-info" style="display:none;width:100%;margin-bottom:4px;">📱 إعادة فتح آخر رسالة واتساب</button>
@@ -1166,7 +1169,8 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.46.3-leave-safe-submission-preview';
+        const APP_VERSION = '45.46.5-qr-pending-safe-recovery';
+        window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
         const LOGIN_MAX_ATTEMPTS = 5;
@@ -6188,12 +6192,39 @@
         // V45.43: الكتابة المتعددة المسارات ذرية في RTDB (نجاح الجميع أو رفض الجميع).
         // التحقق من الإصدار/الإجازات هنا احترازي فقط. لا يصبح CAS خادمياً إلا بقواعد Firebase
         // مع Authentication موثوق؛ لا تعتمد صلاحية role المخزنة في HTML كحماية خادمية.
+        // V45.46.5: Reconcile a timed-out QR batch WITHOUT making any Firebase writes.
+        // Existing V45.43 pending keys remain readable. New attempts also retain the exact pre-write snapshots.
         const QR_CORRECTION_PENDING_KEY='physics_qr_correction_pending_v4543';
+        const QR_CORRECTION_PENDING_DETAIL_KEY='physics_qr_correction_pending_details_v45465';
+        const QR_CORRECTION_RECOVERY_STAGE_KEY='physics_qr_correction_recovery_stage_v45465';
+        const QR_CORRECTION_RUNTIME_TOKEN=String(Date.now())+'_'+Math.random().toString(36).slice(2);
         function qrPendingCorrectionId(){
             try{return String(localStorage.getItem(QR_CORRECTION_PENDING_KEY)||'');}catch(_){return '';}
         }
-        function qrSetPendingCorrectionId(id){
-            try{if(id)localStorage.setItem(QR_CORRECTION_PENDING_KEY,String(id));else localStorage.removeItem(QR_CORRECTION_PENDING_KEY);}catch(_){}
+        function qrPendingCorrectionDetails(id){
+            try{
+                const raw=localStorage.getItem(QR_CORRECTION_PENDING_DETAIL_KEY);
+                const value=raw?JSON.parse(raw):null;
+                return value && String(value.batchId)===String(id) ? value:null;
+            }catch(_){return null;}
+        }
+        function qrSetPendingCorrectionId(id,details=null){
+            try{
+                if(id){
+                    // If storage is unavailable, do not submit an untraceable correction batch.
+                    if(details)localStorage.setItem(QR_CORRECTION_PENDING_DETAIL_KEY,JSON.stringify({...details,batchId:String(id)}));
+                    localStorage.setItem(QR_CORRECTION_PENDING_KEY,String(id));
+                    localStorage.removeItem(QR_CORRECTION_RECOVERY_STAGE_KEY);
+                }else{
+                    localStorage.removeItem(QR_CORRECTION_PENDING_KEY);
+                    localStorage.removeItem(QR_CORRECTION_PENDING_DETAIL_KEY);
+                    localStorage.removeItem(QR_CORRECTION_RECOVERY_STAGE_KEY);
+                }
+                return true;
+            }catch(err){
+                console.warn('تعذر حفظ علامة تصحيح QR المعلقة:',err);
+                return false;
+            }
         }
         async function qrVerifyCorrectionBatch(batchId, expectedIds=[]){
             if(!database||!firebaseTransportConnected)return false;
@@ -6209,15 +6240,96 @@
         async function qrCheckPendingCorrection(){
             const pending=qrPendingCorrectionId();
             if(!pending)return true;
-            try{
-                if(await qrVerifyCorrectionBatch(pending)){
-                    qrSetPendingCorrectionId('');
-                    studentProfileSetCorrectionStatus('تم التحقق من نجاح دفعة التصحيح السابقة ('+pending+'). راجع السجلات قبل تصحيح آخر.');
-                    return false; // تحتاج الصفحة إلى إعادة فتح بعد تأكيد العملية السابقة.
-                }
-            }catch(e){console.warn('تعذر التحقق من تصحيح معلق:',e);}
-            studentProfileSetCorrectionStatus('توجد عملية تصحيح لم يُحسم مصيرها ('+pending+'). لا تُعِد التصحيح أو تبدأ عملية أخرى قبل فحص المسار attendanceCorrectionBatches في Firebase أو استعادة اتصال ثابت.',true);
+            studentProfileSetCorrectionStatus('توجد محاولة تصحيح سابقة ('+pending+'). اضغط «فحص التصحيح المعلّق» أدناه لاسترداد حالتها دون حذف أي سجل. لا تبدأ تصحيحاً جديداً قبل حسمها.',true);
             return false;
+        }
+        function qrReadRecoveryStage(batchId){
+            try{
+                const raw=localStorage.getItem(QR_CORRECTION_RECOVERY_STAGE_KEY);
+                const x=raw?JSON.parse(raw):null;
+                return x && x.batchId===batchId?x:null;
+            }catch(_){return null;}
+        }
+        async function qrReconcilePendingCorrection(){
+            if(state.currentUser?.role!=='admin'||studentProfileCorrectionBusy)return false;
+            const pending=qrPendingCorrectionId();
+            if(!pending){studentProfileSetCorrectionStatus('لا توجد محاولة QR معلقة في هذا المتصفح.');return true;}
+            if(!database||!firebaseTransportConnected||!cloudInitialReadComplete||!leaveCloudReady){
+                studentProfileSetCorrectionStatus('يتطلب الفحص اتصال Firebase مستقراً واكتمال تحميل البيانات والإجازات. لم يُغيَّر شيء.',true);
+                return false;
+            }
+            studentProfileCorrectionBusy=true;
+            const recoveryButton=document.getElementById('qrPendingRecoveryButton');
+            if(recoveryButton)recoveryButton.disabled=true;
+            try{
+                await saveQueue;
+                if(state.isSyncing||buildFirebaseChanges().length||Object.keys(syncConflicts).length){
+                    throw new Error('هناك تعديلات محلية أو تعارضات لم تُزامن؛ لا يمكن تحرير علامة العملية قبل حلّها.');
+                }
+                const snap=await withTimeout(database.ref('/attendanceCorrectionBatches/'+firebaseRecordKey(pending)).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فحص الدفعة في Firebase');
+                const batch=snap.val();
+                if(batch){
+                    if(batch.status!=='committed'||String(batch.id)!==pending||!Array.isArray(batch.attendanceIds)||!batch.attendanceIds.length){
+                        throw new Error('سجل الدفعة موجود لكنه غير مكتمل أو غير مطابق. احتفظ برقمها وراجع Firebase قبل أي إجراء.');
+                    }
+                    for(const id of batch.attendanceIds){
+                        const record=(await withTimeout(database.ref('/attendances/'+firebaseRecordKey(id)).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فحص سجل غياب')).val();
+                        if(!record||String(record.qrCorrection?.batchId||'')!==pending){
+                            throw new Error('الدفعة مُثبتة لكن إحدى حالات الحضور تغيّرت لاحقاً أو تعذّر إثباتها. يلزم تدقيق يدوي؛ لم يُحرر القفل.');
+                        }
+                    }
+                    qrSetPendingCorrectionId('');
+                    studentProfileSelected.clear();
+                    renderStudentProfileAbsences();
+                    studentProfileSetCorrectionStatus('تأكد تنفيذ دفعة التصحيح السابقة في Firebase ('+pending+'). حُررت العلامة المحلية فقط. راجع النتائج ولا تُكرر العملية.');
+                    return true;
+                }
+                // An absent batch is NOT proof of a failed write if the marker was deleted by another client.
+                // For new batches, verify each exact original record still exists unchanged.
+                const details=qrPendingCorrectionDetails(pending);
+                if(details?.rows?.length){
+                    for(const item of details.rows){
+                        const actual=(await withTimeout(database.ref('/attendances/'+firebaseRecordKey(item.id)).once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فحص الغياب')).val();
+                        if(!actual||!sameRecord(actual,item.before)){
+                            throw new Error('لم يُعثر على الدفعة، لكن تغيّر سجل غياب عن النسخة الأصلية ('+item.id+'). لا تُحرّر العملية قبل مراجعة هذا التغيير.');
+                        }
+                    }
+                }else{
+                    // Legacy attempts saved only the batch ID. An unambiguous automated comparison is impossible.
+                    if((state.attendances||[]).some(r=>String(r.qrCorrection?.batchId||'')===pending)){
+                        throw new Error('وجد النظام أثراً للدفعة المعلقة في سجلات الغياب المحلية. لا تُحرّرها حتى تُراجع قاعدة البيانات.');
+                    }
+                }
+                const stage=qrReadRecoveryStage(pending);
+                if(!stage||stage.runtimeToken===QR_CORRECTION_RUNTIME_TOKEN){
+                    try{localStorage.setItem(QR_CORRECTION_RECOVERY_STAGE_KEY,JSON.stringify({batchId:pending,runtimeToken:QR_CORRECTION_RUNTIME_TOKEN,checkedAt:Date.now()}));}
+                    catch(_){throw new Error('تعذر حفظ فحص الاسترداد في المتصفح. لا تمسح بيانات الموقع.');}
+                    studentProfileSetCorrectionStatus('لم يظهر سجل الدفعة في Firebase. لإلغاء احتمال وجود إرسال قديم في ذاكرة الصفحة، أغلق جميع تبويبات هذا الموقع، ثم افتحه مجدداً وامسح QR واضغط «فحص التصحيح المعلّق» مرة أخرى. لم يتم حذف أو تعديل أي بيانات.',true);
+                    return false;
+                }
+                // A new page runtime, full online read, and second remote check are required.
+                const legacy=!details?.rows?.length;
+                const warning=legacy
+                    ?'هذه محاولة من إصدار قديم حفظ معرف الدفعة فقط، لذلك لا يمكن إثبات سلامة كل الغيابات المستهدفة تلقائياً. هل راجعت أنت سجلات الطالب المعنية في Firebase، وتأكدت أنها لم تُصحّح فعلاً وأن جميع تبويبات النظام القديمة مغلقة؟'
+                    :'تأكدت القراءة السحابية من غياب الدفعة ومن بقاء كل سجل محدد كما كان قبل محاولة التصحيح. هل أغلقت جميع تبويبات النظام القديمة وتريد تحرير علامة التعليق المحلية فقط؟';
+                if(!confirm(warning))return false;
+                if(legacy){
+                    const phrase=prompt('لأن بيانات الدفعة القديمة غير مكتملة، اكتب «راجعت السجلات» لتأكيد المراجعة اليدوية (لا يمسح ذلك أي سجل سحابي):');
+                    if(phrase!=='راجعت السجلات')return false;
+                }
+                if(!qrSetPendingCorrectionId(''))throw new Error('فشل تحرير العلامة المحلية من المتصفح. لم يتغير Firebase.');
+                studentProfileSelected.clear();
+                renderStudentProfileAbsences();
+                studentProfileSetCorrectionStatus('حُررت علامة العملية القديمة على هذا الجهاز فقط بعد فحصين واتخاذ قرار صريح. لم تُحذف أي بيانات في Firebase. اختر الغياب من جديد وافحص حالته قبل أي تصحيح.');
+                return true;
+            }catch(err){
+                studentProfileSetCorrectionStatus('لم تُحسم العملية القديمة: '+String(err.message||err)+'؛ لم يُغيّر البرنامج أي بيانات.',true);
+                return false;
+            }finally{
+                studentProfileCorrectionBusy=false;
+                if(recoveryButton)recoveryButton.disabled=false;
+                renderStudentProfileAbsences();
+            }
         }
         function qrBuildAtomicCorrectionUpdates(checked, student, desired, reason, batchId){
             const updates=Object.create(null), now=Date.now(), attendanceIds=[], revisions=[];
@@ -6303,7 +6415,8 @@
                 if(!confirm(`تأكيد تصحيح ${checked.length} غياب باسم رئيس القسم إلى «${desired==='present'?'حاضر':'غائب بعذر'}»؟\nالسبب: ${reason}\n${details}`))return false;
                 const batchId=makeId('qrfix');
                 const updates=qrBuildAtomicCorrectionUpdates(checked,student,desired,reason,batchId);
-                qrSetPendingCorrectionId(batchId);
+                if(!qrSetPendingCorrectionId(batchId,{studentId:String(student.id),desired,rows:checked.map(x=>({id:String(x.before.id),before:x.before})),createdAt:Date.now()}))
+                    throw new Error('تعذر حفظ معرّف التصحيح وتفاصيله في المتصفح؛ أُلغيت المحاولة قبل إرسال أي كتابة سحابية.');
                 // RTDB update() من الجذر: تغيير السجلات + التدقيق + سجل الدفعة في كتابة ذرية واحدة.
                 // على عكس saveAll() لا نغيّر state قبل تأكيد كتابة Firebase.
                 try{
@@ -10186,6 +10299,10 @@
             const nowMinutes=getBaghdadClock().minutes;
             const students=state.students.filter(st=>studentMatchesSubject(st,subject));
             const groups=[...new Set(students.map(st=>professorGroupNameForStudent(st,subject)))];
+            // Snapshot only APPROVED leaves for this run. Never use a cached snapshot when
+            // Firebase verification is unavailable (the guard above fails closed).
+            const approvedLeaveKeys=new Set(approvedLeaves.filter(x=>x&&x.status==='approved'&&x.sessionKey)
+                .map(x=>String(x.sessionKey)));
             const pending=[];
             for(const group of groups){
                 const members=students.filter(st=>professorGroupNameForStudent(st,subject)===group);
@@ -10199,10 +10316,18 @@
                     for(const student of members){
                         // An approved leave is an explicit third state, not attendance.
                         // Skip ONLY this student/session without writing or rewriting any record.
-                        if(leaveForAttendance(student.id,subject,context))continue;
+                        const leaveKeyForSession=leaveKey(student.id,subject.id,context.date,context.sessionTime);
+                        if(approvedLeaveKeys.has(leaveKeyForSession) || leaveForAttendance(student.id,subject,context))continue;
                         if(findAttendanceForSession(student.id,subject.id,dateISO,time))continue;
                         const check=validateAttendanceWriteIntegrity(student.id,subject,context);
-                        if(!check.ok)throw new Error(`تعذر اعتماد حضور ${student.name}: ${check.reason}`);
+                        if(!check.ok){
+                            // Defense in depth: never treat a leave-related refusal as a generic
+                            // write failure, yet never bypass a refusal unless this EXACT session
+                            // has a verified approved leave. No attendance record is created.
+                            if(check.reason?.includes('إجازة معتمدة') &&
+                               (approvedLeaveKeys.has(leaveKeyForSession) || leaveForAttendance(student.id,subject,context)))continue;
+                            throw new Error(`تعذر اعتماد حضور ${student.name}: ${check.reason}`);
+                        }
                         pending.push({student,context});
                     }
                 }
@@ -11468,7 +11593,7 @@
                 // V45.39: تثبيت الحضور الافتراضي قبل إنشاء بصمة الإرسال والمزامنة.
                 // عند أي تعارض أو صلاحية غير كافية يتوقف الإرسال دون اعتماد ناقص.
                 try { finalizeImplicitPresenceForSubject(sub); }
-                catch(error){ alert('تعذر تثبيت الحضور الافتراضي، ولم يُؤكد الإرسال: '+String(error?.message||error)); return false; }
+                catch(error){ alert('إصدار V45.46.4 — تعذر تثبيت الحضور الافتراضي، ولم يُؤكد الإرسال: '+String(error?.message||error)); return false; }
                 const students = getStudentsForProfessor();
                 const realRecords = getSubjectOperationalAttendanceRecords(sub.id);
                 const previousSubmission=getLatestSubmission(sub.id,state.currentUser?.id);
