@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.6 (تصحيح QR آمن + استعادة المعلّق)</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.7 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1169,7 +1169,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.46.6-qr-plain-object-fixed';
+        const APP_VERSION = '45.46.7-firebase-report-filters-period-fixed';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -8408,8 +8408,13 @@
                             <button onclick="applyDateFilter()" class="btn-info btn-sm" style="min-height:32px;">تطبيق</button>
                             <button onclick="clearDateFilter()" class="btn-secondary btn-sm" style="min-height:32px;">مسح</button>
                             <button onclick="setAutoDateRange()" class="btn-warning btn-sm" style="min-height:32px;">تلقائي</button>
+                            <div><label style="font-size:12px;">طريقة حساب الحالة:</label>
+                                <select id="reportPeriodMode" onchange="applyDateFilter()" style="width:auto;max-width:240px;">
+                                    <option value="within">غيابات الفترة فقط</option>
+                                    <option value="asof">تراكمي حتى نهاية الفترة</option>
+                                </select></div>
                         </div>
-                        <small>تحديد فترة زمنية لعرض سجلات الغياب فقط (الحساب التراكمي يبقى على جميع السجلات).</small>
+                        <small>عند تحديد فترة يُعاد حساب كل مادة وساعاتها ونسبتها والفرز حسب الوضع المختار. النسب تُقسم على إجمالي ساعات المقرر السنوي المعتمدة حالياً، وليست نسبة حضور المحاضرات المنعقدة داخل الفترة. لا تتغير السجلات الأصلية أو التنبيهات المخزنة.</small>
                     </div>
                     <div id="officerStatusFilterPanel" class="card no-print status-filter-panel"></div>
                     <div id="reportPrintShell">
@@ -8424,18 +8429,15 @@
                 `;
                 container.innerHTML = html;
                 document.getElementById('reportPrintDate').innerText = new Date().toLocaleDateString('ar-EG');
+                document.getElementById('reportDateFrom').value=officerReportDateFrom;
+                document.getElementById('reportDateTo').value=officerReportDateTo;
+                document.getElementById('reportPeriodMode').value=officerReportPeriodMode;
                 updateReportDateDisplay();
                 renderOfficerStatusFilter(level);
                 renderOfficerReport(level);
 
-                document.getElementById('reportDateFrom').addEventListener('change', function() {
-                    updateReportDateDisplay();
-                    if (state.currentLevel) renderOfficerReport(state.currentLevel);
-                });
-                document.getElementById('reportDateTo').addEventListener('change', function() {
-                    updateReportDateDisplay();
-                    if (state.currentLevel) renderOfficerReport(state.currentLevel);
-                });
+                document.getElementById('reportDateFrom').addEventListener('change', applyDateFilter);
+                document.getElementById('reportDateTo').addEventListener('change', applyDateFilter);
 
             } else if (tab === 'submissions') {
                 renderOfficerSubmissions(level, container);
@@ -8473,21 +8475,51 @@
         }
 
         // ==============================================================
-        //  فرز الحالات ومتابعة تسليم الأساتذة
+        //  V45.46.7: سياق تقارير الغياب مستقل تماماً عن التخزين والمزامنة.
+        //  اختيار فترة لا يغيّر state.attendances أو قيم الحضور الأصلية.
         // ==============================================================
+        let officerReportDateFrom = '';
+        let officerReportDateTo = '';
+        let officerReportPeriodMode = 'within'; // within | asof
+        function officerReportPeriodContext() {
+            const from=String(officerReportDateFrom||'');
+            const to=String(officerReportDateTo||'');
+            const active=!!(from||to);
+            const valid=(!from||/^\d{4}-\d{2}-\d{2}$/.test(from))
+                && (!to||/^\d{4}-\d{2}-\d{2}$/.test(to))
+                && (!from||!to||from<=to);
+            return {from,to,active,valid,mode:officerReportPeriodMode==='asof'?'asof':'within'};
+        }
+        function officerAttendanceInReportPeriod(attendance,ctx) {
+            if(!ctx?.active)return true;
+            const date=String(attendance?.date||'');
+            if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return false;
+            if(ctx.mode==='asof'){
+                // نهاية الفترة هي اللحظة التاريخية المرجعية. إذا حُددت البداية
+                // فقط تُستعمل كبداية ونهاية مرجعية؛ لا يُحتسب سجل أحدث منها.
+                const cutoff=ctx.to||ctx.from;
+                return date<=cutoff;
+            }
+            return (!ctx.from||date>=ctx.from)&&(!ctx.to||date<=ctx.to);
+        }
+        function officerReportPeriodDescription(ctx=officerReportPeriodContext()) {
+            if(!ctx.active)return 'جميع السنة — الحالة التراكمية الحالية';
+            const bounds=ctx.from&&ctx.to?`من ${ctx.from} إلى ${ctx.to}`:ctx.from?`ابتداءً من ${ctx.from}`:`حتى ${ctx.to}`;
+            return ctx.mode==='asof'?`الحالة التراكمية حتى ${ctx.to||ctx.from}`:`غيابات ${bounds} فقط`;
+        }
         function studentRelevantToSubject(student, subject) {
             if (!student || isStudentOfficiallyDeleted(student.id,student.barcode)) return false;
             if (studentMatchesSubject(student, subject)) return true;
             return getLogicalAttendanceRecords(state.attendances).some(a => String(a.studentId)===String(student.id) && String(a.subjectId)===String(subject.id) && Number(a.hours)>0);
         }
 
-        function getStatusRowsForLevel(level) {
-            const students = getActiveStudents().filter(st=>Number(st.level)===Number(level));
-            const subjects = state.subjects.filter(sub=>Number(sub.level)===Number(level) && sub.timetableActive!==false);
+        function getStatusRowsForLevel(level,ctx=officerReportPeriodContext()) {
+            const students=getActiveStudents().filter(st=>Number(st.level)===Number(level));
+            const subjects=getReportSubjects(level);
             const rows=[];
             students.forEach(st=>subjects.forEach(sub=>{
                 if (!studentRelevantToSubject(st,sub)) return;
-                const d=calculateAnnualAbsence(st.id,sub);
+                const d=calculateAnnualAbsence(st.id,sub,ctx);
                 rows.push({
                     studentId:st.id, studentName:st.name,
                     theoreticalGroup:studentTheoreticalGroup(st)||'-', practicalGroup:studentPracticalGroup(st)||'-',
@@ -8499,24 +8531,20 @@
             return rows;
         }
 
-        function statusRowMatches(row, filter) {
-            if (!filter || filter==='الكل') return true;
-            if (filter==='أي حالة' || filter==='أي إنذار') return row.status!=='جيد';
+        function statusRowMatches(row,filter) {
+            if(!filter||filter==='الكل')return true;
+            if(filter==='أي حالة'||filter==='أي إنذار')return row.status!=='جيد';
             return row.status===filter;
         }
 
-        function getFilteredStatusRows(level, filter=state.officerStatusFilter) {
-            const matchingStudents=getStudentsMatchingStatus(level,filter);
-            return getStatusRowsForLevel(level).filter(r=>matchingStudents.has(r.studentId) && statusRowMatches(r,filter));
+        // الاختيار على مستوى حالة (الطالب × المادة)، وليس أسوأ حالة للطالب.
+        function getFilteredStatusRows(level,filter=state.officerStatusFilter,ctx=officerReportPeriodContext()) {
+            return getStatusRowsForLevel(level,ctx).filter(r=>statusRowMatches(r,filter));
         }
-
-        function getStudentsMatchingStatus(level, filter=state.officerStatusFilter) {
-            const students=getActiveStudents().filter(st=>Number(st.level)===Number(level));
-            if (!filter || filter==='الكل') return new Set(students.map(st=>st.id));
-            return new Set(students.filter(st=>{
-                const worst=getStudentWorstStatusForLevel(st.id,level);
-                return (filter==='أي حالة' || filter==='أي إنذار') ? worst!=='جيد' : worst===filter;
-            }).map(st=>st.id));
+        function getStudentsMatchingStatus(level,filter=state.officerStatusFilter,ctx=officerReportPeriodContext()) {
+            if(!filter||filter==='الكل')
+                return new Set(getActiveStudents().filter(st=>Number(st.level)===Number(level)).map(st=>String(st.id)));
+            return new Set(getFilteredStatusRows(level,filter,ctx).map(r=>String(r.studentId)));
         }
 
         function setOfficerStatusFilter(filter) {
@@ -8530,14 +8558,16 @@
             if (!el || !level) return;
             if(state.officerStatusFilter==='أي إنذار') state.officerStatusFilter='أي حالة';
             const students=getActiveStudents().filter(st=>Number(st.level)===Number(level));
-            const counts=countStudentStatuses(students,level);
+            const rows=getStatusRowsForLevel(level);
+            const counts=Object.fromEntries(['جيد','تنبيه','إنذار أولي','إنذار نهائي','راسب'].map(f=>[f,new Set(rows.filter(r=>r.status===f).map(r=>String(r.studentId))).size]));
+            const anyCount=new Set(rows.filter(r=>r.status!=='جيد').map(r=>String(r.studentId))).size;
             const filters=['الكل','جيد','تنبيه','إنذار أولي','إنذار نهائي','راسب','أي حالة'];
             const styles={
                 'الكل':['#e2e8f0','#334155'], 'جيد':['#c6f6d5','#22543d'], 'تنبيه':['#bee3f8','#2a4365'], 'إنذار أولي':['#fefcbf','#744210'],
                 'إنذار نهائي':['#feebc8','#7b341e'], 'راسب':['#fed7d7','#9b2c2c'], 'أي حالة':['#e9d5ff','#6b21a8']
             };
-            const uniqueCount=f=>f==='الكل'?students.length:(f==='أي حالة'?students.length-(counts['جيد']||0):(counts[f]||0));
-            el.innerHTML=`<div class="flex-between"><div><h4 style="margin:0;">🎯 فرز الطلبة حسب حالة الغياب</h4><small>كل طالب يُحسب مرة واحدة وفق أسوأ حالة تراكمية لديه في مواد المرحلة. أساس الحالة: ${escapeHtml(absencePolicyLabel())}.</small></div>
+            const uniqueCount=f=>f==='الكل'?students.length:(f==='أي حالة'?anyCount:(counts[f]||0));
+            el.innerHTML=`<div class="flex-between"><div><h4 style="margin:0;">🎯 فرز الطلبة حسب حالة الغياب</h4><small>الحالة تُفحص لكل مادة مستقلة؛ قد يظهر الطالب في أكثر من فئة إذا اختلفت حالته بين المواد. النسب في الفترة محسوبة من ساعات المقرر السنوية المعتمدة حالياً. أساس الحالة: ${escapeHtml(absencePolicyLabel())}.</small></div>
                 <div style="display:flex;gap:5px;flex-wrap:wrap;"><button onclick="exportFilteredStatusExcel()" class="btn-excel btn-sm">📊 Excel للحالة المختارة</button><button onclick="exportFilteredStatusPDF()" class="btn-pdf btn-sm">📄 PDF للحالة المختارة</button></div></div>
                 <div class="status-count-grid">${['جيد','تنبيه','إنذار أولي','إنذار نهائي','راسب','أي حالة'].map(f=>`<div class="status-count-card" style="background:${styles[f][0]};color:${styles[f][1]};"><strong>${uniqueCount(f)}</strong><span>${escapeHtml(f)}</span></div>`).join('')}</div>
                 <div class="status-filter-buttons">${filters.map(f=>`<button class="status-filter-btn btn-sm ${state.officerStatusFilter===f?'active':''}" style="background:${styles[f][0]};color:${styles[f][1]};" onclick="setOfficerStatusFilter('${f}')">${escapeHtml(f)} (${uniqueCount(f)})</button>`).join('')}</div>`;
@@ -8546,7 +8576,7 @@
         function renderFilteredStatusDetails(level) {
             if (!state.officerStatusFilter || state.officerStatusFilter==='الكل') return '';
             const rows=getFilteredStatusRows(level);
-            let html=`<div id="filteredStatusExportArea" class="card" style="margin-top:10px;"><div style="text-align:center;margin-bottom:7px;"><h4>قائمة ${escapeHtml(state.officerStatusFilter)} — ${escapeHtml(getLevelName(level))}</h4><small>${rows.length} حالة في ${new Set(rows.map(r=>r.studentId)).size} طالب</small></div>`;
+            let html=`<div id="filteredStatusExportArea" class="card" style="margin-top:10px;"><div style="text-align:center;margin-bottom:7px;"><h4>قائمة ${escapeHtml(state.officerStatusFilter)} — ${escapeHtml(getLevelName(level))} — ${escapeHtml(officerReportPeriodDescription())}</h4><small>${rows.length} حالة في ${new Set(rows.map(r=>r.studentId)).size} طالب</small></div>`;
             if (!rows.length) return html+'<p style="text-align:center;color:#718096;">لا توجد حالات مطابقة.</p></div>';
             html+='<div class="report-table-wrapper"><table class="report-table filtered-status-table"><thead><tr><th>#</th><th>الطالب</th><th>الشعبة النظرية</th><th>المجموعة العملية</th><th>المادة</th><th>النوع</th><th>الحالة</th><th>نسبة الغياب</th><th>غير المعذر</th><th>الساعات</th></tr></thead><tbody>';
             rows.sort((a,b)=>a.studentName.localeCompare(b.studentName,'ar')||a.subjectName.localeCompare(b.subjectName,'ar')).forEach((r,i)=>{
@@ -8566,7 +8596,7 @@
             const data=rows.map((r,i)=>({
                 '#':i+1,'اسم الطالب':r.studentName,'الشعبة النظرية':r.theoreticalGroup,'المجموعة العملية':r.practicalGroup,
                 'المادة':r.subjectName,'نوع المادة':r.subjectType,'الحالة':r.status,'نسبة الغياب %':Number(r.percentage.toFixed(1)),
-                'نسبة غير المعذر %':Number(r.unexcusedPercentage.toFixed(1)),'ساعات الغياب':Number(r.hours.toFixed(1)),'ساعات غير معذرة':Number(r.unexcusedHours.toFixed(1))
+                'نسبة غير المعذر %':Number(r.unexcusedPercentage.toFixed(1)),'ساعات الغياب':Number(r.hours.toFixed(1)),'ساعات غير معذرة':Number(r.unexcusedHours.toFixed(1)),'نطاق التقرير':officerReportPeriodDescription()
             }));
             const ws=XLSX.utils.json_to_sheet(data); ws['!cols']=[{wch:5},{wch:25},{wch:14},{wch:14},{wch:24},{wch:12},{wch:15},{wch:14},{wch:16},{wch:14},{wch:16}];
             const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,String(filter).slice(0,31));
@@ -9447,10 +9477,11 @@
                 .sort((a,b) => String(a.name || '').localeCompare(String(b.name || ''), 'ar'));
         }
 
-        function calculateAnnualAbsence(studentId, subject) {
+        function calculateAnnualAbsence(studentId, subject, reportPeriod=null) {
             if (!subject || isStudentOfficiallyDeleted(studentId)) return { totalAbsentHours: 0, unexcusedHours:0, excusedHours:0, absencePercentage: 0, unexcusedPercentage:0, annualCourseHours: subject?getSubjectCourseHours(subject):0, status: 'جيد' };
             const records = getLogicalAttendanceRecords(state.attendances).filter(a =>
                 String(a.studentId) === String(studentId) && String(a.subjectId) === String(subject.id) && Number(a.hours) > 0
+                && officerAttendanceInReportPeriod(a,reportPeriod)
             );
             const totalAbsentHours = records.reduce((sum, a) => sum + getAttendanceEffectiveHours(a, subject), 0);
             const unexcusedHours = records
@@ -9489,14 +9520,15 @@
 
             const container = document.getElementById('officerReportContent');
             if (!container) return;
-            const studentsInLevel = getActiveStudents().filter(st => st.level === level);
+            const studentsInLevel = getActiveStudents().filter(st => Number(st.level)===Number(level));
             if (studentsInLevel.length === 0) {
                 container.innerHTML = '<p>لا يوجد طلاب في هذه المرحلة</p>';
                 return;
             }
 
-            const from = document.getElementById('reportDateFrom').value;
-            const to = document.getElementById('reportDateTo').value;
+            const ctx=officerReportPeriodContext();
+            if(!ctx.valid){container.innerHTML='<p style="color:#b91c1c">تاريخ البداية أكبر من تاريخ النهاية. صحح الفترة أولاً.</p>';return;}
+            const {from,to}=ctx;
             let filteredAttendances = getLogicalAttendanceRecords(state.attendances).filter(a=>Number(a.hours)>0);
             if (from) filteredAttendances = filteredAttendances.filter(a => a.date >= from);
             if (to) filteredAttendances = filteredAttendances.filter(a => a.date <= to);
@@ -9508,7 +9540,13 @@
             }
             const levelStudentIds = new Set(studentsInLevel.map(st => String(st.id)));
             const levelSubjectIds = new Set(finalSubjects.map(s => String(s.id)));
-            const periodRecords = filteredAttendances.filter(a => levelStudentIds.has(String(a.studentId)) && levelSubjectIds.has(String(a.subjectId)) && Number(a.hours) > 0);
+            const matchingStudentIds=getStudentsMatchingStatus(level,state.officerStatusFilter,ctx);
+            const matchSubjectKeys=new Set(getFilteredStatusRows(level,state.officerStatusFilter,ctx)
+                .map(r=>JSON.stringify([String(r.studentId),String(r.subjectId)])));
+            const periodRecords = filteredAttendances.filter(a =>
+                levelStudentIds.has(String(a.studentId)) && levelSubjectIds.has(String(a.subjectId)) && Number(a.hours) > 0
+                && (!state.officerStatusFilter || state.officerStatusFilter==='الكل'
+                    || matchSubjectKeys.has(JSON.stringify([String(a.studentId),String(a.subjectId)]))));
             let periodDetailsHtml = '';
             if (from || to) {
                 const sortedPeriod = [...periodRecords].sort((a,b) => String(b.date).localeCompare(String(a.date)));
@@ -9524,13 +9562,13 @@
                     });
                     periodDetailsHtml += '</tbody></table></div>';
                 }
-                periodDetailsHtml += '<small>ملاحظة: جدول الحالة أعلاه يبقى سنوياً تراكمياً، أما هذا الجدول فيعرض السجلات الواقعة فعلياً ضمن الفترة المختارة.</small></div>';
+                periodDetailsHtml += '<small>هذا الجدول يحتوي على أحداث الغياب خلال التاريخين المختارين فقط، فيما يتبع جدول الحالة طريقة الحساب المحددة أعلاه.</small></div>';
             }
 
             let html = `
                 <div id="printable-report" class="pdf-report" style="margin-top:10px;">
                     <div class="report-print-header" style="text-align:center; margin-bottom:7px;">
-                        <h3 style="color:#1a3a5e; margin:0 0 3px; font-size:15px;">📊 تقرير الغياب السنوي التراكمي</h3>
+                        <h3 style="color:#1a3a5e; margin:0 0 3px; font-size:15px;">📊 تقرير الغياب — ${escapeHtml(officerReportPeriodDescription(ctx))}</h3>
                         <p style="color:#4a5568; font-size:11px; margin:2px 0;">${getLevelName(level)} - ${getLevelSystem(level) === 'بولونيا' ? 'نظام بولونيا' : 'نظام سنوي'}</p>
                         <div class="report-legend">
                             <span style="background:#c6f6d5; padding:2px 6px; border-radius:4px;">🟢 جيد: أقل من 5%</span>
@@ -9546,8 +9584,7 @@
                             <thead><tr><th>اسم الطالب</th>${finalSubjects.map(s => `<th title="${s.name}">${s.name}</th>`).join('')}</tr></thead>
                             <tbody>`;
 
-            const matchingStudentIds = getStudentsMatchingStatus(level, state.officerStatusFilter);
-            const sortedStudents = [...studentsInLevel].filter(st => matchingStudentIds.has(st.id)).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+            const sortedStudents = [...studentsInLevel].filter(st => matchingStudentIds.has(String(st.id))).sort((a,b)=>a.name.localeCompare(b.name,'ar'));
             if (state.officerStatusFilter && state.officerStatusFilter !== 'الكل') {
                 html += `<tr class="status-filter-summary-row"><td colspan="${finalSubjects.length+1}" style="background:#eef2ff;color:#3730a3;font-weight:bold;text-align:center;">الفلتر الحالي: ${escapeHtml(state.officerStatusFilter)} — ${sortedStudents.length} طالب</td></tr>`;
             }
@@ -9558,14 +9595,15 @@
                         html += '<td class="subject-cell" style="background:#f1f5f9;color:#64748b;border:1px solid #cbd5e0;"><span class="status-text">غير مشمول</span></td>';
                         return;
                     }
-                    const d = calculateAnnualAbsence(st.id, sub);
+                    const d = calculateAnnualAbsence(st.id,sub,ctx);
                     const style = getStatusStyle(d.status);
+                    const matchesSelected=statusRowMatches({status:d.status},state.officerStatusFilter);
                     const pct = `غ.م ${d.unexcusedPercentage.toFixed(1)}% / بعذر ${(d.excusedPercentage ?? Math.max(0,d.absencePercentage-d.unexcusedPercentage)).toFixed(1)}%`;
                     const hours = d.totalAbsentHours.toFixed(1);
                     html += `<td class="subject-cell ${style.cls}" title="إجمالي الغياب: ${d.absencePercentage.toFixed(1)}% — غير المعذر: ${d.unexcusedPercentage.toFixed(1)}% — ساعات المقرر: ${d.annualCourseHours}" style="background:${style.bg}; color:${style.fg}; border:1px solid #cbd5e0;">
-                        <span class="status-text" style="color:${style.fg}; font-weight:800;">${d.status}</span>
+                        <span class="status-text" style="color:${style.fg}; font-weight:800;">${d.status}${state.officerStatusFilter!=='الكل'&&matchesSelected?' ✓':''}</span>
                         <span class="percentage" style="color:${style.fg};">${pct}</span>
-                        <span class="hours-detail" style="color:${style.fg};"><strong>${hours} س</strong><span class="annual-label"> غياب سنوي</span></span>
+                        <span class="hours-detail" style="color:${style.fg};"><strong>${hours} س</strong><span class="annual-label"> غياب ${ctx.active?(ctx.mode==='asof'?'حتى التاريخ':'ضمن الفترة'):'سنوي'}</span></span>
                     </td>`;
                 });
                 html += '</tr>';
@@ -9573,7 +9611,7 @@
 
             html += `</tbody></table></div>
                 <div class="report-footer-primary" style="margin-top:7px;text-align:center;color:#718096;font-size:9px;border-top:1px solid #e2e8f0;padding-top:5px;">إعداد وتنفيذ <strong>م. دموسى محمد مهدي</strong> - رئيس قسم الفيزياء</div>
-                <div class="report-footer-secondary" style="margin-top:4px;text-align:center;color:#9ca3af;font-size:8px;">كل خلية = الحالة الحالية / نسبة غير المعذر ونسبة المعذر / مجموع ساعات الغياب طوال السنة.</div>
+                <div class="report-footer-secondary" style="margin-top:4px;text-align:center;color:#9ca3af;font-size:8px;">كل خلية = الحالة بحسب ${escapeHtml(officerReportPeriodDescription(ctx))} / نسبة غير المعذر والمعذر / ساعات الغياب. مقام النسب: ساعات المقرر السنوية الحالية.</div>
                 </div>`;
             html += renderFilteredStatusDetails(level);
             html += periodDetailsHtml;
@@ -9634,7 +9672,7 @@
                 }
                 const levelName = getLevelName(state.currentLevel) || 'المرحلة';
                 const date = getLocalDateISO();
-                pdf.save(`تقرير_الغيابات_التراكمي_${levelName}_${date}.pdf`);
+                pdf.save(`تقرير_الغيابات_${officerReportPeriodContext().active?'فترة_':''}${levelName}_${date}.pdf`);
                 element.classList.remove('pdf-exporting');
                 btns.forEach(b => b.style.display = '');
                 alert(`✅ تم إنشاء تقرير PDF بنجاح (${page} صفحة).`);
@@ -9649,8 +9687,10 @@
             if (!requireOptionalLibrary(() => typeof XLSX !== 'undefined', 'Excel')) return;
             const level = state.currentLevel;
             if (!level) { alert('الرجاء اختيار مرحلة أولاً'); return; }
-            const matchingStudentIds = getStudentsMatchingStatus(level, state.officerStatusFilter);
-            const studentsInLevel = getActiveStudents().filter(st => st.level === level && matchingStudentIds.has(st.id));
+            const ctx=officerReportPeriodContext();
+            if(!ctx.valid){alert('تاريخ البداية أكبر من تاريخ النهاية.');return;}
+            const matchingStudentIds = getStudentsMatchingStatus(level,state.officerStatusFilter,ctx);
+            const studentsInLevel = getActiveStudents().filter(st => Number(st.level)===Number(level) && matchingStudentIds.has(String(st.id)));
             if (studentsInLevel.length === 0) { alert('لا يوجد طلاب مطابقون للفلتر الحالي'); return; }
             const finalSubjects = getReportSubjects(level);
             const data = [];
@@ -9658,7 +9698,7 @@
                 const row = { 'الطالب': st.name };
                 finalSubjects.forEach(sub => {
                     if (!studentRelevantToSubject(st, sub)) { row[sub.name] = 'غير مشمول'; return; }
-                    const d = calculateAnnualAbsence(st.id, sub);
+                    const d = calculateAnnualAbsence(st.id,sub,ctx);
                     const excusedPct = d.excusedPercentage ?? Math.max(0,d.absencePercentage-d.unexcusedPercentage);
                     row[sub.name] =
                         `${d.status} (غير معذر ${d.unexcusedPercentage.toFixed(1)}% - بعذر ${excusedPct.toFixed(1)}% - إجمالي ${d.absencePercentage.toFixed(1)}% - ${d.totalAbsentHours.toFixed(1)} س)`;
@@ -9670,11 +9710,11 @@
             finalSubjects.forEach(() => colWidths.push({ wch: 22 }));
             ws['!cols'] = colWidths;
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'الغيابات التراكمية');
+            XLSX.utils.book_append_sheet(wb, ws, 'حالات الغياب');
             const levelName = getLevelName(level);
             const date = getLocalDateISO();
             const filterSuffix = state.officerStatusFilter && state.officerStatusFilter !== 'الكل' ? `_${state.officerStatusFilter}` : '';
-            XLSX.writeFile(wb, `تقرير_الغيابات_التراكمي_${levelName}${filterSuffix}_${date}.xlsx`);
+            XLSX.writeFile(wb, `تقرير_الغيابات_${ctx.active?'فترة_':''}${levelName}${filterSuffix}_${date}.xlsx`);
             alert('✅ تم تصدير التقرير إلى Excel بنجاح!');
         }
 
@@ -11937,40 +11977,41 @@
         //  DATE RANGE FUNCTIONS
         // ==============================================================
         function applyDateFilter() {
+            const from=String(document.getElementById('reportDateFrom')?.value||'');
+            const to=String(document.getElementById('reportDateTo')?.value||'');
+            if(from&&to&&from>to){
+                alert('تاريخ البداية أكبر من تاريخ النهاية. لن يُطبّق نطاق غير صالح.');
+                document.getElementById('reportDateFrom').value=officerReportDateFrom;
+                document.getElementById('reportDateTo').value=officerReportDateTo;
+                return;
+            }
+            officerReportDateFrom=from; officerReportDateTo=to;
+            officerReportPeriodMode=document.getElementById('reportPeriodMode')?.value==='asof'?'asof':'within';
             updateReportDateDisplay();
-            if (state.currentLevel) renderOfficerReport(state.currentLevel);
+            if(state.currentLevel){renderOfficerStatusFilter(state.currentLevel);renderOfficerReport(state.currentLevel);}
         }
 
         function clearDateFilter() {
-            document.getElementById('reportDateFrom').value = '';
-            document.getElementById('reportDateTo').value = '';
-            updateReportDateDisplay();
-            if (state.currentLevel) renderOfficerReport(state.currentLevel);
+            const from=document.getElementById('reportDateFrom'),to=document.getElementById('reportDateTo');
+            if(from)from.value='';if(to)to.value='';
+            applyDateFilter();
         }
 
         function setAutoDateRange() {
-            const logicalAbsences=getLogicalAttendanceRecords(state.attendances).filter(a=>Number(a.hours)>0);
-            if (logicalAbsences.length === 0) { document.getElementById('reportDateFrom').value = '';
-                document.getElementById('reportDateTo').value = '';
-                updateReportDateDisplay(); return; }
-            const dates = logicalAbsences.map(a => a.date).filter(d => d);
-            if (dates.length === 0) { document.getElementById('reportDateFrom').value = '';
-                document.getElementById('reportDateTo').value = '';
-                updateReportDateDisplay(); return; }
-            dates.sort();
-            document.getElementById('reportDateFrom').value = dates[0];
-            document.getElementById('reportDateTo').value = dates[dates.length - 1];
-            updateReportDateDisplay();
+            const level=state.currentLevel;
+            const subjects=new Set(getReportSubjects(level).map(s=>String(s.id)));
+            const students=new Set(getActiveStudents().filter(st=>Number(st.level)===Number(level)).map(st=>String(st.id)));
+            const dates=getLogicalAttendanceRecords(state.attendances)
+                .filter(a=>Number(a.hours)>0&&subjects.has(String(a.subjectId))&&students.has(String(a.studentId))&&/^\d{4}-\d{2}-\d{2}$/.test(String(a.date||'')))
+                .map(a=>String(a.date)).sort();
+            document.getElementById('reportDateFrom').value=dates[0]||'';
+            document.getElementById('reportDateTo').value=dates[dates.length-1]||'';
+            applyDateFilter();
         }
 
         function updateReportDateDisplay() {
-            const from = document.getElementById('reportDateFrom').value;
-            const to = document.getElementById('reportDateTo').value;
-            const display = document.getElementById('reportDateRangeDisplay');
-            if (from && to) display.textContent = `📅 الفترة: من ${from} إلى ${to}`;
-            else if (from) display.textContent = `📅 الفترة: من ${from} فصاعداً`;
-            else if (to) display.textContent = `📅 الفترة: حتى ${to}`;
-            else display.textContent = '📅 جميع الفترات';
+            const display=document.getElementById('reportDateRangeDisplay');
+            if(display)display.textContent='📅 '+officerReportPeriodDescription();
         }
 
         function generatePDF() {
@@ -12877,12 +12918,6 @@
         // ==============================================================
         console.log(`🏛️ نظام الغيابات ${APP_VERSION} — إصلاحات متوافقة مع البيانات الحالية`);
 
-        document.addEventListener('change', function(e) {
-            if (e.target.id === 'reportDateFrom' || e.target.id === 'reportDateTo') {
-                updateReportDateDisplay();
-                if (state.currentLevel) renderOfficerReport(state.currentLevel);
-            }
-        });
 
         // يبدأ من النسخة المحلية فوراً؛ الاتصال السحابي لا يعطل الدخول أو فتح الجدول.
         // V45.5: performance scope. During one render, the 11k+ attendance array is
