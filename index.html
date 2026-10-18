@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.7 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.46.8 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1169,7 +1169,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.46.7-firebase-report-filters-period-fixed';
+        const APP_VERSION = '45.46.8-firebase-qr-correction-scope-fixed';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -6383,7 +6383,25 @@
                 if(!await qrCheckPendingCorrection())return false;
                 // انتظار أي عمليات سحابية سبقت فتح الملف، فلا نصحح فوق تعديلات محلية غير محسومة.
                 await saveQueue;
-                if(state.isSyncing||buildFirebaseChanges().length||Object.keys(syncConflicts).length)throw new Error('هناك حفظ أو تعارضات سحابية معلقة. أنهِها قبل التصحيح.');
+                // V45.46.8: unrelated pending edits/conflicts elsewhere in the database
+                // must not block a QR correction for this student. Still block while a
+                // sync is actively running or when this student's own records are dirty/conflicted.
+                const pendingBeforeQrCorrection=buildFirebaseChanges();
+                const studentIdForQrCorrection=String(student.id);
+                const hasRelevantPendingQrChange=pendingBeforeQrCorrection.some(change=>
+                    (change.name==='students' && String(change.id)===studentIdForQrCorrection) ||
+                    (change.name==='attendances' && [change.before,change.after].some(record=>
+                        record && String(record.studentId)===studentIdForQrCorrection))
+                );
+                const hasRelevantQrConflict=Object.values(syncConflicts).some(conflict=>
+                    (conflict.name==='students' && [conflict.before,conflict.after,conflict.remote].some(record=>
+                        record && String(record.id)===studentIdForQrCorrection)) ||
+                    (conflict.name==='attendances' && [conflict.before,conflict.after,conflict.remote].some(record=>
+                        record && String(record.studentId)===studentIdForQrCorrection))
+                );
+                if(state.isSyncing)throw new Error('تجري مزامنة سحابية الآن. انتظر اكتمالها ثم أعد فحص التصحيح.');
+                if(hasRelevantPendingQrChange||hasRelevantQrConflict)
+                    throw new Error('توجد تغييرات أو تعارضات غير محسومة تخص هذا الطالب. عالجها أولاً ثم أعد فتح سجل الغياب.');
                 const checked=[];
                 for(const [id,snapshot] of requested){
                     const row=studentProfileAttendanceRows(student.id).find(r=>String(r.id)===id);
@@ -8475,7 +8493,7 @@
         }
 
         // ==============================================================
-        //  V45.46.7: سياق تقارير الغياب مستقل تماماً عن التخزين والمزامنة.
+        //  V45.46.8: سياق تقارير الغياب مستقل تماماً عن التخزين والمزامنة.
         //  اختيار فترة لا يغيّر state.attendances أو قيم الحضور الأصلية.
         // ==============================================================
         let officerReportDateFrom = '';
