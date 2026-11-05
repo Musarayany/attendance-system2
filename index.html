@@ -1169,7 +1169,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.46.8-firebase-qr-correction-scope-fixed';
+        const APP_VERSION = '45.47.0-download-saver';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -2568,6 +2568,32 @@
             connected:firebaseTransportConnected,
             uptimeMinutes:Math.round((Date.now()-firebaseUsageDiagnostics.startedAt)/60000)
         });
+        // V45.47: توفير التحميل. القراءة الأولى تبقي مستمع value مؤقتاً على المجموعة
+        // حتى تُركَّب مستمعات child_*؛ عندها يخدمها Firebase SDK من الذاكرة بدل تنزيل
+        // المجموعة كاملة مرة ثانية من الخادم. يُزال المستمع المؤقت بعد التركيب.
+        const warmCollectionListeners = Object.create(null);
+        function readCollectionKeepingCache(name) {
+            const ref = database.ref('/' + name);
+            const previous = warmCollectionListeners[name];
+            return new Promise((resolve, reject) => {
+                let settled = false;
+                const cb = snap => { if (settled) return; settled = true; resolve(snap); };
+                const cancel = err => {
+                    if (warmCollectionListeners[name]?.cb === cb) delete warmCollectionListeners[name];
+                    if (!settled) { settled = true; reject(err); }
+                };
+                // سجّل المستمع الجديد قبل إزالة القديم كي لا يفقد SDK نسخته المخزنة.
+                warmCollectionListeners[name] = { ref, cb };
+                ref.on('value', cb, cancel);
+                if (previous) { try { previous.ref.off('value', previous.cb); } catch (e) {} }
+            });
+        }
+        function releaseWarmCollectionListener(name) {
+            const warm = warmCollectionListeners[name];
+            if (!warm) return;
+            delete warmCollectionListeners[name];
+            try { warm.ref.off('value', warm.cb); } catch (e) {}
+        }
         async function readCloudCollections() {
             if (!database) throw new Error('الاتصال السحابي غير جاهز');
 
@@ -2586,7 +2612,7 @@
                 firebaseUsageDiagnostics.initialReadAttempts[name]=(firebaseUsageDiagnostics.initialReadAttempts[name]||0)+1;
                 try{
                     const snapshot=await withTimeout(
-                        database.ref('/' + name).once('value'),
+                        readCollectionKeepingCache(name),
                         CLOUD_OPERATION_TIMEOUT_MS,
                         `انتهت مهلة تحميل ${name}`
                     );
@@ -2905,7 +2931,8 @@
                         if(!snap.hasChild(firebaseRecordKey(id)))applyRemoteChild(name,null,id);
                     });
                     initialRecords.clear();
-                }).catch(err=>console.error('تعذر التحقق الأولي من '+name+':',err));
+                }).catch(err=>console.error('تعذر التحقق الأولي من '+name+':',err))
+                  .finally(()=>releaseWarmCollectionListener(name));
             });
         }
 
