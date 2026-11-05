@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.47.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.48.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -627,6 +627,7 @@
                         <input type="file" id="restoreBackupInput" accept=".json" style="display:none;" onchange="restoreBackup(event)">
                         <button onclick="openHeadAttendance()" class="btn-primary btn-sm">📝 إدارة الحضور والغياب</button>
                         <button onclick="showAuditLog()" class="btn-info btn-sm" style="min-width:60px;">🧾 سجل التدقيق</button>
+                        <button onclick="forceFullCloudRefresh()" class="btn-secondary btn-sm" style="min-width:60px;" title="يستهلك من حصة Firebase؛ للاستخدام عند الشك فقط">🔄 تحديث كامل من السحابة</button>
                         <button onclick="showAddLevelPanel()" class="btn-success btn-sm" style="min-width:110px;">👨‍🏫 الأساتذة والمواد</button>
                         <button onclick="reconcileProfessorIdentityData(true)" class="btn-info btn-sm" style="min-width:120px;">🧩 فحص ملفات الأساتذة</button>
                     </div>
@@ -1169,7 +1170,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.47.0-download-saver';
+        const APP_VERSION = '45.48.0-delta-sync';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -1369,6 +1370,38 @@
         const legacyCloudCollections = new Set();
         let syncConflictHistory = [];
         let localCacheWasLoaded = false;
+        // V45.48: مزامنة التغييرات فقط (Delta Sync). كل كتابة على مجموعة متزامنة تُسجَّل
+        // في /_changes، وعند فتح الصفحة تُنزَّل السجلات التي تغيرت منذ آخر مرة فقط.
+        const DELTA_LOG_PATH = '_changes';
+        const DELTA_COLLECTIONS = new Set(CLOUD_SYNC_COLLECTIONS);
+        const DELTA_MARGIN_MS = 5 * 60 * 1000;
+        const DELTA_FULL_REFRESH_MS = 30 * 24 * 60 * 60 * 1000;
+        const DELTA_LOG_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
+        const DELTA_MAX_RECORD_FETCH = 1500;
+        const DELTA_FETCH_CONCURRENCY = 20;
+        const DELTA_LEGACY_TOLERANCE_MS = 3000;
+        const DELTA_LEGACY_REFRESH_MIN_GAP_MS = 3 * 60 * 60 * 1000;
+        const DELTA_CLIENT_ID = 'c_' + ((window.crypto && typeof window.crypto.randomUUID === 'function') ? window.crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+        let deltaSyncMeta = { cursor:0, fullAt:0, db:'' };
+        let serverTimeOffsetMs = 0;
+        let deltaFullCycleStartedAtClient = 0;
+        let deltaOriginalWrites = null;
+        let deltaLogPending = new Map();
+        let deltaLogTimer = null;
+        let deltaLiveRef = null;
+        let deltaLiveQueue = [];
+        let deltaLiveTimer = null;
+        let deltaLiveBusy = false;
+        const deltaSeenLogKeys = new Set();
+        let deltaLastResult = null;
+        let deltaLegacyLastRefreshAt = 0;
+        let deltaLegacyDetected = false;
+        let deltaLastUpdateValue = 0;
+        let deltaLastDeltaWriteValue = 0;
+        let deltaLegacyCheckTimer = null;
+        let deltaLegacyWatchStarted = false;
+        const deltaDeletedLeftovers = new Map();
+        function serverNow() { return Date.now() + (Number(serverTimeOffsetMs) || 0); }
         let localDatabasePromise = null;
         let localDatabaseDisabled = false;
         let localSaveTimer = null;
@@ -1467,6 +1500,8 @@
                 ], 'firebase_db_runtime', () => typeof window.firebase !== 'undefined' && typeof window.firebase.database === 'function');
                 if (!firebase.apps || firebase.apps.length === 0) firebase.initializeApp(firebaseConfig);
                 database = firebase.database();
+                installDeltaWriteLogger();
+                database.ref('.info/serverTimeOffset').on('value', snap => { serverTimeOffsetMs = Number(snap.val()) || 0; });
                 database.ref('.info/connected').on('value', snap => {
                     const wasOnline = firebaseTransportConnected;
                     firebaseTransportConnected = snap.val() === true;
@@ -1567,12 +1602,13 @@
                 collections,
                 syncBase,
                 syncConflicts: JSON.parse(JSON.stringify(syncConflicts)),
-                syncConflictHistory:JSON.parse(JSON.stringify(syncConflictHistory))
+                syncConflictHistory:JSON.parse(JSON.stringify(syncConflictHistory)),
+                deltaSync: { ...deltaSyncMeta }
             };
         }
 
         function localSnapshotSignature(payload) {
-            const json = JSON.stringify({ collections:payload.collections, syncBase:payload.syncBase, syncConflicts:payload.syncConflicts || {}, syncConflictHistory:payload.syncConflictHistory || [] });
+            const json = JSON.stringify({ collections:payload.collections, syncBase:payload.syncBase, syncConflicts:payload.syncConflicts || {}, syncConflictHistory:payload.syncConflictHistory || [], deltaSync:payload.deltaSync || null });
             let hash = 2166136261;
             for (let i = 0; i < json.length; i++) {
                 hash ^= json.charCodeAt(i);
@@ -1644,6 +1680,10 @@
                 if (value && SYNC_COLLECTIONS.includes(value.name) && key === syncConflictKey(value.name,value.id)) syncConflicts[key] = value;
             });
             localCacheWasLoaded = true;
+            const savedDelta = payload.deltaSync;
+            deltaSyncMeta = (savedDelta && typeof savedDelta === 'object')
+                ? { cursor:Number(savedDelta.cursor)||0, fullAt:Number(savedDelta.fullAt)||0, db:String(savedDelta.db||'') }
+                : { cursor:0, fullAt:0, db:'' };
             lastLocalSnapshotSignature = localSnapshotSignature(payload);
             return true;
         }
@@ -2280,7 +2320,7 @@
             }
             updateSyncConflictButton();
             if (errors.length) throw errors[0];
-            await withTimeout(database.ref('/').update({lastUpdate:firebase.database.ServerValue.TIMESTAMP,schemaVersion:SCHEMA_VERSION}),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تثبيت وقت الحفظ');
+            await withTimeout(database.ref('/').update({lastUpdate:firebase.database.ServerValue.TIMESTAMP,lastDeltaWriteAt:firebase.database.ServerValue.TIMESTAMP,schemaVersion:SCHEMA_VERSION}),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تثبيت وقت الحفظ');
             return conflicts;
         }
         function applyRemoteCollection(name, value) {
@@ -2566,7 +2606,8 @@
             listenerActive:cloudListenersStarted,
             initialReadComplete:cloudInitialReadComplete,
             connected:firebaseTransportConnected,
-            uptimeMinutes:Math.round((Date.now()-firebaseUsageDiagnostics.startedAt)/60000)
+            uptimeMinutes:Math.round((Date.now()-firebaseUsageDiagnostics.startedAt)/60000),
+            delta:{...deltaSyncMeta, last:deltaLastResult, legacyDetected:deltaLegacyDetected, liveListener:!!deltaLiveRef}
         });
         // V45.47: توفير التحميل. القراءة الأولى تبقي مستمع value مؤقتاً على المجموعة
         // حتى تُركَّب مستمعات child_*؛ عندها يخدمها Firebase SDK من الذاكرة بدل تنزيل
@@ -2594,6 +2635,232 @@
             delete warmCollectionListeners[name];
             try { warm.ref.off('value', warm.cb); } catch (e) {}
         }
+        function deltaRefPath(ref) {
+            const parts = [];
+            for (let r = ref; r && r.key !== null && r.key !== undefined; r = r.parent) parts.unshift(String(r.key));
+            return parts;
+        }
+        function deltaPairsForWrite(ref, value, isUpdate) {
+            const base = deltaRefPath(ref), out = [];
+            const add = parts => {
+                if (!parts.length) { DELTA_COLLECTIONS.forEach(c => out.push([c, '*'])); return; }
+                if (!DELTA_COLLECTIONS.has(parts[0])) return;
+                out.push([parts[0], parts.length > 1 ? parts[1] : '*']);
+            };
+            if (isUpdate && value && typeof value === 'object') Object.keys(value).forEach(k => add(base.concat(String(k).split('/').filter(Boolean))));
+            else add(base);
+            return out;
+        }
+        // يلتقط كل كتابة يقوم بها البرنامج (set/update/remove/transaction) ويسجل
+        // المسار المتغير بعد نجاح الكتابة، دون تغيير الكتابة نفسها أو نتيجتها.
+        function installDeltaWriteLogger() {
+            const proto = window.firebase?.database?.Reference?.prototype;
+            if (!proto || proto.__attendanceDeltaPatched) return;
+            const queryProto = window.firebase?.database?.Query?.prototype;
+            const orig = { set:proto.set, update:proto.update, remove:proto.remove, transaction:proto.transaction, setWithPriority:proto.setWithPriority, on:proto.on || queryProto?.on, off:proto.off || queryProto?.off };
+            deltaOriginalWrites = orig;
+            const track = (result, pairs, needsCommit) => {
+                if (pairs.length && result && typeof result.then === 'function') {
+                    result.then(res => { if (needsCommit && !(res && res.committed)) return; queueDeltaLog(pairs); }, () => {});
+                }
+                return result;
+            };
+            proto.set = function(value) { return track(orig.set.apply(this, arguments), deltaPairsForWrite(this, value, false), false); };
+            if (typeof orig.setWithPriority === 'function') proto.setWithPriority = function(value) { return track(orig.setWithPriority.apply(this, arguments), deltaPairsForWrite(this, value, false), false); };
+            proto.update = function(values) { return track(orig.update.apply(this, arguments), deltaPairsForWrite(this, values, true), false); };
+            proto.remove = function() { return track(orig.remove.apply(this, arguments), deltaPairsForWrite(this, null, false), false); };
+            // المعاملة (transaction) تحتاج قيمة السجل الحالية في ذاكرة Firebase، وإلا بدأت بقيمة فارغة
+            // وأُلغيت محلياً. كانت مستمعات المجموعات الكاملة توفر ذلك؛ الآن نراقب السجل نفسه فقط حتى تنتهي.
+            proto.transaction = function() {
+                const ref = this, args = arguments;
+                let warmFn = null;
+                const ready = new Promise(resolve => {
+                    let done = false;
+                    const finish = () => { if (!done) { done = true; resolve(); } };
+                    warmFn = finish;
+                    try { orig.on.call(ref, 'value', finish, finish); } catch (e) { finish(); }
+                });
+                const result = ready.then(() => orig.transaction.apply(ref, args));
+                const release = () => { try { orig.off.call(ref, 'value', warmFn); } catch (e) {} };
+                result.then(release, release);
+                return track(result, deltaPairsForWrite(ref, null, false), true);
+            };
+            Object.defineProperty(proto, '__attendanceDeltaPatched', { value:true });
+        }
+        function queueDeltaLog(pairs) {
+            pairs.forEach(([c, k]) => deltaLogPending.set(c + '\u0000' + k, [c, k]));
+            if (!deltaLogTimer) deltaLogTimer = setTimeout(flushDeltaLog, 30);
+        }
+        function flushDeltaLog() {
+            clearTimeout(deltaLogTimer);
+            deltaLogTimer = null;
+            if (!database || !deltaOriginalWrites || !deltaLogPending.size) return;
+            const pairs = [...deltaLogPending.values()];
+            deltaLogPending = new Map();
+            const logRef = database.ref('/' + DELTA_LOG_PATH);
+            const updates = {};
+            pairs.forEach(([c, k]) => { updates[logRef.push().key] = { c, k, t:firebase.database.ServerValue.TIMESTAMP, by:DELTA_CLIENT_ID }; });
+            Promise.resolve(deltaOriginalWrites.update.call(logRef, updates)).catch(err => console.warn('تعذر تسجيل التغييرات للمزامنة الجزئية:', err));
+        }
+        window.addEventListener('pagehide', () => { try { flushDeltaLog(); } catch (e) {} });
+
+        function deltaResolveLocalId(name, key) {
+            const k = String(key);
+            const hit = (state[name] || []).find(r => firebaseRecordKey(r?.id) === k) || (lastSyncedCollections[name] || []).find(r => firebaseRecordKey(r?.id) === k);
+            return hit ? String(hit.id) : k;
+        }
+        function applyDeltaRecord(name, key, raw) {
+            if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+                if (name === 'students' || name === 'attendances') {
+                    const sid = name === 'students' ? String(raw.id || key) : String(raw.studentId || '');
+                    if (sid && isStudentOfficiallyDeleted(sid)) deltaDeletedLeftovers.set(`${name}/${key}`, sid);
+                }
+                applyRemoteChild(name, raw, key);
+            } else applyRemoteChild(name, null, deltaResolveLocalId(name, key));
+        }
+        async function fetchAndApplyDeltaGroups(groups) {
+            let fetched = 0;
+            const fullNames = [];
+            for (const name of CLOUD_SYNC_COLLECTIONS) {
+                const keys = groups.get(name);
+                if (!keys || !keys.size) continue;
+                if (keys.has('*') || keys.size > DELTA_MAX_RECORD_FETCH) {
+                    const snap = await withTimeout(database.ref('/' + name).once('value'), Math.max(CLOUD_OPERATION_TIMEOUT_MS, 60000), `انتهت مهلة تحميل ${name}`);
+                    const value = snap.val();
+                    if (Array.isArray(value)) legacyCloudCollections.add(name);
+                    applyRemoteCollection(name, value);
+                    fullNames.push(name);
+                    continue;
+                }
+                const list = [...keys];
+                for (let i = 0; i < list.length; i += DELTA_FETCH_CONCURRENCY) {
+                    const batch = list.slice(i, i + DELTA_FETCH_CONCURRENCY);
+                    const snaps = await Promise.all(batch.map(k => withTimeout(database.ref(`/${name}/${k}`).once('value'), CLOUD_OPERATION_TIMEOUT_MS, `انتهت مهلة تحميل سجل من ${name}`)));
+                    snaps.forEach((snap, j) => applyDeltaRecord(name, batch[j], snap.val()));
+                    fetched += batch.length;
+                }
+            }
+            return { fetched, fullNames };
+        }
+        function groupDeltaEntries(entries, skipOwn) {
+            const groups = new Map();
+            let maxT = 0;
+            entries.forEach(e => {
+                const t = Number(e?.t) || 0;
+                if (t > maxT) maxT = t;
+                if (skipOwn && e?.by === DELTA_CLIENT_ID) return;
+                const c = String(e?.c || '');
+                if (!DELTA_COLLECTIONS.has(c)) return;
+                if (!groups.has(c)) groups.set(c, new Set());
+                groups.get(c).add(String(e?.k || '*'));
+            });
+            return { groups, maxT };
+        }
+        // عند فتح الصفحة: إذا كانت على الجهاز نسخة محلية حديثة، نزّل ما تغيّر بعدها فقط.
+        async function tryDeltaCloudSync() {
+            const no = reason => ({ applied:false, reason });
+            if (!database || !localCacheWasLoaded) return no('no-local-cache');
+            const meta = deltaSyncMeta || {};
+            if (!meta.cursor || !meta.fullAt || meta.db !== String(firebaseConfig.databaseURL || '')) return no('no-cursor');
+            const [luSnap, ldSnap] = await Promise.all([
+                withTimeout(database.ref('/lastUpdate').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة قراءة وقت آخر تحديث'),
+                withTimeout(database.ref('/lastDeltaWriteAt').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة قراءة وقت آخر تحديث')
+            ]);
+            const now = serverNow();
+            if (now - meta.fullAt > DELTA_FULL_REFRESH_MS) return no('periodic-full');
+            if (now - meta.cursor > DELTA_LOG_RETENTION_MS - 24 * 60 * 60 * 1000) return no('cursor-too-old');
+            const lu = Number(luSnap.val()) || 0, ld = Number(ldSnap.val()) || 0;
+            deltaLastUpdateValue = lu;
+            deltaLastDeltaWriteValue = ld;
+            // جهاز بنسخة قديمة كتب بعد آخر مزامنة لهذا الجهاز ولم يسجل تغييراته: يلزم تحميل كامل.
+            if (lu > meta.cursor - DELTA_MARGIN_MS && lu > ld + DELTA_LEGACY_TOLERANCE_MS) { deltaLegacyDetected = true; return no('legacy-writer'); }
+            const startedAt = serverNow();
+            const snap = await withTimeout(database.ref('/' + DELTA_LOG_PATH).orderByChild('t').startAt(meta.cursor - DELTA_MARGIN_MS).once('value'), Math.max(CLOUD_OPERATION_TIMEOUT_MS, 30000), 'انتهت مهلة قراءة سجل التغييرات');
+            const entries = [];
+            snap.forEach(child => { deltaSeenLogKeys.add(child.key); entries.push(child.val() || {}); });
+            const { groups, maxT } = groupDeltaEntries(entries, false);
+            const { fetched, fullNames } = await fetchAndApplyDeltaGroups(groups);
+            deltaLastResult = { mode:'delta', entries:entries.length, fetched, fullNames, at:Date.now() };
+            return { applied:true, cursor:Math.max(maxT, Number(meta.cursor) || 0, startedAt - 60000) };
+        }
+        function startDeltaLiveListener() {
+            if (!database || deltaLiveRef) return;
+            const from = (Number(deltaSyncMeta.cursor) || serverNow()) - DELTA_MARGIN_MS;
+            deltaLiveRef = database.ref('/' + DELTA_LOG_PATH).orderByChild('t').startAt(from);
+            deltaLiveRef.on('child_added', snap => {
+                if (deltaSeenLogKeys.has(snap.key)) return;
+                deltaSeenLogKeys.add(snap.key);
+                deltaLiveQueue.push(snap.val() || {});
+                if (!deltaLiveTimer) deltaLiveTimer = setTimeout(processDeltaLiveQueue, 400);
+            }, err => console.error('تعذر متابعة سجل التغييرات:', err));
+        }
+        async function processDeltaLiveQueue() {
+            deltaLiveTimer = null;
+            if (deltaLiveBusy) { deltaLiveTimer = setTimeout(processDeltaLiveQueue, 400); return; }
+            const batch = deltaLiveQueue;
+            deltaLiveQueue = [];
+            if (!batch.length) return;
+            deltaLiveBusy = true;
+            const { groups, maxT } = groupDeltaEntries(batch, true);
+            try {
+                const result = groups.size ? await fetchAndApplyDeltaGroups(groups) : { fetched:0, fullNames:[] };
+                deltaSyncMeta = { ...deltaSyncMeta, cursor:Math.max(Number(deltaSyncMeta.cursor) || 0, maxT) };
+                if (result.fullNames.length) scheduleRenderRefresh();
+                scheduleLocalPersistence(800);
+                if (deltaDeletedLeftovers.size) cleanupDeltaDeletedLeftovers();
+            } catch (err) {
+                console.warn('تعذر تطبيق تغييرات سحابية؛ ستعاد المحاولة:', err);
+                deltaLiveQueue = batch.concat(deltaLiveQueue);
+                if (!deltaLiveTimer) deltaLiveTimer = setTimeout(processDeltaLiveQueue, 15000);
+            } finally { deltaLiveBusy = false; }
+        }
+        function cleanupDeltaDeletedLeftovers() {
+            if (!database || !deltaDeletedLeftovers.size || !state.currentUser) return;
+            const updates = {};
+            deltaDeletedLeftovers.forEach((sid, recordPath) => { updates[recordPath] = null; });
+            deltaDeletedLeftovers.clear();
+            database.ref('/').update(updates).catch(err => console.warn('تعذر حذف بقايا طالب محذوف:', err));
+        }
+        // يكشف كتابة من جهاز لم يُحدَّث بعد (لا يسجل تغييراته) فيعيد تحميلاً كاملاً بحد أقصى مرة كل 3 ساعات.
+        function startDeltaLegacyWriterWatch() {
+            if (!database || deltaLegacyWatchStarted) return;
+            deltaLegacyWatchStarted = true;
+            let firstUpdate = true;
+            const check = () => {
+                clearTimeout(deltaLegacyCheckTimer);
+                deltaLegacyCheckTimer = setTimeout(() => {
+                    if (!(deltaLastUpdateValue > deltaLastDeltaWriteValue + DELTA_LEGACY_TOLERANCE_MS)) return;
+                    deltaLegacyDetected = true;
+                    if (Date.now() - deltaLegacyLastRefreshAt > DELTA_LEGACY_REFRESH_MIN_GAP_MS) {
+                        deltaLegacyLastRefreshAt = Date.now();
+                        setSyncStatus('🟠 جهاز آخر يعمل بنسخة قديمة من البرنامج — جارٍ تحديث كامل. اطلب من الجميع تحديث الصفحة.', '#b45309');
+                        loadFromFirebase({ forceFull:true }).catch(() => {});
+                    } else setSyncStatus('🟠 جهاز آخر يعمل بنسخة قديمة؛ اطلب من الجميع تحديث الصفحة لتصل تعديلاتهم فوراً.', '#b45309');
+                }, 20000);
+            };
+            database.ref('/lastDeltaWriteAt').on('value', snap => { deltaLastDeltaWriteValue = Number(snap.val()) || 0; });
+            database.ref('/lastUpdate').on('value', snap => {
+                deltaLastUpdateValue = Number(snap.val()) || 0;
+                if (firstUpdate) { firstUpdate = false; return; }
+                check();
+            });
+        }
+        function maybePruneDeltaLog() {
+            if (!database || !deltaOriginalWrites || Math.random() > 0.2) return;
+            const cutoff = serverNow() - DELTA_LOG_RETENTION_MS;
+            const logRef = database.ref('/' + DELTA_LOG_PATH);
+            logRef.orderByChild('t').endAt(cutoff).limitToFirst(400).once('value').then(snap => {
+                const updates = {};
+                snap.forEach(child => { updates[child.key] = null; });
+                if (Object.keys(updates).length) return deltaOriginalWrites.update.call(logRef, updates);
+            }).catch(err => console.warn('تعذر تنظيف سجل التغييرات القديم:', err));
+        }
+        window.forceFullCloudRefresh = async () => {
+            if (!confirm('سيتم تنزيل جميع البيانات من السحابة من جديد، وهذا يستهلك من حصة Firebase المجانية.\nاستخدمه فقط إذا شككت أن البيانات على هذا الجهاز غير محدثة. متابعة؟')) return false;
+            const ok = await loadFromFirebase({ forceFull:true });
+            alert(ok ? '✅ تم التحديث الكامل من السحابة.' : '⚠️ تعذر التحديث الكامل الآن؛ أعد المحاولة لاحقاً.');
+            return ok;
+        };
         async function readCloudCollections() {
             if (!database) throw new Error('الاتصال السحابي غير جاهز');
 
@@ -2602,6 +2869,7 @@
                 initialCloudReadCache=Object.create(null);
                 initialCloudReadCompleted=new Set();
                 initialCloudReadStartedAt=now;
+                deltaFullCycleStartedAtClient=now;
             }
 
             const failures = [];
@@ -2671,14 +2939,21 @@
             });
         }
 
-        async function loadFromFirebase() {
+        async function loadFromFirebase(options = {}) {
             if (!database) return false;
             if (state.isSyncing) return false;
             state.isSyncing = true;
             setSyncStatus('⏳ جاري جلب أحدث البيانات من السحابة...', '#1e4f7a');
 
             try {
-                const { data, loadedNames, failures } = await readCloudCollections();
+                let delta = null;
+                if (!options.forceFull) {
+                    try { delta = await tryDeltaCloudSync(); }
+                    catch (deltaErr) { console.warn('تعذرت المزامنة الجزئية؛ سيتم التحميل الكامل:', deltaErr); delta = null; }
+                }
+                const deltaApplied = !!(delta && delta.applied);
+                if (deltaApplied) setSyncStatus('⏳ جارٍ تطبيق آخر التغييرات فقط...', '#1e4f7a');
+                const { data, loadedNames, failures } = deltaApplied ? { data:{}, loadedNames:[], failures:[] } : await readCloudCollections();
                 if (failures.length) {
                     const detail=failures.map(f=>`${f.name}: ${String(f.error?.message||f.error||'خطأ غير معروف')}`).join(' | ');
                     throw new Error(`لم تكتمل القراءة الآمنة. الأقسام التي فشلت: ${detail}`);
@@ -2687,7 +2962,17 @@
                 lastCloudFailureReason='';
                 cloudInitialReadComplete = true;
                 // Always merge. New local edits made while the first cloud read is pending must survive.
-                applyRemoteData(data, loadedNames);
+                const deltaDbUrl = String(firebaseConfig.databaseURL || '');
+                if (deltaApplied) {
+                    deltaSyncMeta = { ...deltaSyncMeta, cursor:Math.max(Number(deltaSyncMeta.cursor) || 0, delta.cursor), db:deltaDbUrl };
+                } else {
+                    applyRemoteData(data, loadedNames);
+                    if (cloudListenersStarted) CLOUD_SYNC_COLLECTIONS.forEach(releaseWarmCollectionListener);
+                    // وقت بداية القراءة الكاملة بتوقيت الخادم؛ ما تغيّر بعده يصل عبر سجل التغييرات.
+                    const fullStartedAt = (deltaFullCycleStartedAtClient || Date.now()) + (Number(serverTimeOffsetMs) || 0);
+                    deltaSyncMeta = { cursor:fullStartedAt - 60000, fullAt:fullStartedAt, db:deltaDbUrl };
+                    deltaLastResult = { mode:'full', reason:delta?.reason || (options.forceFull ? 'forced' : 'fallback'), at:Date.now() };
+                }
                 try { await migrateLegacyCollectionsIfNeeded(data); }
                 catch (migrationError) { throw migrationError; }
 
@@ -2903,37 +3188,11 @@
             if (!database || cloudListenersStarted) return;
             cloudListenersStarted = true;
             startStudentLeaveListener();
-
-            CLOUD_SYNC_COLLECTIONS.forEach(name => {
-                const ref=database.ref('/'+name);
-
-                // Look up the initial version in O(1); an existing ID alone does not
-                // prove the record is unchanged since the first cloud read.
-                const initialRecords=mapsById(lastSyncedCollections[name]||[]);
-
-                ref.on('child_added', snap => {
-                    const raw=snap.val();
-                    const id=String(raw?.id || snap.key || '');
-                    const original=initialRecords.get(id);
-                    initialRecords.delete(id);
-                    if(original&&sameRecord(original,raw))return;
-                    applyRemoteChild(name,raw,snap.key);
-                }, err=>console.error('خطأ child_added في '+name+':',err));
-
-                ref.on('child_changed', snap => applyRemoteChild(name,snap.val(),snap.key),
-                    err=>console.error('خطأ child_changed في '+name+':',err));
-                ref.on('child_removed', snap => applyRemoteChild(name,null,snap.val()?.id||snap.key),
-                    err=>console.error('خطأ child_removed في '+name+':',err));
-                // One initial fence also catches deletions between the first read and
-                // attaching listeners. Inspect only IDs; do not materialize the collection.
-                ref.once('value').then(snap=>{
-                    initialRecords.forEach((record,id)=>{
-                        if(!snap.hasChild(firebaseRecordKey(id)))applyRemoteChild(name,null,id);
-                    });
-                    initialRecords.clear();
-                }).catch(err=>console.error('تعذر التحقق الأولي من '+name+':',err))
-                  .finally(()=>releaseWarmCollectionListener(name));
-            });
+            // V45.48: لا مستمعات على المجموعات كاملة؛ التحديثات الحية تصل عبر سجل التغييرات فقط.
+            CLOUD_SYNC_COLLECTIONS.forEach(releaseWarmCollectionListener);
+            startDeltaLiveListener();
+            startDeltaLegacyWriterWatch();
+            maybePruneDeltaLog();
         }
 
         async function saveAll(options = {}) {
@@ -4941,6 +5200,26 @@
             return payload;
         }
 
+        // V45.48: بحث مفهرس عن سجلات طالب واحد بدل تنزيل المجموعة كاملة.
+        async function queryCollectionByField(name, field, value) {
+            const ref = database.ref('/' + name);
+            const variants = [String(value)];
+            if (/^\d+$/.test(String(value)) && String(Number(value)) === String(value)) variants.push(Number(value));
+            const out = {};
+            const snaps = await Promise.all(variants.map(v => withTimeout(ref.orderByChild(field).equalTo(v).once('value'), CLOUD_OPERATION_TIMEOUT_MS, `انتهت مهلة البحث في ${name}`)));
+            snaps.forEach(snap => Object.assign(out, snap.val() || {}));
+            return out;
+        }
+        async function readStudentRecordsForDeletion(sid) {
+            const [byId, direct, attendances] = await Promise.all([
+                queryCollectionByField('students', 'id', sid),
+                withTimeout(database.ref(`/students/${firebaseRecordKey(sid)}`).once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة فحص سجل الطالب'),
+                queryCollectionByField('attendances', 'studentId', sid)
+            ]);
+            const students = { ...byId };
+            if (direct.val()) students[direct.key] = direct.val();
+            return { students, attendances };
+        }
         async function hardDeleteStudentFromFirebase(student, localLinkedRecords, tombstone) {
             if (!database) return { ok:false, reason:'offline', remoteAttendanceCount:0 };
             const sid=String(student.id);
@@ -4951,30 +5230,25 @@
             // Select deletion paths from their actual remote owner, not stale local IDs.
 
             // اقرأ السحابة نفسها حتى نحذف أي سجل قديم للطالب غير موجود في ذاكرة هذا الجهاز.
-            const [studentSnap, attendanceSnap] = await Promise.all([
-                withTimeout(database.ref('/students').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة فحص سجل الطالب'),
-                withTimeout(database.ref('/attendances').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة فحص غيابات الطالب')
-            ]);
-            const remoteStudents=studentSnap.val() || {};
+            const remoteBefore = await readStudentRecordsForDeletion(sid);
+            const remoteStudents=remoteBefore.students || {};
             Object.entries(remoteStudents).forEach(([key,rec])=>{
                 if(rec && String(rec.id || key)===sid) updates[`students/${key}`]=null;
             });
-            const remoteAttendances=attendanceSnap.val() || {};
+            const remoteAttendances=remoteBefore.attendances || {};
             let remoteAttendanceCount=0;
             Object.entries(remoteAttendances).forEach(([key,rec])=>{
                 if(rec && String(rec.studentId || '')===sid){updates[`attendances/${key}`]=null;remoteAttendanceCount++;}
             });
             updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;
+            updates.lastDeltaWriteAt=firebase.database.ServerValue.TIMESTAMP;
             updates.schemaVersion=SCHEMA_VERSION;
             await withTimeout(database.ref('/').update(firebaseTransportValue(updates)), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة الحذف النهائي');
 
             // تحقق من السحابة بعد العملية: لا طالب ولا سجل غياب بهذا المعرف.
-            const [verifyStudentSnap, verifyAttendanceSnap] = await Promise.all([
-                withTimeout(database.ref('/students').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة التحقق من حذف الطالب'),
-                withTimeout(database.ref('/attendances').once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة التحقق من حذف الغيابات')
-            ]);
-            const studentStillExists=Object.values(verifyStudentSnap.val()||{}).some(rec=>rec&&String(rec.id||'')===sid);
-            const attendanceStillExists=Object.values(verifyAttendanceSnap.val()||{}).some(rec=>rec&&String(rec.studentId||'')===sid);
+            const remoteAfter = await readStudentRecordsForDeletion(sid);
+            const studentStillExists=Object.values(remoteAfter.students||{}).some(rec=>rec&&String(rec.id||'')===sid);
+            const attendanceStillExists=Object.values(remoteAfter.attendances||{}).some(rec=>rec&&String(rec.studentId||'')===sid);
             if(studentStillExists || attendanceStillExists) throw new Error('فشل التحقق السحابي: بقي سجل للطالب بعد الحذف.');
             return {ok:true,remoteAttendanceCount};
         }
@@ -4984,6 +5258,19 @@
             const deletedRecords=getOfficiallyDeletedStudentRecords();
             if(!deletedRecords.length) return true;
             const deletedIds=new Set(deletedRecords.map(r=>String(r.studentId||r.id||'')).filter(Boolean));
+            if (deltaLastResult?.mode === 'delta') {
+                // V45.48: في وضع التغييرات فقط لا نعيد تنزيل الطلاب والغيابات كاملة.
+                // نصلح العلامات الناقصة ونحذف ما وصل من سجلات لطلاب محذوفين ضمن التغييرات.
+                try {
+                    const updates={};
+                    const baseMarkers=mapsById(lastSyncedCollections.deletedStudents||[]);
+                    deletedRecords.forEach(rec=>{const sid=String(rec.studentId||rec.id||'');if(!sid)return;const desired={...rec,id:sid,studentId:sid,active:true};if(!sameRecord(baseMarkers.get(sid),sanitizeRecord(desired)))updates[`deletedStudents/${firebaseSafeKey(sid)}`]=desired;});
+                    deltaDeletedLeftovers.forEach((sid,recordPath)=>{updates[recordPath]=null;});
+                    deltaDeletedLeftovers.clear();
+                    if(Object.keys(updates).length){updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;updates.lastDeltaWriteAt=firebase.database.ServerValue.TIMESTAMP;await withTimeout(database.ref('/').update(firebaseTransportValue(updates)),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تنظيف الطلاب المحذوفين');}
+                    return true;
+                } catch(err){console.warn('تعذر تنظيف السجلات السحابية للطلاب المحذوفين:',err);return false;}
+            }
             try {
                 const [studentSnap,attendanceSnap]=await Promise.all([
                     withTimeout(database.ref('/students').once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فحص الطلاب المحذوفين'),
@@ -4993,7 +5280,7 @@
                 deletedRecords.forEach(rec=>{const sid=String(rec.studentId||rec.id||'');if(sid)updates[`deletedStudents/${firebaseSafeKey(sid)}`]={...rec,id:sid,studentId:sid,active:true};});
                 Object.entries(studentSnap.val()||{}).forEach(([key,rec])=>{if(rec&&deletedIds.has(String(rec.id||key)))updates[`students/${key}`]=null;});
                 Object.entries(attendanceSnap.val()||{}).forEach(([key,rec])=>{if(rec&&deletedIds.has(String(rec.studentId||'')))updates[`attendances/${key}`]=null;});
-                if(Object.keys(updates).length){updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;await withTimeout(database.ref('/').update(firebaseTransportValue(updates)),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تنظيف سجلات الطلاب المحذوفين');}
+                if(Object.keys(updates).length){updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;updates.lastDeltaWriteAt=firebase.database.ServerValue.TIMESTAMP;await withTimeout(database.ref('/').update(firebaseTransportValue(updates)),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة تنظيف سجلات الطلاب المحذوفين');}
                 return true;
             } catch(err){console.warn('تعذر تنظيف السجلات السحابية للطلاب المحذوفين:',err);return false;}
         }
@@ -7356,6 +7643,7 @@
                 if(rec)updates[`attendances/${firebaseRecordKey(rec.id)}`]=sanitizeRecord(rec);
             });
             updates.lastUpdate=firebase.database.ServerValue.TIMESTAMP;
+            updates.lastDeltaWriteAt=firebase.database.ServerValue.TIMESTAMP;
             updates.schemaVersion=SCHEMA_VERSION;
             try{
                 await withTimeout(database.ref('/').update(firebaseTransportValue(updates)),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة رفع الطالب إلى السحابة');
