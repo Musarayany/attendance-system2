@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.49.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.49.1 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -627,6 +627,7 @@
                         <input type="file" id="restoreBackupInput" accept=".json" style="display:none;" onchange="restoreBackup(event)">
                         <button onclick="openHeadAttendance()" class="btn-primary btn-sm">📝 إدارة الحضور والغياب</button>
                         <button onclick="showAuditLog()" class="btn-info btn-sm" style="min-width:60px;">🧾 سجل التدقيق</button>
+                        <button onclick="showUsageDiagnostics()" class="btn-info btn-sm" style="min-width:60px;">📊 تشخيص الاستهلاك</button>
                         <button onclick="forceFullCloudRefresh()" class="btn-secondary btn-sm" style="min-width:60px;" title="يستهلك من حصة Firebase؛ للاستخدام عند الشك فقط">🔄 تحديث كامل من السحابة</button>
                         <button onclick="showAddLevelPanel()" class="btn-success btn-sm" style="min-width:110px;">👨‍🏫 الأساتذة والمواد</button>
                         <button onclick="reconcileProfessorIdentityData(true)" class="btn-info btn-sm" style="min-width:120px;">🧩 فحص ملفات الأساتذة</button>
@@ -1170,7 +1171,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.49.0-dormant-audit';
+        const APP_VERSION = '45.49.1-local-cache-timeouts';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -1560,32 +1561,58 @@
             return localDatabasePromise;
         }
 
+        // V45.49.1: كانت المهلة 3.5 ثانية؛ مع بيانات كبيرة على الهاتف تنتهي المهلة فيُعامل الجهاز
+        // كأنه بلا نسخة محلية ويُنزّل كل البيانات من السحابة في كل فتح. القراءة محلية، فالانتظار أرخص بكثير.
+        const localCacheDiagnostics = { readMs:null, readOk:null, readError:'', writeMs:null, writeOk:null, writeError:'', writes:0, writeFailures:0 };
         async function readIndexedSnapshot() {
-            if (localDatabaseDisabled) return null;
+            if (localDatabaseDisabled) { localCacheDiagnostics.readOk = false; localCacheDiagnostics.readError = 'disabled'; return null; }
+            const started = performance.now();
             try {
-                const db = await withTimeout(openLocalDatabase(), 3500, 'انتهت مهلة فتح التخزين المحلي');
-                return await withTimeout(new Promise((resolve, reject) => {
+                const db = await withTimeout(openLocalDatabase(), 20000, 'انتهت مهلة فتح التخزين المحلي');
+                const result = await withTimeout(new Promise((resolve, reject) => {
                     const tx = db.transaction(LOCAL_DB_STORE, 'readonly');
                     const request = tx.objectStore(LOCAL_DB_STORE).get(LOCAL_CACHE_KEY);
                     request.onsuccess = () => resolve(request.result || null);
                     request.onerror = () => reject(request.error || new Error('تعذر قراءة النسخة المحلية'));
-                }), 3500, 'انتهت مهلة قراءة النسخة المحلية');
-            } catch (err) { console.warn('تعذر قراءة IndexedDB:', err); return null; }
+                }), 60000, 'انتهت مهلة قراءة النسخة المحلية');
+                localCacheDiagnostics.readMs = Math.round(performance.now() - started);
+                localCacheDiagnostics.readOk = !!result;
+                localCacheDiagnostics.readError = result ? '' : 'empty';
+                return result;
+            } catch (err) {
+                localCacheDiagnostics.readMs = Math.round(performance.now() - started);
+                localCacheDiagnostics.readOk = false;
+                localCacheDiagnostics.readError = String(err?.message || err);
+                console.warn('تعذر قراءة IndexedDB:', err);
+                return null;
+            }
         }
 
         async function writeIndexedSnapshot(payload) {
             if (localDatabaseDisabled) return false;
+            const started = performance.now();
+            localCacheDiagnostics.writes++;
             try {
-                const db = await withTimeout(openLocalDatabase(), 3500, 'انتهت مهلة فتح التخزين المحلي');
+                const db = await withTimeout(openLocalDatabase(), 20000, 'انتهت مهلة فتح التخزين المحلي');
                 await withTimeout(new Promise((resolve, reject) => {
                     const tx = db.transaction(LOCAL_DB_STORE, 'readwrite');
                     tx.objectStore(LOCAL_DB_STORE).put(payload, LOCAL_CACHE_KEY);
                     tx.oncomplete = () => resolve(true);
                     tx.onerror = () => reject(tx.error || new Error('تعذر حفظ النسخة المحلية'));
                     tx.onabort = () => reject(tx.error || new Error('أُلغي حفظ النسخة المحلية'));
-                }), 5000, 'انتهت مهلة حفظ النسخة المحلية');
+                }), 90000, 'انتهت مهلة حفظ النسخة المحلية');
+                localCacheDiagnostics.writeMs = Math.round(performance.now() - started);
+                localCacheDiagnostics.writeOk = true;
+                localCacheDiagnostics.writeError = '';
                 return true;
-            } catch (err) { console.warn('تعذر حفظ IndexedDB:', err); return false; }
+            } catch (err) {
+                localCacheDiagnostics.writeMs = Math.round(performance.now() - started);
+                localCacheDiagnostics.writeOk = false;
+                localCacheDiagnostics.writeFailures++;
+                localCacheDiagnostics.writeError = String(err?.message || err);
+                console.warn('تعذر حفظ IndexedDB:', err);
+                return false;
+            }
         }
 
         function buildLocalSnapshot() {
@@ -2608,7 +2635,8 @@
             connected:firebaseTransportConnected,
             uptimeMinutes:Math.round((Date.now()-firebaseUsageDiagnostics.startedAt)/60000),
             delta:{...deltaSyncMeta, last:deltaLastResult, legacyDetected:deltaLegacyDetected, liveListener:!!deltaLiveRef},
-            auditArchive:auditArchiveLastResult
+            auditArchive:auditArchiveLastResult,
+            localCache:{...localCacheDiagnostics, loadedAtStartup:localCacheWasLoaded}
         });
         // V45.47: توفير التحميل. القراءة الأولى تبقي مستمع value مؤقتاً على المجموعة
         // حتى تُركَّب مستمعات child_*؛ عندها يخدمها Firebase SDK من الذاكرة بدل تنزيل
@@ -3713,6 +3741,8 @@
             lastSessionActivity = Date.now();
             clearInterval(sessionTimer);
             if (state.currentUser?.role === 'admin') scheduleAuditArchive();
+            // افتح الرابط مع ‎#diag‎ في آخره لعرض نافذة التشخيص على أي جهاز (أستاذ أو مسؤول).
+            if (String(location.hash || '').toLowerCase() === '#diag') setTimeout(() => { try { showUsageDiagnostics(); } catch (e) { console.warn(e); } }, 15000);
             if (!state.currentUser.persistent) {
                 sessionTimer = setInterval(() => {
                     if (state.currentUser && Date.now() - lastSessionActivity >= SESSION_TIMEOUT_MS) logout(true);
@@ -8751,6 +8781,51 @@
                 const logs = normalizeCollection(snap.val(), 'auditLogs').sort((a, b) => auditLogTimestamp(b) - auditLogTimestamp(a));
                 view.innerHTML = `<p style="font-size:12px;font-weight:800;margin:6px 0">🗄️ ${month}: ${logs.length} سجل (مستدعى من الأرشيف الخامل)</p>` + (logs.length ? auditLogTableHtml(logs) : '');
             } catch (err) { view.innerHTML = `<small style="color:#b91c1c">تعذر استدعاء الشهر: ${escapeHtml(err?.message || err)}</small>`; }
+        }
+
+        // V45.49.1: نافذة تشخيص الاستهلاك بالعربية بدل أوامر Console.
+        function showUsageDiagnostics() {
+            const d = (typeof getFirebaseUsageDiagnostics === 'function') ? getFirebaseUsageDiagnostics() : {};
+            const sizeOf = v => { try { return new Blob([JSON.stringify(v ?? null)]).size; } catch (e) { return 0; } };
+            const mb = n => (n / 1e6).toFixed(2) + ' MB';
+            const names = ['attendances','students','auditLogs','notifications','submissions','appSettings','professors','professorProfiles','subjects','deletedStudents','subjectHourOverrides','scheduleLinks'];
+            const labels = { attendances:'الغيابات', students:'الطلاب', auditLogs:'سجل التدقيق (النشط)', notifications:'الإشعارات', submissions:'الإرسالات', appSettings:'الإعدادات', professors:'الأساتذة', professorProfiles:'ملفات الأساتذة', subjects:'المواد', deletedStudents:'الطلاب المحذوفون', subjectHourOverrides:'ساعات المواد', scheduleLinks:'أرشيف الجدول' };
+            const rows = names.map(n => ({ n, label:labels[n] || n, count:(state[n] || []).length, bytes:sizeOf(state[n]) }));
+            rows.push({ n:'weeklyTimetable', label:'الجدول المنشور', count:'-', bytes:sizeOf(liveWeeklyTimetable) });
+            rows.push({ n:'academicCatalog', label:'كتالوج برنامج الجدول', count:'-', bytes:sizeOf(liveAcademicCatalog) });
+            rows.sort((a, b) => b.bytes - a.bytes);
+            const total = rows.reduce((t, r) => t + r.bytes, 0);
+            const delta = d.delta || {}, last = delta.last || {}, lc = d.localCache || {};
+            const modeText = last.mode === 'delta' ? '✅ تنزيل التغييرات فقط' : last.mode === 'full' ? '⚠️ تحميل كامل' : 'غير معروف';
+            const reasons = { 'no-local-cache':'لا توجد نسخة محلية مقروءة على هذا الجهاز', 'no-cursor':'أول فتح بعد التحديث (طبيعي مرة واحدة)', 'periodic-full':'تحديث كامل دوري (مرة كل 30 يوماً)', 'cursor-too-old':'لم يُفتح البرنامج على هذا الجهاز منذ مدة طويلة', 'legacy-writer':'جهاز آخر يعمل بنسخة قديمة', forced:'تحديث كامل يدوي', fallback:'تعذرت المزامنة الجزئية' };
+            const line = (k, v) => `<tr><td style="font-weight:800">${escapeHtml(k)}</td><td>${escapeHtml(String(v ?? ''))}</td></tr>`;
+            const tableStyle = 'style="width:100%;min-width:0;table-layout:auto"';
+            let html = `<div style="overflow-x:auto"><table class="report-table" ${tableStyle}><tbody>`;
+            html += `<tr><td style="font-weight:800">رقم النسخة</td><td><bdi dir="ltr">${escapeHtml(getAttendanceBuildVersion())}</bdi></td></tr>`;
+            html += line('طريقة آخر مزامنة', modeText + (last.mode === 'full' && last.reason ? ' — السبب: ' + (reasons[last.reason] || last.reason) : ''));
+            if (last.mode === 'delta') html += line('تغييرات نُزّلت عند الفتح', `${last.entries ?? 0} إشعار، ${last.fetched ?? 0} سجل`);
+            html += line('جهاز بنسخة قديمة مكتشف', delta.legacyDetected ? '⚠️ نعم — اطلب من الجميع تحديث الصفحة' : 'لا');
+            html += line('النسخة المحلية عند الفتح', lc.loadedAtStartup ? `✅ قُرئت (${lc.readMs ?? '?'} ms)` : `❌ لم تُقرأ (${lc.readError || 'غير معروف'}, ${lc.readMs ?? '?'} ms)`);
+            html += line('آخر حفظ محلي', lc.writeOk === null ? 'لم يحدث بعد' : lc.writeOk ? `✅ نجح (${lc.writeMs} ms)` : `❌ فشل: ${lc.writeError}`);
+            html += line('مرات فشل الحفظ المحلي', `${lc.writeFailures || 0} من ${lc.writes || 0}`);
+            const arch = d.auditArchive;
+            html += line('أرشفة سجل التدقيق', arch ? (arch.error ? '❌ ' + arch.error : `✅ نُقل ${arch.moved} سجل`) : 'لم تُنفذ في هذه الجلسة');
+            html += line('الاتصال', d.connected ? 'متصل' : 'غير متصل');
+            html += '</tbody></table></div>';
+            html += `<h3 style="font-size:13px;margin:12px 0 6px">حجم البيانات على هذا الجهاز (المجموع ${mb(total)})</h3>`;
+            html += `<div style="overflow-x:auto"><table class="report-table" ${tableStyle}><thead><tr><th>القسم</th><th>عدد السجلات</th><th>الحجم</th></tr></thead><tbody>`;
+            rows.forEach(r => { html += `<tr><td>${escapeHtml(r.label)}</td><td>${escapeHtml(String(r.count))}</td><td><bdi dir="ltr">${mb(r.bytes)}</bdi></td></tr>`; });
+            html += '</tbody></table></div><p style="font-size:11px;color:#64748b;margin-top:8px">صوّر هذه النافذة وأرسلها للدعم الفني.</p>';
+            let modal = document.getElementById('usageDiagnosticsModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'usageDiagnosticsModal';
+                modal.className = 'modal-overlay';
+                modal.innerHTML = '<div class="modal-box" style="max-width:720px;"><button class="close-btn" onclick="document.getElementById(\'usageDiagnosticsModal\').classList.remove(\'active\')">&times;</button><h2 style="font-size:1.1rem;">📊 تشخيص الاستهلاك</h2><div id="usageDiagnosticsContent"></div></div>';
+                document.body.appendChild(modal);
+            }
+            document.getElementById('usageDiagnosticsContent').innerHTML = html;
+            modal.classList.add('active');
         }
 
         function showAuditLog() {
