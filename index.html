@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.48.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.49.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1170,7 +1170,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.48.0-delta-sync';
+        const APP_VERSION = '45.49.0-dormant-audit';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -2579,7 +2579,7 @@
             state.auditLogs.push({
                 id: makeId('log'),
                 action: sanitizeText(action, 120),
-                details: auditDetails,
+                // V45.49: التفاصيل تُحفظ مرة واحدة (detailsData) بدل نسختين؛ العرض يبنيها منها عند الحاجة.
                 detailsData: typeof details==='string'?{message:sanitizeText(details,1200)}:sanitizeNestedValue(details,'detailsData',0),
                 userId: state.currentUser?.id || 'system',
                 userName: sanitizeText(state.currentUser?.name || 'النظام', 120),
@@ -2607,7 +2607,8 @@
             initialReadComplete:cloudInitialReadComplete,
             connected:firebaseTransportConnected,
             uptimeMinutes:Math.round((Date.now()-firebaseUsageDiagnostics.startedAt)/60000),
-            delta:{...deltaSyncMeta, last:deltaLastResult, legacyDetected:deltaLegacyDetected, liveListener:!!deltaLiveRef}
+            delta:{...deltaSyncMeta, last:deltaLastResult, legacyDetected:deltaLegacyDetected, liveListener:!!deltaLiveRef},
+            auditArchive:auditArchiveLastResult
         });
         // V45.47: توفير التحميل. القراءة الأولى تبقي مستمع value مؤقتاً على المجموعة
         // حتى تُركَّب مستمعات child_*؛ عندها يخدمها Firebase SDK من الذاكرة بدل تنزيل
@@ -3193,6 +3194,7 @@
             startDeltaLiveListener();
             startDeltaLegacyWriterWatch();
             maybePruneDeltaLog();
+            if (state.currentUser?.role === 'admin') scheduleAuditArchive();
         }
 
         async function saveAll(options = {}) {
@@ -3710,6 +3712,7 @@
             }
             lastSessionActivity = Date.now();
             clearInterval(sessionTimer);
+            if (state.currentUser?.role === 'admin') scheduleAuditArchive();
             if (!state.currentUser.persistent) {
                 sessionTimer = setInterval(() => {
                     if (state.currentUser && Date.now() - lastSessionActivity >= SESSION_TIMEOUT_MS) logout(true);
@@ -8614,6 +8617,142 @@
         }
 
 
+        // ==============================================================
+        //  V45.49: سجل التدقيق الخامل
+        //  السجلات الأقدم من 30 يوماً تُنقل (بكتابة ذرية واحدة: نسخ + حذف) إلى /auditArchive/{الشهر}.
+        //  هذا المسار لا يُقرأ عند فتح الصفحة أبداً؛ يُستدعى شهر واحد فقط عند طلبه من نافذة سجل التدقيق.
+        //  سجلات التراجع وفتح الغيابات تبقى نشطة دائماً لأن حالة قفل الغيابات تعتمد عليها.
+        // ==============================================================
+        const AUDIT_ARCHIVE_PATH = 'auditArchive';
+        const AUDIT_ARCHIVE_INDEX_PATH = 'auditArchiveIndex';
+        const AUDIT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+        const AUDIT_ARCHIVE_BATCH = 300;
+        const AUDIT_PROTECTED_ACTION = /تراجع|فتح الغيابات|إعادة فتح/;
+        let auditArchiveRunning = false;
+        let auditArchiveDoneThisSession = false;
+        let auditArchiveTimer = null;
+        let auditArchiveLastResult = null;
+
+        function auditLogTimestamp(log) {
+            const created = Number(log?.createdAt) || 0;
+            if (created > 0) return created;
+            const date = String(log?.date || '');
+            if (/^\d{4}-\d{2}-\d{2}$/.test(date)) { const t = Date.parse(date + 'T00:00:00+03:00'); return Number.isFinite(t) ? t : 0; }
+            return 0;
+        }
+        // مقارنة كما يخزّن Firebase: الكائنات والمصفوفات الفارغة تُعامل كأنها غير موجودة.
+        function firebaseEquivalentValue(value) {
+            if (Array.isArray(value)) { const arr = value.map(firebaseEquivalentValue).filter(v => v !== undefined); return arr.length ? arr : undefined; }
+            if (value && typeof value === 'object') {
+                const out = {};
+                Object.keys(value).sort().forEach(k => { const v = firebaseEquivalentValue(value[k]); if (v !== undefined) out[k] = v; });
+                return Object.keys(out).length ? out : undefined;
+            }
+            return value === null ? undefined : value;
+        }
+        function sameFirebaseRecord(a, b) { return JSON.stringify(firebaseEquivalentValue(a) ?? null) === JSON.stringify(firebaseEquivalentValue(b) ?? null); }
+        function auditArchiveMonth(ts) { return new Date(ts + 3 * 60 * 60 * 1000).toISOString().slice(0, 7); }
+        function isAuditLogArchivable(log, cutoff) {
+            if (!log || !log.id) return false;
+            if (AUDIT_PROTECTED_ACTION.test(String(log.action || ''))) return false;
+            const ts = auditLogTimestamp(log);
+            return ts > 0 && ts < cutoff;
+        }
+        async function archiveOldAuditLogs() {
+            if (auditArchiveRunning) return null;
+            if (!database || !deltaOriginalWrites || !cloudInitialReadComplete || !firebaseTransportConnected || state.currentUser?.role !== 'admin') return null;
+            auditArchiveRunning = true;
+            let moved = 0, candidatesCount = 0;
+            try {
+                const cutoff = serverNow() - AUDIT_ARCHIVE_AGE_MS;
+                // فقط السجلات المؤكدة في السحابة وغير المعدلة محلياً.
+                const current = mapsById(state.auditLogs || []);
+                const candidates = (lastSyncedCollections.auditLogs || []).filter(log => isAuditLogArchivable(log, cutoff) && current.has(String(log.id)) && sameFirebaseRecord(current.get(String(log.id)), log));
+                candidatesCount = candidates.length;
+                for (let i = 0; i < candidates.length; i += AUDIT_ARCHIVE_BATCH) {
+                    const batch = candidates.slice(i, i + AUDIT_ARCHIVE_BATCH);
+                    const updates = {}, months = new Set();
+                    batch.forEach(log => {
+                        const key = firebaseRecordKey(log.id);
+                        const month = auditArchiveMonth(auditLogTimestamp(log));
+                        months.add(month);
+                        updates[`${AUDIT_ARCHIVE_PATH}/${month}/${key}`] = firebaseTransportValue(log);
+                        updates[`auditLogs/${key}`] = null;
+                    });
+                    months.forEach(m => { updates[`${AUDIT_ARCHIVE_INDEX_PATH}/${m}/updatedAt`] = firebase.database.ServerValue.TIMESTAMP; });
+                    // كتابة ذرية: إما يُنسخ السجل ويُحذف من المسار النشط معاً، أو لا يحدث شيء.
+                    await withTimeout(deltaOriginalWrites.update.call(database.ref('/'), updates), Math.max(CLOUD_OPERATION_TIMEOUT_MS, 60000), 'انتهت مهلة أرشفة سجل التدقيق');
+                    const ids = new Set(batch.map(log => String(log.id)));
+                    state.auditLogs = (state.auditLogs || []).filter(log => !ids.has(String(log?.id)));
+                    lastSyncedCollections.auditLogs = (lastSyncedCollections.auditLogs || []).filter(log => !ids.has(String(log?.id)));
+                    moved += batch.length;
+                    setSyncStatus(`⏳ نقل سجل التدقيق القديم إلى الأرشيف الخامل: ${moved}/${candidates.length}`, '#1e4f7a');
+                }
+                if (moved) {
+                    // إشعار واحد للأجهزة الأخرى بدل إشعار لكل سجل: أعيدوا قراءة سجل التدقيق النشط (صار صغيراً).
+                    queueDeltaLog([['auditLogs', '*']]);
+                    flushDeltaLog();
+                    await persistLocalState('audit-archive', true);
+                    setSyncStatus(`✅ نُقل ${moved} سجل تدقيق قديم إلى الأرشيف الخامل؛ لا يُحمَّل إلا عند طلبه.`, '#2f855a');
+                }
+                auditArchiveLastResult = { moved, candidates:candidatesCount, at:Date.now() };
+                return auditArchiveLastResult;
+            } catch (err) {
+                console.warn('تعذرت أرشفة سجل التدقيق؛ لم يُحذف أي سجل دون نسخه:', err);
+                auditArchiveLastResult = { moved, candidates:candidatesCount, error:String(err?.message || err), at:Date.now() };
+                return auditArchiveLastResult;
+            } finally { auditArchiveRunning = false; }
+        }
+        function scheduleAuditArchive(delay = 30000) {
+            if (auditArchiveDoneThisSession || state.currentUser?.role !== 'admin') return;
+            clearTimeout(auditArchiveTimer);
+            auditArchiveTimer = setTimeout(async () => {
+                if (state.currentUser?.role !== 'admin') return;
+                const result = await archiveOldAuditLogs();
+                if (result && !result.error) auditArchiveDoneThisSession = true;
+                else scheduleAuditArchive(120000);
+            }, delay);
+        }
+
+        function auditLogDetailsText(log) {
+            if (log?.details) return String(log.details);
+            const data = log?.detailsData;
+            if (!data || typeof data !== 'object') return '';
+            if (typeof data.message === 'string' && Object.keys(data).length === 1) return data.message;
+            try { return JSON.stringify(data); } catch (e) { return ''; }
+        }
+        function auditLogTableHtml(logs) {
+            let html = '<div class="report-table-wrapper"><table class="report-table" style="min-width:900px"><thead><tr><th>التاريخ</th><th>المستخدم</th><th>العملية</th><th>التفاصيل</th></tr></thead><tbody>';
+            logs.forEach(log => {
+                html += `<tr><td>${escapeHtml((log.date || '') + ' ' + (log.time || ''))}</td><td>${escapeHtml(log.userName || '')}<br><small>${escapeHtml(log.role || '')}</small></td><td>${escapeHtml(log.action || '')}</td><td style="text-align:right;white-space:normal;">${escapeHtml(auditLogDetailsText(log))}</td></tr>`;
+            });
+            return html + '</tbody></table></div>';
+        }
+        async function loadAuditArchiveIndex() {
+            const box = document.getElementById('auditArchiveBrowser');
+            if (!box) return;
+            if (!database || !firebaseTransportConnected) { box.innerHTML = '<small style="color:#b45309">الأرشيف الخامل يحتاج اتصالاً بالإنترنت.</small>'; return; }
+            box.innerHTML = '<small>⏳ جارٍ قراءة فهرس الأشهر المؤرشفة...</small>';
+            try {
+                const snap = await withTimeout(database.ref('/' + AUDIT_ARCHIVE_INDEX_PATH).once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة قراءة فهرس الأرشيف');
+                const months = Object.keys(snap.val() || {}).filter(m => /^\d{4}-\d{2}$/.test(m)).sort().reverse();
+                if (!months.length) { box.innerHTML = '<small>لا توجد أشهر مؤرشفة بعد.</small>'; return; }
+                box.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">' +
+                    months.map(m => `<button type="button" class="btn-info btn-sm" onclick="loadAuditArchiveMonth('${m}')">📂 ${m}</button>`).join('') +
+                    '</div><div id="auditArchiveMonthView"></div>';
+            } catch (err) { box.innerHTML = `<small style="color:#b91c1c">تعذر قراءة الأرشيف: ${escapeHtml(err?.message || err)}</small>`; }
+        }
+        async function loadAuditArchiveMonth(month) {
+            const view = document.getElementById('auditArchiveMonthView');
+            if (!view || !/^\d{4}-\d{2}$/.test(String(month))) return;
+            view.innerHTML = `<small>⏳ جارٍ استدعاء سجلات ${month}...</small>`;
+            try {
+                const snap = await withTimeout(database.ref(`/${AUDIT_ARCHIVE_PATH}/${month}`).once('value'), Math.max(CLOUD_OPERATION_TIMEOUT_MS, 60000), 'انتهت مهلة استدعاء الشهر');
+                const logs = normalizeCollection(snap.val(), 'auditLogs').sort((a, b) => auditLogTimestamp(b) - auditLogTimestamp(a));
+                view.innerHTML = `<p style="font-size:12px;font-weight:800;margin:6px 0">🗄️ ${month}: ${logs.length} سجل (مستدعى من الأرشيف الخامل)</p>` + (logs.length ? auditLogTableHtml(logs) : '');
+            } catch (err) { view.innerHTML = `<small style="color:#b91c1c">تعذر استدعاء الشهر: ${escapeHtml(err?.message || err)}</small>`; }
+        }
+
         function showAuditLog() {
             const modal = document.getElementById('auditLogModal');
             const content = document.getElementById('auditLogContent');
@@ -8622,13 +8761,9 @@
             if (!logs.length) {
                 content.innerHTML = '<p style="text-align:center;color:#718096;padding:15px;">لا توجد عمليات مسجلة بعد.</p>';
             } else {
-                let html = '<div class="report-table-wrapper"><table class="report-table" style="min-width:900px"><thead><tr><th>التاريخ</th><th>المستخدم</th><th>العملية</th><th>التفاصيل</th></tr></thead><tbody>';
-                logs.forEach(log => {
-                    html += `<tr><td>${escapeHtml((log.date || '') + ' ' + (log.time || ''))}</td><td>${escapeHtml(log.userName || '')}<br><small>${escapeHtml(log.role || '')}</small></td><td>${escapeHtml(log.action || '')}</td><td style="text-align:right;white-space:normal;">${escapeHtml(log.details || '')}</td></tr>`;
-                });
-                html += '</tbody></table></div>';
-                content.innerHTML = html;
+                content.innerHTML = auditLogTableHtml(logs);
             }
+            content.insertAdjacentHTML('beforeend', '<div style="margin-top:12px;padding:10px;border:1px dashed #94a3b8;border-radius:9px;background:#f8fafc"><strong style="font-size:12px">🗄️ الأشهر السابقة (أرشيف خامل)</strong><p style="font-size:11px;color:#64748b;margin:4px 0">السجلات الأقدم من 30 يوماً محفوظة في السحابة لكنها لا تُحمَّل تلقائياً. اختر شهراً لاستدعائه.</p><button type="button" class="btn-secondary btn-sm" onclick="loadAuditArchiveIndex()">عرض الأشهر المؤرشفة</button><div id="auditArchiveBrowser"></div></div>');
             modal.classList.add('active');
         }
 
