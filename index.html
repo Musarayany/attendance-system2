@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.49.1 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.50.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1171,7 +1171,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.49.1-local-cache-timeouts';
+        const APP_VERSION = '45.50.0-slim-attendance';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -2636,6 +2636,7 @@
             uptimeMinutes:Math.round((Date.now()-firebaseUsageDiagnostics.startedAt)/60000),
             delta:{...deltaSyncMeta, last:deltaLastResult, legacyDetected:deltaLegacyDetected, liveListener:!!deltaLiveRef},
             auditArchive:auditArchiveLastResult,
+            attendanceSlim:attendanceSlimLastResult,
             localCache:{...localCacheDiagnostics, loadedAtStartup:localCacheWasLoaded}
         });
         // V45.47: توفير التحميل. القراءة الأولى تبقي مستمع value مؤقتاً على المجموعة
@@ -2835,6 +2836,7 @@
                 const result = groups.size ? await fetchAndApplyDeltaGroups(groups) : { fetched:0, fullNames:[] };
                 deltaSyncMeta = { ...deltaSyncMeta, cursor:Math.max(Number(deltaSyncMeta.cursor) || 0, maxT) };
                 if (result.fullNames.length) scheduleRenderRefresh();
+                if (groups.has('attendances')) { if (!attendanceSlimKnownDone) await checkAttendanceSlimFlag(); else stripUnusedAttendanceFieldsLocally(); }
                 scheduleLocalPersistence(800);
                 if (deltaDeletedLeftovers.size) cleanupDeltaDeletedLeftovers();
             } catch (err) {
@@ -3222,6 +3224,7 @@
             startDeltaLiveListener();
             startDeltaLegacyWriterWatch();
             maybePruneDeltaLog();
+            checkAttendanceSlimFlag();
             if (state.currentUser?.role === 'admin') scheduleAuditArchive();
         }
 
@@ -4815,8 +4818,7 @@
             const actor=state.currentUser?.role==='professor'?state.currentUser:null;
             return {
                 professorId:String(meta.professorId||actor?.id||''),
-                recordedById:String(actor?.id||''),
-                recordedByName:sanitizeText(actor?.name||'',120),
+                // V45.50: recordedById/recordedByName لا يقرؤهما أي جزء من البرنامج؛ سجل التدقيق يحفظ من سجّل.
                 source:sanitizeText(meta.source||'professor-panel',60),
                 lectureId:sanitizeText(meta.lectureId||'',120),
                 lectureGroup:sanitizeText(meta.groupName||'',80),
@@ -4949,8 +4951,6 @@
             delete record.superseded; delete record.supersededBy; delete record.supersededAt;
             Object.assign(record,attendanceProvenance(meta),{
                 updatedAt:Math.max(now,attendanceRecordRevision(previous)+1),
-                lastUpdatedById:String(state.currentUser?.id||''),
-                lastUpdatedByName:sanitizeText(state.currentUser?.name||'',120),
                 explicitState:nextHours>0?'absent':'present'
             });
             const changed=duplicateIds.size>0 || !previous || beforeHours!==nextHours || beforeExcused!==nextExcused || beforeTime!==context.sessionTime || beforeLecture!==String(context.lectureId||'') || String(previous?.id||'')!==String(canonicalId);
@@ -6692,8 +6692,6 @@
                 after.excused=desired==='excused'?1:0;
                 after.explicitState=desired==='present'?'present':'absent';
                 after.updatedAt=Math.max(now,Number(before.updatedAt||0)+1);
-                after.lastUpdatedById=authorId;
-                after.lastUpdatedByName=authorName;
                 after.source='head-student-qr-correction';
                 after.qrCorrection={batchId,expectedUpdatedAt:Number(before.updatedAt||0),changedAt:now,byId:authorId,
                     fromHours:Number(before.hours||0),fromExcused:Number(before.excused||0),toHours:Number(after.hours),toExcused:Number(after.excused),reason};
@@ -7268,7 +7266,7 @@
                        leaveSettlementGroupConflicts(current,latestLeave) || !sameRecord(current,before) ||
                        current.superseded===true || !(Number(current.hours)>0) || Number(current.excused)===1)return;
                     return {...current,excused:1,updatedAt:Math.max(at,Number(current.updatedAt||0)+1),
-                        lastUpdatedById:meta.byId,lastUpdatedByName:meta.byName,leaveSettlement:meta};
+                        leaveSettlement:meta};
                 },undefined,false));
                 if(!result.committed){
                     const current=(await withTimeout(ref.once('value'))).val();
@@ -8655,13 +8653,14 @@
         // ==============================================================
         const AUDIT_ARCHIVE_PATH = 'auditArchive';
         const AUDIT_ARCHIVE_INDEX_PATH = 'auditArchiveIndex';
-        const AUDIT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+        const AUDIT_ARCHIVE_AGE_MS = 14 * 24 * 60 * 60 * 1000;
         const AUDIT_ARCHIVE_BATCH = 300;
         const AUDIT_PROTECTED_ACTION = /تراجع|فتح الغيابات|إعادة فتح/;
         let auditArchiveRunning = false;
         let auditArchiveDoneThisSession = false;
         let auditArchiveTimer = null;
         let auditArchiveLastResult = null;
+        let auditArchiveMovedKeys = [];
 
         function auditLogTimestamp(log) {
             const created = Number(log?.createdAt) || 0;
@@ -8716,11 +8715,14 @@
                     state.auditLogs = (state.auditLogs || []).filter(log => !ids.has(String(log?.id)));
                     lastSyncedCollections.auditLogs = (lastSyncedCollections.auditLogs || []).filter(log => !ids.has(String(log?.id)));
                     moved += batch.length;
+                    batch.forEach(log => auditArchiveMovedKeys.push(firebaseRecordKey(log.id)));
                     setSyncStatus(`⏳ نقل سجل التدقيق القديم إلى الأرشيف الخامل: ${moved}/${candidates.length}`, '#1e4f7a');
                 }
                 if (moved) {
-                    // إشعار واحد للأجهزة الأخرى بدل إشعار لكل سجل: أعيدوا قراءة سجل التدقيق النشط (صار صغيراً).
-                    queueDeltaLog([['auditLogs', '*']]);
+                    // V45.50: الأجهزة الأخرى تحذف هذه السجلات بعينها (قراءة صغيرة لكل سجل)، ولا تعيد تنزيل
+                    // سجل التدقيق كاملاً. الإشعار الشامل يُستخدم فقط عند نقل دفعة ضخمة لأول مرة.
+                    queueDeltaLog(auditArchiveMovedKeys.length > DELTA_MAX_RECORD_FETCH ? [['auditLogs', '*']] : auditArchiveMovedKeys.map(key => ['auditLogs', key]));
+                    auditArchiveMovedKeys = [];
                     flushDeltaLog();
                     await persistLocalState('audit-archive', true);
                     setSyncStatus(`✅ نُقل ${moved} سجل تدقيق قديم إلى الأرشيف الخامل؛ لا يُحمَّل إلا عند طلبه.`, '#2f855a');
@@ -8733,13 +8735,88 @@
                 return auditArchiveLastResult;
             } finally { auditArchiveRunning = false; }
         }
+        // V45.50: تنظيف لمرة واحدة: إزالة 4 حقول غير مستخدمة من سجلات الغياب الموجودة.
+        // لا يمس أي حقل يقرؤه البرنامج (الساعات، التاريخ، الطالب، المادة، المحاضرة...).
+        const ATTENDANCE_UNUSED_FIELDS = ['recordedById', 'recordedByName', 'lastUpdatedById', 'lastUpdatedByName'];
+        const ATTENDANCE_SLIM_FLAG_PATH = '_meta/attendanceSlimV1';
+        let attendanceSlimRunning = false;
+        let attendanceSlimDone = false;
+        let attendanceSlimLastResult = null;
+        function attendanceHasUnusedFields(record) { return !!record && ATTENDANCE_UNUSED_FIELDS.some(f => record[f] !== undefined && record[f] !== null); }
+        // كل جهاز يعرف أن التنظيف تم يزيل الحقول نفسها من نسخته المحلية (الحالية وخط الأساس معاً)،
+        // فتبقى تعديلاته المعلقة كما هي ولا تُعيد رفع الحقول المحذوفة.
+        let attendanceSlimKnownDone = false;
+        function stripUnusedAttendanceFieldsLocally() {
+            if (!attendanceSlimKnownDone) return 0;
+            let n = 0;
+            [state.attendances, lastSyncedCollections.attendances].forEach(list => (list || []).forEach(r => {
+                if (r && ATTENDANCE_UNUSED_FIELDS.some(f => Object.prototype.hasOwnProperty.call(r, f))) { ATTENDANCE_UNUSED_FIELDS.forEach(f => { delete r[f]; }); n++; }
+            }));
+            if (n) scheduleLocalPersistence(1000);
+            return n;
+        }
+        async function checkAttendanceSlimFlag() {
+            if (!database || attendanceSlimKnownDone) return;
+            try {
+                const flag = (await withTimeout(database.ref('/' + ATTENDANCE_SLIM_FLAG_PATH).once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة قراءة حالة التنظيف')).val();
+                if (flag?.done) { attendanceSlimKnownDone = true; stripUnusedAttendanceFieldsLocally(); }
+            } catch (e) { console.warn('تعذر قراءة حالة تصغير الغيابات:', e); }
+        }
+        async function slimAttendanceRecordsOnce() {
+            if (attendanceSlimRunning || attendanceSlimDone) return attendanceSlimLastResult;
+            if (!database || !deltaOriginalWrites || !cloudInitialReadComplete || !firebaseTransportConnected || state.currentUser?.role !== 'admin') return null;
+            attendanceSlimRunning = true;
+            let cleaned = 0;
+            try {
+                const flag = (await withTimeout(database.ref('/' + ATTENDANCE_SLIM_FLAG_PATH).once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة قراءة حالة التنظيف')).val();
+                if (flag?.done) { attendanceSlimDone = true; attendanceSlimKnownDone = true; stripUnusedAttendanceFieldsLocally(); attendanceSlimLastResult = { cleaned:0, alreadyDone:true, at:Date.now() }; return attendanceSlimLastResult; }
+                const stateById = mapsById(state.attendances || []);
+                const candidates = (lastSyncedCollections.attendances || []).filter(attendanceHasUnusedFields);
+                const BATCH = 400;
+                for (let i = 0; i < candidates.length; i += BATCH) {
+                    const batch = candidates.slice(i, i + BATCH);
+                    const updates = {};
+                    batch.forEach(rec => {
+                        const key = firebaseRecordKey(rec.id);
+                        ATTENDANCE_UNUSED_FIELDS.forEach(f => { if (rec[f] !== undefined && rec[f] !== null) updates[`attendances/${key}/${f}`] = null; });
+                    });
+                    await withTimeout(deltaOriginalWrites.update.call(database.ref('/'), updates), Math.max(CLOUD_OPERATION_TIMEOUT_MS, 60000), 'انتهت مهلة تنظيف سجلات الغياب');
+                    batch.forEach(rec => {
+                        ATTENDANCE_UNUSED_FIELDS.forEach(f => { delete rec[f]; });
+                        const live = stateById.get(String(rec.id));
+                        if (live) ATTENDANCE_UNUSED_FIELDS.forEach(f => { delete live[f]; });
+                    });
+                    cleaned += batch.length;
+                    setSyncStatus(`⏳ تصغير سجلات الغياب (مرة واحدة): ${cleaned}/${candidates.length}`, '#1e4f7a');
+                }
+                await withTimeout(deltaOriginalWrites.update.call(database.ref('/'), { [ATTENDANCE_SLIM_FLAG_PATH]: { done:true, cleaned, at:firebase.database.ServerValue.TIMESTAMP } }), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ حالة التنظيف');
+                if (cleaned) {
+                    // كل جهاز يعيد قراءة الغيابات مرة واحدة ليحصل على النسخة الأصغر.
+                    queueDeltaLog([['attendances', '*']]);
+                    flushDeltaLog();
+                    await persistLocalState('attendance-slim', true);
+                    setSyncStatus(`✅ صُغّرت ${cleaned} سجل غياب (أُزيلت حقول غير مستخدمة)؛ لم يتغير أي غياب.`, '#2f855a');
+                }
+                attendanceSlimDone = true;
+                attendanceSlimKnownDone = true;
+                stripUnusedAttendanceFieldsLocally();
+                attendanceSlimLastResult = { cleaned, at:Date.now() };
+                return attendanceSlimLastResult;
+            } catch (err) {
+                console.warn('تعذر تصغير سجلات الغياب؛ ستعاد المحاولة لاحقاً:', err);
+                attendanceSlimLastResult = { cleaned, error:String(err?.message || err), at:Date.now() };
+                return attendanceSlimLastResult;
+            } finally { attendanceSlimRunning = false; }
+        }
+
         function scheduleAuditArchive(delay = 30000) {
             if (auditArchiveDoneThisSession || state.currentUser?.role !== 'admin') return;
             clearTimeout(auditArchiveTimer);
             auditArchiveTimer = setTimeout(async () => {
                 if (state.currentUser?.role !== 'admin') return;
                 const result = await archiveOldAuditLogs();
-                if (result && !result.error) auditArchiveDoneThisSession = true;
+                const slim = await slimAttendanceRecordsOnce();
+                if (result && !result.error && slim && !slim.error) auditArchiveDoneThisSession = true;
                 else scheduleAuditArchive(120000);
             }, delay);
         }
@@ -8810,6 +8887,8 @@
             html += line('مرات فشل الحفظ المحلي', `${lc.writeFailures || 0} من ${lc.writes || 0}`);
             const arch = d.auditArchive;
             html += line('أرشفة سجل التدقيق', arch ? (arch.error ? '❌ ' + arch.error : `✅ نُقل ${arch.moved} سجل`) : 'لم تُنفذ في هذه الجلسة');
+            const slimR = d.attendanceSlim;
+            html += line('تصغير سجلات الغياب', slimR ? (slimR.error ? '❌ ' + slimR.error : slimR.alreadyDone ? '✅ تم سابقاً' : `✅ صُغّر ${slimR.cleaned} سجل`) : 'لم يُنفذ في هذه الجلسة');
             html += line('الاتصال', d.connected ? 'متصل' : 'غير متصل');
             html += '</tbody></table></div>';
             html += `<h3 style="font-size:13px;margin:12px 0 6px">حجم البيانات على هذا الجهاز (المجموع ${mb(total)})</h3>`;
@@ -8838,7 +8917,7 @@
             } else {
                 content.innerHTML = auditLogTableHtml(logs);
             }
-            content.insertAdjacentHTML('beforeend', '<div style="margin-top:12px;padding:10px;border:1px dashed #94a3b8;border-radius:9px;background:#f8fafc"><strong style="font-size:12px">🗄️ الأشهر السابقة (أرشيف خامل)</strong><p style="font-size:11px;color:#64748b;margin:4px 0">السجلات الأقدم من 30 يوماً محفوظة في السحابة لكنها لا تُحمَّل تلقائياً. اختر شهراً لاستدعائه.</p><button type="button" class="btn-secondary btn-sm" onclick="loadAuditArchiveIndex()">عرض الأشهر المؤرشفة</button><div id="auditArchiveBrowser"></div></div>');
+            content.insertAdjacentHTML('beforeend', '<div style="margin-top:12px;padding:10px;border:1px dashed #94a3b8;border-radius:9px;background:#f8fafc"><strong style="font-size:12px">🗄️ الأشهر السابقة (أرشيف خامل)</strong><p style="font-size:11px;color:#64748b;margin:4px 0">السجلات الأقدم من 14 يوماً محفوظة في السحابة لكنها لا تُحمَّل تلقائياً. اختر شهراً لاستدعائه.</p><button type="button" class="btn-secondary btn-sm" onclick="loadAuditArchiveIndex()">عرض الأشهر المؤرشفة</button><div id="auditArchiveBrowser"></div></div>');
             modal.classList.add('active');
         }
 
