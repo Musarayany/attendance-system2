@@ -504,7 +504,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.50.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.51.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1171,7 +1171,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.50.0-slim-attendance';
+        const APP_VERSION = '45.51.0-phone-performance';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -1618,9 +1618,11 @@
         function buildLocalSnapshot() {
             const collections = {};
             const syncBase = {};
+            // V45.51: البيانات في الذاكرة نُظفت عند وصولها، وتُنظَّف مرة أخرى عند تحميلها من الجهاز؛
+            // إعادة تنظيف كل السجلات عند كل حفظ كانت تجمّد الهاتف ثوانيَ مع كل غياب.
             SYNC_COLLECTIONS.forEach(name => {
-                collections[name] = normalizeCollection(state[name], name);
-                syncBase[name] = normalizeCollection(lastSyncedCollections[name] || [], name);
+                collections[name] = Array.isArray(state[name]) ? state[name].slice() : [];
+                syncBase[name] = Array.isArray(lastSyncedCollections[name]) ? lastSyncedCollections[name].slice() : [];
             });
             return {
                 appVersion: APP_VERSION,
@@ -1634,7 +1636,13 @@
             };
         }
 
+        // V45.51: البصمة كانت تحوّل كل البيانات إلى نص وتمر على كل حرف لتتجنب حفظاً مكرراً،
+        // وكلفتها أكبر من الحفظ نفسه. الآن يُحفظ دائماً (الحفظ المجدول مُجمَّع أصلاً).
+        let localSnapshotWriteSerial = 0;
         function localSnapshotSignature(payload) {
+            return `w${++localSnapshotWriteSerial}:${payload?.savedAt || 0}`;
+        }
+        function legacyLocalSnapshotSignature(payload) {
             const json = JSON.stringify({ collections:payload.collections, syncBase:payload.syncBase, syncConflicts:payload.syncConflicts || {}, syncConflictHistory:payload.syncConflictHistory || [], deltaSync:payload.deltaSync || null });
             let hash = 2166136261;
             for (let i = 0; i < json.length; i++) {
@@ -1644,6 +1652,13 @@
             return `${json.length}:${hash >>> 0}`;
         }
 
+        // V45.51: نسخة localStorage لا تتسع لأكثر من ~4MB؛ مع بيانات كبيرة كان البرنامج يحوّل كل
+        // البيانات إلى نص عند كل نقرة ثم يفشل الحفظ. نحاولها فقط عندما يمكن أن تنجح.
+        function localSnapshotFitsFallback() {
+            let n = 0;
+            for (const name of SYNC_COLLECTIONS) { n += (state[name] || []).length + (lastSyncedCollections[name] || []).length; if (n > 6000) return false; }
+            return true;
+        }
         function writeLocalStorageFallback(payload, serializedJson = null) {
             try {
                 const json = serializedJson === null ? JSON.stringify(payload) : serializedJson;
@@ -1660,11 +1675,24 @@
             if (!state.initialLoadDone && reason !== 'bootstrap') return Promise.resolve(false);
             const payload = preparedPayload || buildLocalSnapshot();
             const signature = localSnapshotSignature(payload);
+            // V45.51: إذا كان هناك حفظ ينتظر دوره ولم يبدأ بعد، نستبدل محتواه بالأحدث بدل إضافة حفظ آخر
+            // خلفه؛ تسجيل 30 غياباً متتالياً كان يصنع طابوراً من 30 حفظاً كاملاً.
+            if (pendingLocalWrite) {
+                pendingLocalWrite.payload = payload;
+                pendingLocalWrite.preparedJson = preparedJson;
+                pendingLocalWrite.signature = signature;
+                pendingLocalWrite.force = pendingLocalWrite.force || force;
+                return pendingLocalWrite.promise;
+            }
+            const job = { payload, preparedJson, signature, force, promise:null };
+            pendingLocalWrite = job;
             localPersistenceQueue = localPersistenceQueue.catch(() => false).then(async () => {
+                if (pendingLocalWrite === job) pendingLocalWrite = null;
+                const { payload, preparedJson, signature, force } = job;
                 if (!force && signature === lastLocalSnapshotSignature) return true;
                 try {
-                    const serializedPayload = preparedJson === null ? JSON.stringify(payload) : preparedJson;
-                    const fallbackSaved = writeLocalStorageFallback(payload, serializedPayload);
+                    const serializedPayload = preparedJson !== null ? preparedJson : (localSnapshotFitsFallback() ? JSON.stringify(payload) : null);
+                    const fallbackSaved = serializedPayload ? writeLocalStorageFallback(payload, serializedPayload) : false;
                     const indexedSaved = await writeIndexedSnapshot(payload);
                     if (!indexedSaved && !fallbackSaved) throw new Error('لم ينجح أي مخزن محلي');
                     lastLocalSnapshotSignature = signature;
@@ -1676,8 +1704,10 @@
                     return false;
                 }
             });
+            job.promise = localPersistenceQueue;
             return localPersistenceQueue;
         }
+        let pendingLocalWrite = null;
         function scheduleLocalPersistence(delay = 120) {
             clearTimeout(localSaveTimer);
             localSaveTimer = setTimeout(() => persistLocalState('scheduled'), delay);
@@ -1930,8 +1960,11 @@
             return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
         }
 
+        // V45.51: مسار سريع بنتيجة مطابقة تماماً: نص نظيف أصلاً يُعاد كما هو دون ست عمليات استبدال.
+        const SANITIZE_NEEDS_WORK = /[\u0000-\u001F\u007F<>'"&]/;
         function sanitizeText(value, maxLen = 250) {
             if (value === null || value === undefined) return '';
+            if (typeof value === 'string' && value.length <= maxLen && !SANITIZE_NEEDS_WORK.test(value) && value === value.trim()) return value;
             return String(value)
                 .replace(/[\u0000-\u001F\u007F]/g, ' ')
                 .replace(/</g, '‹').replace(/>/g, '›')
@@ -1954,16 +1987,17 @@
             return false;
         }
 
+        // V45.51: كانت هاتان المجموعتان تُنشآن من جديد لكل قيمة نصية في كل سجل.
+        const SANITIZE_SECRET_KEYS = new Set(['password','passwordHash','adminPasswordHash','officerPasswordHash','hash']);
+        const SANITIZE_LONG_KEYS = new Set(['details','snapshot','msg','description','source']);
         function sanitizeNestedValue(value, key = '', depth = 0) {
             if (value === undefined) return null;
             if (typeof value === 'number') return Number.isFinite(value) ? value : null;
             if (value === null || typeof value === 'boolean') return value;
             if (typeof value === 'string') {
-                const secretKeys = new Set(['password','passwordHash','adminPasswordHash','officerPasswordHash','hash']);
-                if (secretKeys.has(key)) return value.slice(0, 4096);
+                if (SANITIZE_SECRET_KEYS.has(key)) return value.slice(0, 4096);
                 if (key === 'details') return String(value).replace(/[\u0000-\u001F\u007F]/g,' ').trim().slice(0,5000);
-                const longKeys = new Set(['details','snapshot','msg','description','source']);
-                return sanitizeText(value, longKeys.has(key) ? 5000 : 500);
+                return sanitizeText(value, SANITIZE_LONG_KEYS.has(key) ? 5000 : 500);
             }
             if (depth >= 12) return null;
             if (Array.isArray(value)) return value.map(item => sanitizeNestedValue(item, key, depth + 1));
@@ -2042,6 +2076,9 @@
         }
 
         function sameRecord(a, b) {
+            // V45.51: إذا تطابق النصان مباشرة فالسجلان متساويان قطعاً؛ المقارنة المرتبة البطيئة تبقى للحالات المختلفة فقط.
+            if (a === b) return true;
+            try { if (JSON.stringify(a) === JSON.stringify(b)) return true; } catch (e) {}
             return JSON.stringify(stableComparable(a)) === JSON.stringify(stableComparable(b));
         }
 
@@ -3084,7 +3121,7 @@
                 await autoResolveStoredSafeConflicts();
                 const changes = buildFirebaseChanges();
                 if (changes.length === 0) {
-                    await persistLocalState('cloud-noop');
+                    scheduleLocalPersistence(1500);
                     updateSyncConflictButton();
                     return Object.keys(syncConflicts).length === 0;
                 }
@@ -5001,8 +5038,8 @@
         function persistAttendanceMutation(reason='attendance') {
             // Synchronous emergency snapshot protects rapid clicks followed by immediate tab closure.
             const emergencyPayload=buildLocalSnapshot();
-            const emergencyJson=JSON.stringify(emergencyPayload);
-            writeLocalStorageFallback(emergencyPayload,emergencyJson);
+            const emergencyJson=localSnapshotFitsFallback()?JSON.stringify(emergencyPayload):null;
+            if(emergencyJson)writeLocalStorageFallback(emergencyPayload,emergencyJson);
             attendancePersistenceQueue=attendancePersistenceQueue.catch(()=>false).then(async()=>{
                 const localSaved=await persistLocalState(reason,true,emergencyPayload,emergencyJson);
                 const upload=pushToFirebase({silent:true,skipInitialLocalPersistence:true});
@@ -9375,8 +9412,17 @@
 
         function getRecordedSessionForGroupDate(subject,groupName,dateISO) {
             if(!subject||!isValidAttendanceDate(dateISO))return null;
-            const records=getLogicalAttendanceRecords(state.attendances).filter(att=>
-                String(att.subjectId)===String(subject.id) && String(att.date||'')===String(dateISO) &&
+            // V45.51: فهرس (المادة، التاريخ) ضمن نطاق العرض بدل المرور على كل السجلات لكل محاضرة.
+            let candidates;
+            if(attendanceReadScope){
+                if(!attendanceReadScope.subjectDates){
+                    const idx=new Map();
+                    getLogicalAttendanceRecords(state.attendances).forEach(att=>{const k=String(att.subjectId)+'\u0000'+String(att.date||'');if(!idx.has(k))idx.set(k,[]);idx.get(k).push(att);});
+                    attendanceReadScope.subjectDates=idx;
+                }
+                candidates=attendanceReadScope.subjectDates.get(String(subject.id)+'\u0000'+String(dateISO))||[];
+            } else candidates=getLogicalAttendanceRecords(state.attendances).filter(att=>String(att.subjectId)===String(subject.id) && String(att.date||'')===String(dateISO));
+            const records=candidates.filter(att=>
                 attendanceRecordSessionKey(att)!=='legacy' && attendanceRecordMatchesGroup(att,subject,groupName)
             );
             if(!records.length)return null;
@@ -11071,8 +11117,8 @@
 
         function persistSubmissionBeforeNavigation(reason) {
             const payload=buildLocalSnapshot();
-            const json=JSON.stringify(payload);
-            writeLocalStorageFallback(payload,json);
+            const json=localSnapshotFitsFallback()?JSON.stringify(payload):null;
+            if(json)writeLocalStorageFallback(payload,json);
             const durableSave=persistLocalState(reason,true,payload,json);
             const completion=Promise.resolve(durableSave).then(localSaved=>{
                 if(!localSaved)return false;
@@ -11968,8 +12014,9 @@
 
         function getProfessorStudentAbsenceDates(studentId,subjectId){
             const subject=state.subjects.find(s=>String(s.id)===String(subjectId));
-            return getLogicalAttendanceRecords(state.attendances)
-                .filter(a=>String(a.subjectId)===String(subjectId)&&String(a.studentId)===String(studentId)&&Number(a.hours)>0)
+            // V45.51: فهرس (الطالب، المادة) بدل المرور على كل سجلات الغياب لكل طالب.
+            return getLogicalAttendanceForStudentSubject(studentId,subjectId)
+                .filter(a=>Number(a.hours)>0)
                 .sort((a,b)=>{
                     const d=String(b.date||'').localeCompare(String(a.date||''));
                     return d || String(normalizeSessionTime(b.sessionTime)||'').localeCompare(String(normalizeSessionTime(a.sessionTime)||''));
@@ -13547,7 +13594,7 @@
         // so writes and Firebase updates cannot leave stale attendance data behind.
         function withAttendanceReadScope(fn, receiver, args) {
             if (attendanceReadScope) return fn.apply(receiver,args);
-            attendanceReadScope={pairs:null,logical:null,sessions:null};
+            attendanceReadScope={pairs:null,logical:null,sessions:null,subjectDates:null};
             try { return fn.apply(receiver,args); }
             finally { attendanceReadScope=null; }
         }
