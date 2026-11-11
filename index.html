@@ -317,6 +317,9 @@
         .integration-status { margin-top:7px; padding:7px 9px; border-radius:8px; background:#fff; border:1px solid #ddd6fe; color:#4c1d95; font-size:11px; white-space:pre-line; }
         .prof-submission-status { margin-top:7px; padding:8px; border-radius:8px; font-size:11px; text-align:center; }
         .filtered-status-table td,.filtered-status-table th { font-size:11px; }
+        .filtered-status-table td.fs-subjects { text-align:right; padding:3px; }
+        .filtered-status-table .fs-subject { display:block; margin:2px 0; padding:2px 6px; border-radius:4px; line-height:1.5; white-space:normal; }
+        @media print { .filtered-status-table tr { break-inside:avoid; page-break-inside:avoid; } .filtered-status-table .fs-subject { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
 
 
         /* ===== Master V29: واجهة رئيس القسم المنظمة ===== */
@@ -504,7 +507,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.51.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.52.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1171,7 +1174,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.51.0-phone-performance';
+        const APP_VERSION = '45.52.0-grouped-status-report';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -9227,22 +9230,70 @@
             };
             const uniqueCount=f=>f==='الكل'?students.length:(f==='أي حالة'?anyCount:(counts[f]||0));
             el.innerHTML=`<div class="flex-between"><div><h4 style="margin:0;">🎯 فرز الطلبة حسب حالة الغياب</h4><small>الحالة تُفحص لكل مادة مستقلة؛ قد يظهر الطالب في أكثر من فئة إذا اختلفت حالته بين المواد. النسب في الفترة محسوبة من ساعات المقرر السنوية المعتمدة حالياً. أساس الحالة: ${escapeHtml(absencePolicyLabel())}.</small></div>
-                <div style="display:flex;gap:5px;flex-wrap:wrap;"><button onclick="exportFilteredStatusExcel()" class="btn-excel btn-sm">📊 Excel للحالة المختارة</button><button onclick="exportFilteredStatusPDF()" class="btn-pdf btn-sm">📄 PDF للحالة المختارة</button></div></div>
+                <div style="display:flex;gap:5px;flex-wrap:wrap;"><button onclick="printFilteredStatusList()" class="btn-print btn-sm">🖨️ طباعة القائمة</button><button onclick="exportFilteredStatusExcel()" class="btn-excel btn-sm">📊 Excel للحالة المختارة</button><button onclick="exportFilteredStatusPDF()" class="btn-pdf btn-sm">📄 PDF للحالة المختارة</button></div></div>
                 <div class="status-count-grid">${['جيد','تنبيه','إنذار أولي','إنذار نهائي','راسب','أي حالة'].map(f=>`<div class="status-count-card" style="background:${styles[f][0]};color:${styles[f][1]};"><strong>${uniqueCount(f)}</strong><span>${escapeHtml(f)}</span></div>`).join('')}</div>
                 <div class="status-filter-buttons">${filters.map(f=>`<button class="status-filter-btn btn-sm ${state.officerStatusFilter===f?'active':''}" style="background:${styles[f][0]};color:${styles[f][1]};" onclick="setOfficerStatusFilter('${f}')">${escapeHtml(f)} (${uniqueCount(f)})</button>`).join('')}</div>`;
+        }
+
+        // V45.52: صف واحد لكل طالب، وأمامه كل المواد المطابقة للفلتر مع حالتها ونسبتها (الأشد أولاً).
+        function groupStatusRowsByStudent(rows) {
+            const byStudent = new Map();
+            rows.forEach(r => {
+                const key = String(r.studentId);
+                if (!byStudent.has(key)) byStudent.set(key, { studentId:r.studentId, studentName:r.studentName, theoreticalGroup:r.theoreticalGroup, practicalGroup:r.practicalGroup, subjects:[] });
+                byStudent.get(key).subjects.push(r);
+            });
+            const groups = [...byStudent.values()];
+            groups.forEach(g => g.subjects.sort((a, b) => statusSeverity(b.status) - statusSeverity(a.status) || b.percentage - a.percentage || a.subjectName.localeCompare(b.subjectName, 'ar')));
+            groups.forEach(g => { g.worst = g.subjects.reduce((w, r) => statusSeverity(r.status) > statusSeverity(w) ? r.status : w, 'جيد'); });
+            return groups.sort((a, b) => a.studentName.localeCompare(b.studentName, 'ar'));
+        }
+        function statusSubjectLine(r) {
+            const type = r.subjectType ? ` (${r.subjectType})` : '';
+            return `${r.subjectName}${type}: ${r.status} — ${r.percentage.toFixed(1)}% (غير معذر ${r.unexcusedPercentage.toFixed(1)}%) — ${r.hours.toFixed(1)} س`;
         }
 
         function renderFilteredStatusDetails(level) {
             if (!state.officerStatusFilter || state.officerStatusFilter==='الكل') return '';
             const rows=getFilteredStatusRows(level);
-            let html=`<div id="filteredStatusExportArea" class="card" style="margin-top:10px;"><div style="text-align:center;margin-bottom:7px;"><h4>قائمة ${escapeHtml(state.officerStatusFilter)} — ${escapeHtml(getLevelName(level))} — ${escapeHtml(officerReportPeriodDescription())}</h4><small>${rows.length} حالة في ${new Set(rows.map(r=>r.studentId)).size} طالب</small></div>`;
+            let html=`<div id="filteredStatusExportArea" class="card" style="margin-top:10px;"><div style="text-align:center;margin-bottom:7px;"><h4>قائمة ${escapeHtml(state.officerStatusFilter)} — ${escapeHtml(getLevelName(level))} — ${escapeHtml(officerReportPeriodDescription())}</h4><small>${new Set(rows.map(r=>r.studentId)).size} طالب — ${rows.length} مادة مطابقة</small></div>`;
             if (!rows.length) return html+'<p style="text-align:center;color:#718096;">لا توجد حالات مطابقة.</p></div>';
-            html+='<div class="report-table-wrapper"><table class="report-table filtered-status-table"><thead><tr><th>#</th><th>الطالب</th><th>الشعبة النظرية</th><th>المجموعة العملية</th><th>المادة</th><th>النوع</th><th>الحالة</th><th>نسبة الغياب</th><th>غير المعذر</th><th>الساعات</th></tr></thead><tbody>';
-            rows.sort((a,b)=>a.studentName.localeCompare(b.studentName,'ar')||a.subjectName.localeCompare(b.subjectName,'ar')).forEach((r,i)=>{
-                const st=getStatusStyle(r.status);
-                html+=`<tr><td>${i+1}</td><td>${escapeHtml(r.studentName)}</td><td>${escapeHtml(r.theoreticalGroup)}</td><td>${escapeHtml(r.practicalGroup)}</td><td>${escapeHtml(r.subjectName)}</td><td>${escapeHtml(r.subjectType)}</td><td style="background:${st.bg};color:${st.fg};font-weight:bold;">${escapeHtml(r.status)}</td><td>${r.percentage.toFixed(1)}%</td><td>${r.unexcusedPercentage.toFixed(1)}%</td><td>${r.hours.toFixed(1)}</td></tr>`;
+            html+='<div class="report-table-wrapper"><table class="report-table filtered-status-table"><thead><tr><th style="width:28px">#</th><th style="width:22%">الطالب</th><th style="width:9%">الشعبة النظرية</th><th style="width:9%">المجموعة العملية</th><th>المواد (الحالة — نسبة الغياب — الساعات)</th></tr></thead><tbody>';
+            groupStatusRowsByStudent(rows).forEach((g,i)=>{
+                const subjectsHtml=g.subjects.map(r=>{
+                    const st=getStatusStyle(r.status);
+                    return `<div class="fs-subject" style="background:${st.bg};color:${st.fg};"><strong>${escapeHtml(r.subjectName)}</strong>${r.subjectType?` <small>(${escapeHtml(r.subjectType)})</small>`:''} — <strong>${escapeHtml(r.status)}</strong> — ${r.percentage.toFixed(1)}% <small>(غير معذر ${r.unexcusedPercentage.toFixed(1)}%)</small> — ${r.hours.toFixed(1)} س</div>`;
+                }).join('');
+                html+=`<tr><td>${i+1}</td><td class="student-name" style="font-weight:bold;">${escapeHtml(g.studentName)}<br><small style="font-weight:normal;color:#64748b">${g.subjects.length} ${g.subjects.length===1?'مادة':'مواد'}</small></td><td>${escapeHtml(g.theoreticalGroup)}</td><td>${escapeHtml(g.practicalGroup)}</td><td class="fs-subjects">${subjectsHtml}</td></tr>`;
             });
             return html+'</tbody></table></div></div>';
+        }
+
+        // V45.52: طباعة قائمة الحالات وحدها: اسم الطالب مرة واحدة وأمامه مواد التنبيه/الإنذار.
+        function printFilteredStatusList() {
+            const level = state.currentLevel;
+            const filter = state.officerStatusFilter || 'الكل';
+            if (!level) { alert('اختر المرحلة أولاً.'); return; }
+            if (filter === 'الكل') { alert('اختر حالة من أزرار الفرز أولاً (مثل: أي حالة، تنبيه، إنذار أولي)، ثم اطبع القائمة.'); return; }
+            if (!getFilteredStatusRows(level, filter).length) { alert('لا توجد حالات مطابقة للطباعة.'); return; }
+            const body = renderFilteredStatusDetails(level);
+            const css = `@page{size:A4 portrait;margin:10mm}
+                body{font-family:Tahoma,Arial,sans-serif;direction:rtl;margin:0;color:#1f2937;background:#fff}
+                .card{border:none;box-shadow:none;padding:0;margin:0}
+                h4{margin:0 0 4px;font-size:15px;color:#1a3a5e}
+                small{font-size:10px}
+                table{width:100%;border-collapse:collapse;font-size:11px}
+                thead{display:table-header-group}
+                th{background:#1e3a5f;color:#fff;padding:5px;border:1px solid #1e3a5f;font-size:11px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+                td{border:1px solid #cbd5e1;padding:4px;vertical-align:top;text-align:center}
+                td.fs-subjects{text-align:right;padding:3px}
+                tr{break-inside:avoid;page-break-inside:avoid}
+                .fs-subject{display:block;margin:2px 0;padding:2px 6px;border-radius:4px;line-height:1.5;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+                .print-footer{margin-top:8px;text-align:center;color:#6b7280;font-size:9px}`;
+            const win = window.open('', '_blank');
+            if (!win) { alert('اسمح للمتصفح بفتح نافذة جديدة للطباعة، ثم أعد المحاولة.'); return; }
+            win.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>قائمة ${escapeHtml(filter)} — ${escapeHtml(getLevelName(level))}</title><style>${css}</style></head><body>${body}<div class="print-footer">طُبعت بتاريخ ${escapeHtml(new Date().toLocaleDateString('ar-EG'))}</div><script>window.onload=function(){setTimeout(function(){window.print()},300)}<\/script></body></html>`);
+            win.document.close();
         }
 
         function exportFilteredStatusExcel() {
@@ -9252,13 +9303,21 @@
             const filter=state.officerStatusFilter||'الكل';
             const rows=getFilteredStatusRows(level,filter);
             if (!rows.length) { alert('لا توجد حالات مطابقة للتصدير.'); return; }
+            const grouped=groupStatusRowsByStudent(rows).map((g,i)=>({
+                '#':i+1,'اسم الطالب':g.studentName,'الشعبة النظرية':g.theoreticalGroup,'المجموعة العملية':g.practicalGroup,
+                'عدد المواد':g.subjects.length,'أشد حالة':g.worst,'المواد والحالات':g.subjects.map(statusSubjectLine).join('\n'),'نطاق التقرير':officerReportPeriodDescription()
+            }));
             const data=rows.map((r,i)=>({
                 '#':i+1,'اسم الطالب':r.studentName,'الشعبة النظرية':r.theoreticalGroup,'المجموعة العملية':r.practicalGroup,
                 'المادة':r.subjectName,'نوع المادة':r.subjectType,'الحالة':r.status,'نسبة الغياب %':Number(r.percentage.toFixed(1)),
                 'نسبة غير المعذر %':Number(r.unexcusedPercentage.toFixed(1)),'ساعات الغياب':Number(r.hours.toFixed(1)),'ساعات غير معذرة':Number(r.unexcusedHours.toFixed(1)),'نطاق التقرير':officerReportPeriodDescription()
             }));
             const ws=XLSX.utils.json_to_sheet(data); ws['!cols']=[{wch:5},{wch:25},{wch:14},{wch:14},{wch:24},{wch:12},{wch:15},{wch:14},{wch:16},{wch:14},{wch:16}];
-            const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,String(filter).slice(0,31));
+            const wsGrouped=XLSX.utils.json_to_sheet(grouped); wsGrouped['!cols']=[{wch:5},{wch:28},{wch:14},{wch:14},{wch:10},{wch:14},{wch:90},{wch:22}];
+            const wb=XLSX.utils.book_new();
+            // الورقة الأولى: الاسم مرة واحدة وأمامه المواد؛ الثانية: التفصيل (طالب × مادة) للتحليل والفرز.
+            XLSX.utils.book_append_sheet(wb,wsGrouped,'حسب الطالب');
+            XLSX.utils.book_append_sheet(wb,ws,'تفصيلي');
             XLSX.writeFile(wb,`حالات_${filter}_${getLevelName(level)}_${getLocalDateISO()}.xlsx`);
         }
 
