@@ -317,8 +317,10 @@
         .integration-status { margin-top:7px; padding:7px 9px; border-radius:8px; background:#fff; border:1px solid #ddd6fe; color:#4c1d95; font-size:11px; white-space:pre-line; }
         .prof-submission-status { margin-top:7px; padding:8px; border-radius:8px; font-size:11px; text-align:center; }
         .filtered-status-table td,.filtered-status-table th { font-size:11px; }
-        .filtered-status-table td.fs-subjects { text-align:right; padding:3px; }
-        .filtered-status-table .fs-subject { display:block; margin:2px 0; padding:2px 6px; border-radius:4px; line-height:1.5; white-space:normal; }
+        .filtered-status-table td.fs-subjects { text-align:right; padding:2px 3px; }
+        .filtered-status-table td.student-name { text-align:right; white-space:normal; }
+        .filtered-status-table td.student-name small { color:#64748b; font-weight:normal; }
+        .filtered-status-table .fs-subject { display:inline-block; margin:1px 2px; padding:0 5px; border-radius:3px; line-height:1.55; white-space:nowrap; font-size:10.5px; }
         @media print { .filtered-status-table tr { break-inside:avoid; page-break-inside:avoid; } .filtered-status-table .fs-subject { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
 
 
@@ -507,7 +509,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.52.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.53.1 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1174,7 +1176,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.52.0-grouped-status-report';
+        const APP_VERSION = '45.53.1-compact-status-list';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -1742,7 +1744,7 @@
             localCacheWasLoaded = true;
             const savedDelta = payload.deltaSync;
             deltaSyncMeta = (savedDelta && typeof savedDelta === 'object')
-                ? { cursor:Number(savedDelta.cursor)||0, fullAt:Number(savedDelta.fullAt)||0, db:String(savedDelta.db||'') }
+                ? { cursor:Number(savedDelta.cursor)||0, fullAt:Number(savedDelta.fullAt)||0, db:String(savedDelta.db||''), attendanceScope:Array.isArray(savedDelta.attendanceScope)?savedDelta.attendanceScope.map(Number):'all' }
                 : { cursor:0, fullAt:0, db:'' };
             lastLocalSnapshotSignature = localSnapshotSignature(payload);
             return true;
@@ -2119,6 +2121,7 @@
 
         function buildFirebaseDiff() {
             ensureAllRecordIds();
+            ensurePendingAttendanceLevels();
             const updates = {};
             SYNC_COLLECTIONS.forEach(name => {
                 const base = mapsById(lastSyncedCollections[name] || []);
@@ -2139,6 +2142,7 @@
 
         function buildFirebaseChanges() {
             ensureAllRecordIds();
+            ensurePendingAttendanceLevels();
             const changes = [];
             CLOUD_SYNC_COLLECTIONS.forEach(name => {
                 const base = mapsById(lastSyncedCollections[name] || []);
@@ -2677,6 +2681,8 @@
             delta:{...deltaSyncMeta, last:deltaLastResult, legacyDetected:deltaLegacyDetected, liveListener:!!deltaLiveRef},
             auditArchive:auditArchiveLastResult,
             attendanceSlim:attendanceSlimLastResult,
+            attendanceLevels:attendanceLevelAssignLastResult,
+            attendanceScope:{ loaded:loadedAttendanceScope(), levelsReady:attendanceLevelKnownDone },
             localCache:{...localCacheDiagnostics, loadedAtStartup:localCacheWasLoaded}
         });
         // V45.47: توفير التحميل. القراءة الأولى تبقي مستمع value مؤقتاً على المجموعة
@@ -2712,13 +2718,19 @@
         }
         function deltaPairsForWrite(ref, value, isUpdate) {
             const base = deltaRefPath(ref), out = [];
-            const add = parts => {
-                if (!parts.length) { DELTA_COLLECTIONS.forEach(c => out.push([c, '*'])); return; }
-                if (!DELTA_COLLECTIONS.has(parts[0])) return;
-                out.push([parts[0], parts.length > 1 ? parts[1] : '*']);
+            const levelOf = (parts, v) => {
+                if (parts[0] !== 'attendances') return null;
+                if (parts.length === 2 && v && typeof v === 'object') { const L = Number(v.level); return Number.isFinite(L) && L > 0 ? L : null; }
+                if (parts.length === 3 && parts[2] === 'level') { const L = Number(v); return Number.isFinite(L) && L > 0 ? L : null; }
+                return null;
             };
-            if (isUpdate && value && typeof value === 'object') Object.keys(value).forEach(k => add(base.concat(String(k).split('/').filter(Boolean))));
-            else add(base);
+            const add = (parts, v) => {
+                if (!parts.length) { DELTA_COLLECTIONS.forEach(c => out.push([c, '*', null])); return; }
+                if (!DELTA_COLLECTIONS.has(parts[0])) return;
+                out.push([parts[0], parts.length > 1 ? parts[1] : '*', levelOf(parts, v)]);
+            };
+            if (isUpdate && value && typeof value === 'object') Object.keys(value).forEach(k => add(base.concat(String(k).split('/').filter(Boolean)), value[k]));
+            else add(base, value);
             return out;
         }
         // يلتقط كل كتابة يقوم بها البرنامج (set/update/remove/transaction) ويسجل
@@ -2731,7 +2743,11 @@
             deltaOriginalWrites = orig;
             const track = (result, pairs, needsCommit) => {
                 if (pairs.length && result && typeof result.then === 'function') {
-                    result.then(res => { if (needsCommit && !(res && res.committed)) return; queueDeltaLog(pairs); }, () => {});
+                    result.then(res => {
+                        if (needsCommit && !(res && res.committed)) return;
+                        if (needsCommit) { let saved = null; try { saved = res.snapshot?.val?.(); } catch (e) {} const L = Number(saved?.level); if (Number.isFinite(L) && L > 0) pairs = pairs.map(p => p[0] === 'attendances' && p[1] !== '*' ? [p[0], p[1], L] : p); }
+                        queueDeltaLog(pairs);
+                    }, () => {});
                 }
                 return result;
             };
@@ -2758,7 +2774,7 @@
             Object.defineProperty(proto, '__attendanceDeltaPatched', { value:true });
         }
         function queueDeltaLog(pairs) {
-            pairs.forEach(([c, k]) => deltaLogPending.set(c + '\u0000' + k, [c, k]));
+            pairs.forEach(([c, k, l]) => { const key = c + '\u0000' + k; const prev = deltaLogPending.get(key); deltaLogPending.set(key, [c, k, l ?? prev?.[2] ?? null]); });
             if (!deltaLogTimer) deltaLogTimer = setTimeout(flushDeltaLog, 30);
         }
         function flushDeltaLog() {
@@ -2769,7 +2785,7 @@
             deltaLogPending = new Map();
             const logRef = database.ref('/' + DELTA_LOG_PATH);
             const updates = {};
-            pairs.forEach(([c, k]) => { updates[logRef.push().key] = { c, k, t:firebase.database.ServerValue.TIMESTAMP, by:DELTA_CLIENT_ID }; });
+            pairs.forEach(([c, k, l]) => { const entry = { c, k, t:firebase.database.ServerValue.TIMESTAMP, by:DELTA_CLIENT_ID }; if (l) entry.l = l; updates[logRef.push().key] = entry; });
             Promise.resolve(deltaOriginalWrites.update.call(logRef, updates)).catch(err => console.warn('تعذر تسجيل التغييرات للمزامنة الجزئية:', err));
         }
         window.addEventListener('pagehide', () => { try { flushDeltaLog(); } catch (e) {} });
@@ -2780,6 +2796,10 @@
             return hit ? String(hit.id) : k;
         }
         function applyDeltaRecord(name, key, raw) {
+            if (name === 'attendances' && raw && typeof raw === 'object' && !attendanceRecordInScope(raw)) {
+                const held = (state.attendances || []).some(r => firebaseRecordKey(r?.id) === String(key));
+                if (!held) return;
+            }
             if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
                 if (name === 'students' || name === 'attendances') {
                     const sid = name === 'students' ? String(raw.id || key) : String(raw.studentId || '');
@@ -2795,8 +2815,9 @@
                 const keys = groups.get(name);
                 if (!keys || !keys.size) continue;
                 if (keys.has('*') || keys.size > DELTA_MAX_RECORD_FETCH) {
-                    const snap = await withTimeout(database.ref('/' + name).once('value'), Math.max(CLOUD_OPERATION_TIMEOUT_MS, 60000), `انتهت مهلة تحميل ${name}`);
-                    const value = snap.val();
+                    const value = name === 'attendances' && loadedAttendanceScope() !== 'all'
+                        ? await readAttendancesForScope(loadedAttendanceScope())
+                        : (await withTimeout(database.ref('/' + name).once('value'), Math.max(CLOUD_OPERATION_TIMEOUT_MS, 60000), `انتهت مهلة تحميل ${name}`)).val();
                     if (Array.isArray(value)) legacyCloudCollections.add(name);
                     applyRemoteCollection(name, value);
                     fullNames.push(name);
@@ -2821,6 +2842,8 @@
                 if (skipOwn && e?.by === DELTA_CLIENT_ID) return;
                 const c = String(e?.c || '');
                 if (!DELTA_COLLECTIONS.has(c)) return;
+                // V45.53: تغيير في غيابات مرحلة خارج نطاق هذا الجهاز: لا نُنزّله.
+                if (c === 'attendances' && e?.l && !attendanceRecordInScope({ level:e.l })) return;
                 if (!groups.has(c)) groups.set(c, new Set());
                 groups.get(c).add(String(e?.k || '*'));
             });
@@ -2877,6 +2900,7 @@
                 deltaSyncMeta = { ...deltaSyncMeta, cursor:Math.max(Number(deltaSyncMeta.cursor) || 0, maxT) };
                 if (result.fullNames.length) scheduleRenderRefresh();
                 if (groups.has('attendances')) { if (!attendanceSlimKnownDone) await checkAttendanceSlimFlag(); else stripUnusedAttendanceFieldsLocally(); }
+                if (groups.has('subjects') || groups.has('professors')) ensureAttendanceScopeLoaded();
                 scheduleLocalPersistence(800);
                 if (deltaDeletedLeftovers.size) cleanupDeltaDeletedLeftovers();
             } catch (err) {
@@ -2932,8 +2956,187 @@
             alert(ok ? '✅ تم التحديث الكامل من السحابة.' : '⚠️ تعذر التحديث الكامل الآن؛ أعد المحاولة لاحقاً.');
             return ok;
         };
+        // ==============================================================
+        //  V45.53: كل جهاز أستاذ يُنزّل غيابات مراحله فقط.
+        //  - كل سجل غياب يحمل level = مرحلة مادته (تعيين لمرة واحدة من رئيس القسم + السجلات الجديدة تلقائياً).
+        //  - رئيس القسم ومسؤول الغيابات: كل المراحل دائماً.
+        //  - جهاز جديد لم يسجّل أحد الدخول عليه بعد: لا يُنزّل الغيابات حتى يُعرف من سيدخل.
+        // ==============================================================
+        const ATTENDANCE_LEVEL_FLAG_PATH = '_meta/attendanceLevelV1';
+        const ATTENDANCE_SCOPE_STORAGE_KEY = 'attendance_device_scope_v1';
+        const ATTENDANCE_LEVEL_DONE_STORAGE_KEY = 'attendance_level_done_v1';
+        let attendanceLevelKnownDone = false;
+        try { attendanceLevelKnownDone = localStorage.getItem(ATTENDANCE_LEVEL_DONE_STORAGE_KEY) === '1'; } catch (e) {}
+        let attendanceScopeForCurrentLoad = 'all';
+        let attendanceScopeLoading = null;
+        let attendanceLevelAssignRunning = false;
+        let attendanceLevelAssignDone = false;
+        let attendanceLevelAssignLastResult = null;
+
+        function subjectLevelMap() {
+            const m = new Map();
+            (state.subjects || []).forEach(sub => { const L = Number(sub?.level); if (Number.isFinite(L) && L > 0) m.set(String(sub.id), L); });
+            return m;
+        }
+        function professorScopeLevels() {
+            const levels = new Set();
+            (state.subjects || []).forEach(sub => { let mine = false; try { mine = subjectBelongsToCurrentProfessor(sub); } catch (e) {} const L = Number(sub?.level); if (mine && Number.isFinite(L) && L > 0) levels.add(L); });
+            return [...levels].sort((a, b) => a - b);
+        }
+        function rememberedDeviceScope() {
+            try { const v = JSON.parse(localStorage.getItem(ATTENDANCE_SCOPE_STORAGE_KEY) || 'null'); return v && (v.all === true || Array.isArray(v.levels)) ? v : null; } catch (e) { return null; }
+        }
+        function rememberDeviceScope(scope) {
+            try { localStorage.setItem(ATTENDANCE_SCOPE_STORAGE_KEY, JSON.stringify(scope === 'all' ? { all:true } : { all:false, levels:scope })); } catch (e) {}
+        }
+        // النطاق المطلوب الآن: 'all' أو مصفوفة مراحل أو 'deferred' (جهاز جديد قبل تسجيل الدخول).
+        function desiredAttendanceScope() {
+            if (!attendanceLevelKnownDone) return 'all';
+            const user = state.currentUser;
+            if (user) return user.role === 'professor' ? professorScopeLevels() : 'all';
+            const saved = rememberedDeviceScope();
+            if (saved) return saved.all ? 'all' : saved.levels.map(Number).filter(n => n > 0);
+            return 'deferred';
+        }
+        // النطاق المحمّل فعلاً على هذا الجهاز (محفوظ مع النسخة المحلية).
+        function loadedAttendanceScope() {
+            const sc = deltaSyncMeta?.attendanceScope;
+            return Array.isArray(sc) ? sc.map(Number) : 'all';
+        }
+        function activeAttendanceScopeSet() {
+            const sc = loadedAttendanceScope();
+            return sc === 'all' ? null : new Set(sc);
+        }
+        function scopeCovers(loaded, needed) {
+            if (needed === 'deferred') return true;
+            if (loaded === 'all') return true;
+            if (needed === 'all') return false;
+            const have = new Set(loaded);
+            return needed.every(l => have.has(Number(l)));
+        }
+        function attendanceRecordInScope(raw) {
+            const scope = activeAttendanceScopeSet();
+            if (!scope || !raw) return true;
+            const L = Number(raw.level);
+            return !Number.isFinite(L) || L <= 0 || scope.has(L);
+        }
+        async function readAttendancesForScope(scope) {
+            if (scope === 'all') return (await withTimeout(database.ref('/attendances').once('value'), Math.max(CLOUD_OPERATION_TIMEOUT_MS, 60000), 'انتهت مهلة تحميل الغيابات')).val();
+            if (scope === 'deferred' || !scope.length) return {};
+            const out = {};
+            const snaps = await Promise.all(scope.map(L => withTimeout(database.ref('/attendances').orderByChild('level').equalTo(Number(L)).once('value'), Math.max(CLOUD_OPERATION_TIMEOUT_MS, 60000), 'انتهت مهلة تحميل غيابات المرحلة')));
+            snaps.forEach(snap => Object.assign(out, snap.val() || {}));
+            return out;
+        }
+        async function checkAttendanceLevelFlag() {
+            if (!database || attendanceLevelKnownDone) return attendanceLevelKnownDone;
+            try {
+                const flag = (await withTimeout(database.ref('/' + ATTENDANCE_LEVEL_FLAG_PATH).once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة قراءة حالة المراحل')).val();
+                if (flag?.done) {
+                    attendanceLevelKnownDone = true;
+                    try { localStorage.setItem(ATTENDANCE_LEVEL_DONE_STORAGE_KEY, '1'); } catch (e) {}
+                    adoptAttendanceLevelsLocally();
+                }
+            } catch (e) { console.warn('تعذر قراءة حالة ترقيم المراحل:', e); }
+            return attendanceLevelKnownDone;
+        }
+        // بعد أن يرقّم رئيس القسم كل السجلات في السحابة، كل جهاز يضيف الرقم نفسه لنسخته المحلية
+        // (الحالية وخط الأساس معاً) دون تنزيل الغيابات مرة أخرى.
+        function adoptAttendanceLevelsLocally() {
+            const levels = subjectLevelMap();
+            let n = 0;
+            [state.attendances, lastSyncedCollections.attendances].forEach(list => (list || []).forEach(r => {
+                const L = levels.get(String(r?.subjectId));
+                if (L && Number(r.level) !== L) { r.level = L; n++; }
+            }));
+            if (n) scheduleLocalPersistence(1000);
+            return n;
+        }
+        // السجلات الجديدة أو المعدلة (التي سترفع على أي حال) تأخذ رقم مرحلة مادتها قبل الرفع.
+        function ensurePendingAttendanceLevels() {
+            const levels = subjectLevelMap();
+            if (!levels.size) return 0;
+            let base = null, n = 0;
+            (state.attendances || []).forEach(r => {
+                const L = levels.get(String(r?.subjectId));
+                if (!L || Number(r.level) === L) return;
+                if (!base) base = mapsById(lastSyncedCollections.attendances || []);
+                const b = base.get(String(r.id));
+                if (!b || !sameRecord(b, r)) { r.level = L; n++; }
+            });
+            return n;
+        }
+        // تعيين لمرة واحدة (رئيس القسم): يضيف level لكل سجلات الغياب الموجودة في السحابة.
+        async function assignAttendanceLevelsOnce() {
+            if (attendanceLevelAssignRunning || attendanceLevelAssignDone) return attendanceLevelAssignLastResult;
+            if (!database || !deltaOriginalWrites || !cloudInitialReadComplete || !firebaseTransportConnected || state.currentUser?.role !== 'admin') return null;
+            if (loadedAttendanceScope() !== 'all') return null;
+            // جهاز بنسخة قديمة مفتوح قد يتجمّد إذا تغيّرت آلاف السجلات دفعة واحدة؛ ننتظر حتى يُحدَّث الجميع.
+            if (deltaLegacyDetected) { attendanceLevelAssignLastResult = { assigned:0, waiting:'legacy-device', at:Date.now() }; return attendanceLevelAssignLastResult; }
+            attendanceLevelAssignRunning = true;
+            let assigned = 0;
+            try {
+                const flag = (await withTimeout(database.ref('/' + ATTENDANCE_LEVEL_FLAG_PATH).once('value'), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة قراءة حالة المراحل')).val();
+                if (flag?.done) {
+                    attendanceLevelAssignDone = true; attendanceLevelKnownDone = true;
+                    try { localStorage.setItem(ATTENDANCE_LEVEL_DONE_STORAGE_KEY, '1'); } catch (e) {}
+                    adoptAttendanceLevelsLocally();
+                    attendanceLevelAssignLastResult = { assigned:0, alreadyDone:true, at:Date.now() };
+                    return attendanceLevelAssignLastResult;
+                }
+                const levels = subjectLevelMap();
+                const stateById = mapsById(state.attendances || []);
+                const candidates = (lastSyncedCollections.attendances || []).filter(r => { const L = levels.get(String(r?.subjectId)); return L && Number(r.level) !== L; });
+                const BATCH = 500;
+                for (let i = 0; i < candidates.length; i += BATCH) {
+                    const batch = candidates.slice(i, i + BATCH);
+                    const updates = {};
+                    batch.forEach(r => { updates[`attendances/${firebaseRecordKey(r.id)}/level`] = levels.get(String(r.subjectId)); });
+                    await withTimeout(deltaOriginalWrites.update.call(database.ref('/'), updates), Math.max(CLOUD_OPERATION_TIMEOUT_MS, 60000), 'انتهت مهلة ترقيم مراحل الغيابات');
+                    batch.forEach(r => { const L = levels.get(String(r.subjectId)); r.level = L; const live = stateById.get(String(r.id)); if (live) live.level = L; });
+                    assigned += batch.length;
+                    setSyncStatus(`⏳ ترقيم سجلات الغياب بمراحلها (مرة واحدة): ${assigned}/${candidates.length}`, '#1e4f7a');
+                }
+                await withTimeout(deltaOriginalWrites.update.call(database.ref('/'), { [ATTENDANCE_LEVEL_FLAG_PATH]: { done:true, assigned, at:firebase.database.ServerValue.TIMESTAMP } }), CLOUD_OPERATION_TIMEOUT_MS, 'انتهت مهلة حفظ حالة المراحل');
+                attendanceLevelAssignDone = true; attendanceLevelKnownDone = true;
+                try { localStorage.setItem(ATTENDANCE_LEVEL_DONE_STORAGE_KEY, '1'); } catch (e) {}
+                adoptAttendanceLevelsLocally();
+                await persistLocalState('attendance-levels', true);
+                if (assigned) setSyncStatus(`✅ رُقّمت ${assigned} سجل غياب بمراحلها؛ أجهزة الأساتذة ستُنزّل مراحلها فقط.`, '#2f855a');
+                attendanceLevelAssignLastResult = { assigned, at:Date.now() };
+                return attendanceLevelAssignLastResult;
+            } catch (err) {
+                console.warn('تعذر ترقيم مراحل الغيابات؛ ستعاد المحاولة:', err);
+                attendanceLevelAssignLastResult = { assigned, error:String(err?.message || err), at:Date.now() };
+                return attendanceLevelAssignLastResult;
+            } finally { attendanceLevelAssignRunning = false; }
+        }
+        // بعد الدخول أو تغيّر مواد الأستاذ: نزّل المراحل الناقصة فقط.
+        function ensureAttendanceScopeLoaded() {
+            if (!database || !cloudInitialReadComplete || !attendanceLevelKnownDone) return Promise.resolve(false);
+            const needed = desiredAttendanceScope();
+            if (state.currentUser && needed !== 'deferred') rememberDeviceScope(needed);
+            if (scopeCovers(loadedAttendanceScope(), needed)) return Promise.resolve(false);
+            if (attendanceScopeLoading) return attendanceScopeLoading;
+            attendanceScopeLoading = (async () => {
+                setSyncStatus('⏳ جارٍ تحميل غيابات مراحلك...', '#1e4f7a');
+                const value = await readAttendancesForScope(needed);
+                if (Array.isArray(value)) legacyCloudCollections.add('attendances');
+                applyRemoteCollection('attendances', value);
+                deltaSyncMeta = { ...deltaSyncMeta, attendanceScope:needed === 'all' ? 'all' : needed };
+                scheduleRenderRefresh();
+                await persistLocalState('attendance-scope', true);
+                setSyncStatus('✅ تم تحميل غيابات مراحلك', '#2f855a');
+                return true;
+            })().catch(err => { console.warn('تعذر تحميل غيابات المراحل:', err); setSyncStatus('🟠 تعذر تحميل غيابات مراحلك الآن؛ ستعاد المحاولة', '#b45309'); setTimeout(() => ensureAttendanceScopeLoaded(), 20000); return false; })
+              .finally(() => { attendanceScopeLoading = null; });
+            return attendanceScopeLoading;
+        }
+
         async function readCloudCollections() {
             if (!database) throw new Error('الاتصال السحابي غير جاهز');
+            await checkAttendanceLevelFlag();
+            const attendanceScopeNow = desiredAttendanceScope();
 
             const now=Date.now();
             if(!initialCloudReadStartedAt || (now-initialCloudReadStartedAt)>INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS){
@@ -2950,11 +3153,15 @@
             const readOne = async name => {
                 firebaseUsageDiagnostics.initialReadAttempts[name]=(firebaseUsageDiagnostics.initialReadAttempts[name]||0)+1;
                 try{
-                    const snapshot=await withTimeout(
+                    const scopedAttendance = name === 'attendances' && attendanceScopeNow !== 'all';
+                    const snapshot=scopedAttendance
+                        ? await readAttendancesForScope(attendanceScopeNow).then(v => ({ val:() => v }))
+                        : await withTimeout(
                         readCollectionKeepingCache(name),
                         CLOUD_OPERATION_TIMEOUT_MS,
                         `انتهت مهلة تحميل ${name}`
                     );
+                    if (name === 'attendances') attendanceScopeForCurrentLoad = attendanceScopeNow === 'deferred' ? [] : attendanceScopeNow;
                     const value=snapshot.val();
                     initialCloudReadCache[name]=value;
                     initialCloudReadCompleted.add(name);
@@ -3041,7 +3248,7 @@
                     if (cloudListenersStarted) CLOUD_SYNC_COLLECTIONS.forEach(releaseWarmCollectionListener);
                     // وقت بداية القراءة الكاملة بتوقيت الخادم؛ ما تغيّر بعده يصل عبر سجل التغييرات.
                     const fullStartedAt = (deltaFullCycleStartedAtClient || Date.now()) + (Number(serverTimeOffsetMs) || 0);
-                    deltaSyncMeta = { cursor:fullStartedAt - 60000, fullAt:fullStartedAt, db:deltaDbUrl };
+                    deltaSyncMeta = { cursor:fullStartedAt - 60000, fullAt:fullStartedAt, db:deltaDbUrl, attendanceScope:attendanceScopeForCurrentLoad };
                     deltaLastResult = { mode:'full', reason:delta?.reason || (options.forceFull ? 'forced' : 'fallback'), at:Date.now() };
                 }
                 try { await migrateLegacyCollectionsIfNeeded(data); }
@@ -3265,6 +3472,7 @@
             startDeltaLegacyWriterWatch();
             maybePruneDeltaLog();
             checkAttendanceSlimFlag();
+            checkAttendanceLevelFlag().then(() => ensureAttendanceScopeLoaded());
             if (state.currentUser?.role === 'admin') scheduleAuditArchive();
         }
 
@@ -3784,6 +3992,7 @@
             lastSessionActivity = Date.now();
             clearInterval(sessionTimer);
             if (state.currentUser?.role === 'admin') scheduleAuditArchive();
+            ensureAttendanceScopeLoaded();
             // افتح الرابط مع ‎#diag‎ في آخره لعرض نافذة التشخيص على أي جهاز (أستاذ أو مسؤول).
             if (String(location.hash || '').toLowerCase() === '#diag') setTimeout(() => { try { showUsageDiagnostics(); } catch (e) { console.warn(e); } }, 15000);
             if (!state.currentUser.persistent) {
@@ -5090,10 +5299,14 @@
             const existingActiveLinks = new Map();
             let removed = 0;
 
+            // V45.53: جهاز بمراحل محددة لا يُنشئ ولا يحذف روابط مواد مراحل أخرى (ليست عنده أصلاً).
+            const scopeSet = activeAttendanceScopeSet();
+            const subjectInScope = sub => !scopeSet || scopeSet.has(Number(sub?.level));
             const kept = [];
             state.attendances.forEach(att => {
                 const isTarget = targetIds.has(String(att.studentId));
                 const isSystemLink = isEnrollmentRecord(att) && Number(att.hours) === 0;
+                if (scopeSet && !subjectInScope(state.subjects.find(sub => sub.id === att.subjectId))) { kept.push(att); return; }
                 if (!isTarget || !isSystemLink) {
                     kept.push(att);
                     return;
@@ -5114,7 +5327,7 @@
             let added = 0;
             state.students.forEach(student => {
                 if (!targetIds.has(String(student.id))) return;
-                state.subjects.filter(subject => studentMatchesSubject(student, subject)).forEach(subject => {
+                state.subjects.filter(subject => subjectInScope(subject) && studentMatchesSubject(student, subject)).forEach(subject => {
                     const pairKey = `${student.id}::${subject.id}`;
                     validPairKeys.add(pairKey);
                     if (!existingActiveLinks.has(pairKey)) {
@@ -5331,7 +5544,7 @@
             const deletedRecords=getOfficiallyDeletedStudentRecords();
             if(!deletedRecords.length) return true;
             const deletedIds=new Set(deletedRecords.map(r=>String(r.studentId||r.id||'')).filter(Boolean));
-            if (deltaLastResult?.mode === 'delta') {
+            if (deltaLastResult?.mode === 'delta' || loadedAttendanceScope() !== 'all') {
                 // V45.48: في وضع التغييرات فقط لا نعيد تنزيل الطلاب والغيابات كاملة.
                 // نصلح العلامات الناقصة ونحذف ما وصل من سجلات لطلاب محذوفين ضمن التغييرات.
                 try {
@@ -8856,7 +9069,8 @@
                 if (state.currentUser?.role !== 'admin') return;
                 const result = await archiveOldAuditLogs();
                 const slim = await slimAttendanceRecordsOnce();
-                if (result && !result.error && slim && !slim.error) auditArchiveDoneThisSession = true;
+                const lv = await assignAttendanceLevelsOnce();
+                if (result && !result.error && slim && !slim.error && lv && !lv.error) auditArchiveDoneThisSession = true;
                 else scheduleAuditArchive(120000);
             }, delay);
         }
@@ -8929,6 +9143,10 @@
             html += line('أرشفة سجل التدقيق', arch ? (arch.error ? '❌ ' + arch.error : `✅ نُقل ${arch.moved} سجل`) : 'لم تُنفذ في هذه الجلسة');
             const slimR = d.attendanceSlim;
             html += line('تصغير سجلات الغياب', slimR ? (slimR.error ? '❌ ' + slimR.error : slimR.alreadyDone ? '✅ تم سابقاً' : `✅ صُغّر ${slimR.cleaned} سجل`) : 'لم يُنفذ في هذه الجلسة');
+            const sc = d.attendanceScope || {};
+            html += line('غيابات المراحل على هذا الجهاز', !sc.levelsReady ? 'كل المراحل (ترقيم المراحل لم يكتمل بعد)' : sc.loaded === 'all' ? 'كل المراحل' : (sc.loaded.length ? 'المراحل: ' + sc.loaded.join('، ') + ' فقط' : 'لا شيء بعد (بانتظار تسجيل الدخول)'));
+            const lvR = d.attendanceLevels;
+            if (lvR) html += line('ترقيم مراحل الغيابات', lvR.error ? '❌ ' + lvR.error : lvR.waiting ? '⏳ مؤجل: يوجد جهاز بنسخة قديمة — اطلب من الجميع تحديث الصفحة' : lvR.alreadyDone ? '✅ تم سابقاً' : `✅ رُقّم ${lvR.assigned} سجل`);
             html += line('الاتصال', d.connected ? 'متصل' : 'غير متصل');
             html += '</tbody></table></div>';
             html += `<h3 style="font-size:13px;margin:12px 0 6px">حجم البيانات على هذا الجهاز (المجموع ${mb(total)})</h3>`;
@@ -9258,13 +9476,16 @@
             const rows=getFilteredStatusRows(level);
             let html=`<div id="filteredStatusExportArea" class="card" style="margin-top:10px;"><div style="text-align:center;margin-bottom:7px;"><h4>قائمة ${escapeHtml(state.officerStatusFilter)} — ${escapeHtml(getLevelName(level))} — ${escapeHtml(officerReportPeriodDescription())}</h4><small>${new Set(rows.map(r=>r.studentId)).size} طالب — ${rows.length} مادة مطابقة</small></div>`;
             if (!rows.length) return html+'<p style="text-align:center;color:#718096;">لا توجد حالات مطابقة.</p></div>';
-            html+='<div class="report-table-wrapper"><table class="report-table filtered-status-table"><thead><tr><th style="width:28px">#</th><th style="width:22%">الطالب</th><th style="width:9%">الشعبة النظرية</th><th style="width:9%">المجموعة العملية</th><th>المواد (الحالة — نسبة الغياب — الساعات)</th></tr></thead><tbody>';
+            // V45.53.1: شكل مضغوط: صف واحد قصير لكل طالب، والمواد بجانب بعضها في نفس الصف.
+            html+='<div class="report-table-wrapper"><table class="report-table filtered-status-table compact-status"><thead><tr><th style="width:22px">#</th><th style="width:24%">الطالب</th><th>المواد وحالتها (نسبة الغياب)</th></tr></thead><tbody>';
             groupStatusRowsByStudent(rows).forEach((g,i)=>{
                 const subjectsHtml=g.subjects.map(r=>{
                     const st=getStatusStyle(r.status);
-                    return `<div class="fs-subject" style="background:${st.bg};color:${st.fg};"><strong>${escapeHtml(r.subjectName)}</strong>${r.subjectType?` <small>(${escapeHtml(r.subjectType)})</small>`:''} — <strong>${escapeHtml(r.status)}</strong> — ${r.percentage.toFixed(1)}% <small>(غير معذر ${r.unexcusedPercentage.toFixed(1)}%)</small> — ${r.hours.toFixed(1)} س</div>`;
+                    const tip=`${r.subjectName}${r.subjectType?' ('+r.subjectType+')':''}: ${r.status} — ${r.percentage.toFixed(1)}% (غير معذر ${r.unexcusedPercentage.toFixed(1)}%) — ${r.hours.toFixed(1)} س`;
+                    return `<span class="fs-subject" title="${escapeHtml(tip)}" style="background:${st.bg};color:${st.fg};">${escapeHtml(r.subjectName)}: <b>${escapeHtml(r.status)}</b> ${r.percentage.toFixed(1)}%</span>`;
                 }).join('');
-                html+=`<tr><td>${i+1}</td><td class="student-name" style="font-weight:bold;">${escapeHtml(g.studentName)}<br><small style="font-weight:normal;color:#64748b">${g.subjects.length} ${g.subjects.length===1?'مادة':'مواد'}</small></td><td>${escapeHtml(g.theoreticalGroup)}</td><td>${escapeHtml(g.practicalGroup)}</td><td class="fs-subjects">${subjectsHtml}</td></tr>`;
+                const groups=[g.theoreticalGroup,g.practicalGroup].filter(x=>x&&x!=='-').join(' / ');
+                html+=`<tr><td>${i+1}</td><td class="student-name"><b>${escapeHtml(g.studentName)}</b>${groups?` <small>(${escapeHtml(groups)})</small>`:''}</td><td class="fs-subjects">${subjectsHtml}</td></tr>`;
             });
             return html+'</tbody></table></div></div>';
         }
@@ -9277,18 +9498,20 @@
             if (filter === 'الكل') { alert('اختر حالة من أزرار الفرز أولاً (مثل: أي حالة، تنبيه، إنذار أولي)، ثم اطبع القائمة.'); return; }
             if (!getFilteredStatusRows(level, filter).length) { alert('لا توجد حالات مطابقة للطباعة.'); return; }
             const body = renderFilteredStatusDetails(level);
-            const css = `@page{size:A4 portrait;margin:10mm}
+            const css = `@page{size:A4 portrait;margin:8mm}
                 body{font-family:Tahoma,Arial,sans-serif;direction:rtl;margin:0;color:#1f2937;background:#fff}
                 .card{border:none;box-shadow:none;padding:0;margin:0}
                 h4{margin:0 0 4px;font-size:15px;color:#1a3a5e}
                 small{font-size:10px}
-                table{width:100%;border-collapse:collapse;font-size:11px}
+                table{width:100%;border-collapse:collapse;font-size:10px}
                 thead{display:table-header-group}
-                th{background:#1e3a5f;color:#fff;padding:5px;border:1px solid #1e3a5f;font-size:11px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-                td{border:1px solid #cbd5e1;padding:4px;vertical-align:top;text-align:center}
-                td.fs-subjects{text-align:right;padding:3px}
+                th{background:#1e3a5f;color:#fff;padding:3px;border:1px solid #1e3a5f;font-size:10px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+                td{border:1px solid #cbd5e1;padding:2px 3px;vertical-align:middle;text-align:center}
+                td.fs-subjects{text-align:right;padding:1px 2px}
+                td.student-name{text-align:right;white-space:normal}
+                td.student-name small{color:#64748b;font-weight:normal;font-size:9px}
                 tr{break-inside:avoid;page-break-inside:avoid}
-                .fs-subject{display:block;margin:2px 0;padding:2px 6px;border-radius:4px;line-height:1.5;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+                .fs-subject{display:inline-block;margin:1px 2px;padding:0 4px;border-radius:3px;line-height:1.45;white-space:nowrap;font-size:9.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
                 .print-footer{margin-top:8px;text-align:center;color:#6b7280;font-size:9px}`;
             const win = window.open('', '_blank');
             if (!win) { alert('اسمح للمتصفح بفتح نافذة جديدة للطباعة، ثم أعد المحاولة.'); return; }
