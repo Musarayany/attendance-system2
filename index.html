@@ -509,7 +509,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.53.1 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.53.2 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1131,6 +1131,58 @@
     <button id="backToTop" class="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
 
     <script>
+        // ===== V45.53.2: عدّاد تحميل Firebase لهذا الجهاز (مراقبة فقط، لا يغيّر أي سلوك) =====
+        (function installFirebaseDownloadMeter(){
+            const Native = window.WebSocket;
+            if (!Native || Native.__downloadMeter) return;
+            const KEY = 'attendance_download_meter_v1';
+            const today = () => { try { return new Intl.DateTimeFormat('en-CA', { timeZone:'Asia/Baghdad' }).format(new Date()); } catch (e) { return new Date().toISOString().slice(0, 10); } };
+            let store = {};
+            try { store = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { store = {}; }
+            const session = { total:0, byPath:{}, startedAt:Date.now() };
+            window.__firebaseDownloadMeter = { session, store, today };
+            const add = (path, n) => {
+                const top = String(path || '').split('/').filter(Boolean)[0] || '(تحكم واتصال)';
+                session.total += n; session.byPath[top] = (session.byPath[top] || 0) + n;
+                const d = today(); const day = store[d] || (store[d] = { total:0, byPath:{} });
+                day.total += n; day.byPath[top] = (day.byPath[top] || 0) + n;
+            };
+            let saveTimer = null;
+            const save = () => { saveTimer = null; try { const keep = Object.keys(store).sort().slice(-14); const trimmed = {}; keep.forEach(k => trimmed[k] = store[k]); store = trimmed; window.__firebaseDownloadMeter.store = store; localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {} };
+            window.addEventListener('pagehide', save);
+            function Metered(url, protocols) {
+                const ws = protocols === undefined ? new Native(url) : new Native(url, protocols);
+                let framesLeft = 0, buffer = '', bufferBytes = 0;
+                const requestPaths = new Map();
+                try {
+                    const nativeSend = ws.send;
+                    ws.send = function(data) {
+                        try { const msg = typeof data === 'string' && data.charAt(0) === '{' ? JSON.parse(data) : null; const r = msg?.d?.r, p = msg?.d?.b?.p; if (r !== undefined && p) { requestPaths.set(r, p); if (requestPaths.size > 500) requestPaths.delete(requestPaths.keys().next().value); } } catch (e) {}
+                        return nativeSend.apply(this, arguments);
+                    };
+                } catch (e) {}
+                try {
+                    ws.addEventListener('message', ev => {
+                        try {
+                            const text = typeof ev.data === 'string' ? ev.data : '';
+                            const bytes = text.length;
+                            if (framesLeft > 0) { buffer += text; bufferBytes += bytes; framesLeft--; if (framesLeft > 0) return; }
+                            else if (/^\d{1,6}$/.test(text)) { framesLeft = Number(text); buffer = ''; bufferBytes = bytes; if (framesLeft > 0) return; }
+                            const full = buffer || text; const size = buffer ? bufferBytes : bytes; buffer = ''; bufferBytes = 0;
+                            let path = '';
+                            try { const msg = JSON.parse(full); path = msg?.d?.b?.p || ''; if (!path && msg?.d?.r !== undefined) { path = requestPaths.get(msg.d.r) || ''; requestPaths.delete(msg.d.r); } } catch (e) {}
+                            add(path, size);
+                            if (!saveTimer) saveTimer = setTimeout(save, 30000);
+                        } catch (e) {}
+                    });
+                } catch (e) {}
+                return ws;
+            }
+            Metered.prototype = Native.prototype;
+            ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(k => { try { Metered[k] = Native[k]; } catch (e) {} });
+            Metered.__downloadMeter = true;
+            window.WebSocket = Metered;
+        })();
         // ===== V33: workflow lock state + verified bulk attendance operations =====
         // ==============================================================
         //  🔥 FIREBASE CONFIG - ضع إعدادات مشروعك هنا
@@ -1176,7 +1228,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.53.1-compact-status-list';
+        const APP_VERSION = '45.53.2-download-meter';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -9152,7 +9204,19 @@
             html += `<h3 style="font-size:13px;margin:12px 0 6px">حجم البيانات على هذا الجهاز (المجموع ${mb(total)})</h3>`;
             html += `<div style="overflow-x:auto"><table class="report-table" ${tableStyle}><thead><tr><th>القسم</th><th>عدد السجلات</th><th>الحجم</th></tr></thead><tbody>`;
             rows.forEach(r => { html += `<tr><td>${escapeHtml(r.label)}</td><td>${escapeHtml(String(r.count))}</td><td><bdi dir="ltr">${mb(r.bytes)}</bdi></td></tr>`; });
-            html += '</tbody></table></div><p style="font-size:11px;color:#64748b;margin-top:8px">صوّر هذه النافذة وأرسلها للدعم الفني.</p>';
+            html += '</tbody></table></div>';
+            const meter = window.__firebaseDownloadMeter;
+            if (meter) {
+                const names = { attendances:'الغيابات', auditLogs:'سجل التدقيق', _changes:'سجل التغييرات (المزامنة)', weeklyTimetable:'الجدول (برنامج الجدول)', studentLeaves:'الإجازات', students:'الطلاب', subjects:'المواد', professors:'الأساتذة', professorProfiles:'ملفات الأساتذة', appSettings:'الإعدادات', submissions:'الإرسالات', notifications:'الإشعارات', scheduleLinks:'أرشيف الجدول', deletedStudents:'المحذوفون', subjectHourOverrides:'ساعات المواد', lastUpdate:'وقت آخر تحديث', lastDeltaWriteAt:'وقت آخر تحديث', _meta:'حالة الترحيل', auditArchive:'أرشيف التدقيق (عند الطلب)', auditArchiveIndex:'فهرس الأرشيف' };
+                const dayKey = meter.today(); const day = meter.store[dayKey] || { total:0, byPath:{} };
+                const rowsHtml = (byPath, total) => Object.entries(byPath).sort((a, b) => b[1] - a[1]).map(([p, n]) => `<tr><td>${escapeHtml(names[p] || p)}</td><td><bdi dir="ltr">${mb(n)}</bdi></td><td>${total ? Math.round(100 * n / total) : 0}%</td></tr>`).join('');
+                html += `<h3 style="font-size:13px;margin:12px 0 6px">التحميل من Firebase على هذا الجهاز — اليوم (${escapeHtml(dayKey)}): <bdi dir="ltr">${mb(day.total)}</bdi></h3>`;
+                html += `<div style="overflow-x:auto"><table class="report-table" ${tableStyle}><thead><tr><th>القسم</th><th>الحجم</th><th>النسبة</th></tr></thead><tbody>${rowsHtml(day.byPath, day.total) || '<tr><td colspan="3">لا شيء بعد</td></tr>'}</tbody></table></div>`;
+                const days = Object.keys(meter.store).sort().slice(-7).reverse();
+                if (days.length > 1) html += `<p style="font-size:11px;margin:6px 0">آخر الأيام على هذا الجهاز: ${days.map(k => `${escapeHtml(k)}: <bdi dir="ltr">${mb(meter.store[k].total)}</bdi>`).join(' — ')}</p>`;
+                html += `<p style="font-size:11px;color:#64748b;margin:4px 0">هذه الجلسة منذ ${Math.round((Date.now() - meter.session.startedAt) / 60000)} دقيقة: <bdi dir="ltr">${mb(meter.session.total)}</bdi> (تقريبي)</p>`;
+            }
+            html += '<p style="font-size:11px;color:#64748b;margin-top:8px">صوّر هذه النافذة وأرسلها للدعم الفني.</p>';
             let modal = document.getElementById('usageDiagnosticsModal');
             if (!modal) {
                 modal = document.createElement('div');
