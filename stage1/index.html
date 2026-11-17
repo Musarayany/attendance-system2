@@ -509,7 +509,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — المرحلة الأولى — V45.57.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — المرحلة الأولى — V45.58.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -732,7 +732,7 @@
                 </div>
                 <button onclick="saveAbsencePolicySettings()" class="btn-success btn-sm" style="margin-top:7px;">💾 حفظ السياسة وإعادة حساب الساعات</button>
                 <div id="absencePolicyStatus" class="integration-status" style="margin-top:7px;background:#fff;border-color:#f6d365;color:#744210;"></div>
-                <small>الحالة تُحسب تلقائياً بمسارين منفصلين: غير المعذر (5% تنبيه، 7.5% إنذار أولي وقائي، 10% إنذار نهائي، وأكثر من 10% راسب) والمعذر (5% تنبيه، 10% إنذار أولي وقائي، 15% إنذار نهائي، وأكثر من 15% راسب). يمكن تعديل أسابيع مادة منفردة من قائمة المواد.</small>
+                <small>الحالة تُحسب تلقائياً بحدّين: غير المعذر (5% تنبيه، 7.5% إنذار أولي وقائي، 10% إنذار نهائي، وأكثر من 10% راسب) ومجموع الغياب كله معذر + غير معذر (5% تنبيه، 10% إنذار أولي وقائي، 15% إنذار نهائي، وأكثر من 15% راسب). يمكن تعديل أسابيع مادة منفردة من قائمة المواد.</small>
             </div>
 
             <div class="card" style="background:#f0fdfa;border:2px solid #14b8a6;">
@@ -1672,7 +1672,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.57.0-fast-sync-stage1-cloudflare';
+        const APP_VERSION = '45.58.0-total-15-stage1-cloudflare';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -5050,7 +5050,7 @@
         }
 
         function absencePolicyLabel() {
-            return 'المادة (11): مساران مستقلان للغياب غير المعذر والمعذر، مع إنذار أولي وقائي داخلي';
+            return 'المادة (11): غير المعذر بحد 10%، ومجموع الغياب كله (معذر + غير معذر) بحد 15%، مع إنذار أولي وقائي داخلي';
         }
 
         function statusForAbsenceTrack(pct, thresholds) {
@@ -5066,10 +5066,11 @@
         function getStatus(unexcusedPct, totalPct) {
             const unexcused = Math.max(0, Number(unexcusedPct) || 0);
             const total = Math.max(0, Number(totalPct) || 0);
-            const excused = Math.max(0, total - unexcused);
+            // V45.58: حد الـ 15% يُطبَّق على مجموع الغياب كله (المعذر + غير المعذر)، وحد الـ 10% على غير المعذر.
+            // سابقاً كان المعذر وحده يُقارن بـ 15%، فيصل المجموع إلى 20% أو أكثر دون رسوب.
             const unexcusedStatus = statusForAbsenceTrack(unexcused, ABSENCE_THRESHOLDS.unexcused);
-            const excusedStatus = statusForAbsenceTrack(excused, ABSENCE_THRESHOLDS.excused);
-            return statusSeverity(unexcusedStatus) >= statusSeverity(excusedStatus) ? unexcusedStatus : excusedStatus;
+            const totalStatus = statusForAbsenceTrack(Math.max(total, unexcused), ABSENCE_THRESHOLDS.excused);
+            return statusSeverity(unexcusedStatus) >= statusSeverity(totalStatus) ? unexcusedStatus : totalStatus;
         }
 
         function statusSeverity(status) {
@@ -6274,7 +6275,7 @@
             basis.value = 'unexcused';
             bologna.value = policy.bolognaWeeks;
             annual.value = policy.annualWeeks;
-            status.textContent = `الحالة تعتمد على: ${absencePolicyLabel()} — غير المعذر: 5% / 7.5% / 10% / >10% — المعذر: 5% / 10% / 15% / >15% — بولونيا ${policy.bolognaWeeks} أسبوعاً — السنوي ${policy.annualWeeks} أسبوعاً.`;
+            status.textContent = `الحالة تعتمد على: ${absencePolicyLabel()} — غير المعذر: 5% / 7.5% / 10% / >10% — المجموع (معذر + غير معذر): 5% / 10% / 15% / >15% — بولونيا ${policy.bolognaWeeks} أسبوعاً — السنوي ${policy.annualWeeks} أسبوعاً.`;
         }
 
         function refreshAutomaticSubjectHours() {
@@ -8880,7 +8881,7 @@
                 <div class="card">
                     <h4>📊 إجمالي ساعات الغياب لكل طالب - ${escapeHtml(getLevelName(level))}</h4>
                     <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
-                    <small>🟢 جيد | 🔵 تنبيه: 5% | 🟡 إنذار أولي وقائي: 7.5% غير معذر / 10% معذر | 🟠 إنذار نهائي: 10% غير معذر / 15% معذر | 🔴 راسب: عند تجاوز 10% غير معذر أو 15% معذر</small>
+                    <small>🟢 جيد | 🔵 تنبيه: 5% | 🟡 إنذار أولي وقائي: 7.5% غير معذر / 10% المجموع | 🟠 إنذار نهائي: 10% غير معذر / 15% المجموع | 🔴 راسب: عند تجاوز 10% غير معذر أو 15% المجموع (معذر + غير معذر)</small>
                 </div>
                 <div class="card">
                     <h4>📈 ملخص الحالات حسب أسوأ حالة للطالب في مواده</h4>
@@ -11062,9 +11063,9 @@
                         <div class="report-legend">
                             <span style="background:#c6f6d5; padding:2px 6px; border-radius:4px;">🟢 جيد: أقل من 5%</span>
                             <span style="background:#bee3f8; padding:2px 6px; border-radius:4px;">🔵 تنبيه: من 5% حتى ما قبل الإنذار الأولي</span>
-                            <span style="background:#fefcbf; padding:2px 6px; border-radius:4px;">🟡 إنذار أولي وقائي: 7.5% غير معذر / 10% معذر</span>
-                            <span style="background:#feebc8; padding:2px 6px; border-radius:4px;">🟠 إنذار نهائي رسمي: 10% غير معذر / 15% معذر</span>
-                            <span style="background:#fed7d7; padding:2px 6px; border-radius:4px;">🔴 راسب: تجاوز 10% غير معذر أو 15% معذر</span>
+                            <span style="background:#fefcbf; padding:2px 6px; border-radius:4px;">🟡 إنذار أولي وقائي: 7.5% غير معذر / 10% المجموع</span>
+                            <span style="background:#feebc8; padding:2px 6px; border-radius:4px;">🟠 إنذار نهائي رسمي: 10% غير معذر / 15% المجموع</span>
+                            <span style="background:#fed7d7; padding:2px 6px; border-radius:4px;">🔴 راسب: تجاوز 10% غير معذر أو 15% المجموع (معذر + غير معذر)</span>
                         </div>
                         <p class="report-explanation" style="font-size:9px; color:#718096; margin:2px 0;">أساس تحديد الحالة: <strong>${escapeHtml(absencePolicyLabel())}</strong>. وتبقى الساعات المعذرة وغير المعذرة محفوظة في التفاصيل.</p>
                     </div>
