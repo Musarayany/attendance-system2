@@ -509,7 +509,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.55.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.56.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1212,7 +1212,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.55.0-stage-cards';
+        const APP_VERSION = '45.56.0-all-stage-cards';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -1373,7 +1373,9 @@
 
         const DEFAULT_LEVELS = [1, 2, 3, 4];
 
-        function getConfiguredLevels() {
+        function getConfiguredLevels() { return getAllStageLevels().filter(isLevelVisibleHere); }
+        // V45.56: كل المراحل (لمربعات المراحل في الشاشة الرئيسية وشاشة الضابط).
+        function getAllStageLevels() {
             const found = new Set(DEFAULT_LEVELS);
             const addLevel = value => {
                 const n = Number(value);
@@ -1390,7 +1392,7 @@
             if (Array.isArray(liveAcademicCatalog?.stageNames)) {
                 liveAcademicCatalog.stageNames.forEach((_, i) => addLevel(i + 1));
             }
-            return [...found].filter(isLevelVisibleHere).sort((a,b)=>a-b);
+            return [...found].sort((a,b)=>a-b);
         }
 
 
@@ -3971,7 +3973,6 @@
             clearInterval(sessionTimer);
             if (state.currentUser?.role === 'admin') scheduleAuditArchive();
             ensureAttendanceScopeLoaded();
-            renderOtherStagesLink();
             // افتح الرابط مع ‎#diag‎ في آخره لعرض نافذة التشخيص على أي جهاز (أستاذ أو مسؤول).
             if (String(location.hash || '').toLowerCase() === '#diag') setTimeout(() => { try { showUsageDiagnostics(); } catch (e) { console.warn(e); } }, 15000);
             if (!state.currentUser.persistent) {
@@ -5100,7 +5101,8 @@
         const MAIN_PROGRAM_URL = 'https://musarayany.github.io/attendance-system2/';
         // V45.55: المرحلة المنقولة تبقى مربعاً بين المراحل في البرنامج الرئيسي، والضغط عليه ينقل إلى برنامجها.
         function movedStageUrlForLevel(level) {
-            if (window.__CF_BACKEND) return null;
+            const own = Number(window.__CF_BACKEND?.stage) || 0;
+            if (own) return Number(level) === own ? null : MAIN_PROGRAM_URL; // داخل برنامج المرحلة: بقية المراحل في البرنامج الرئيسي
             return STAGES_MOVED_TO_CLOUDFLARE[Number(level)] || null;
         }
         function movedStageUrlForSubject(subject) { return movedStageUrlForLevel(subject?.level); }
@@ -5114,27 +5116,14 @@
             window.location.href = url;
         }
         function movedStageBadgeHtml(level) {
-            return movedStageUrlForLevel(level) ? '<div class="moved-stage-badge" style="margin:4px auto 0;padding:3px 8px;border-radius:999px;background:#dbeafe;color:#1e40af;font-size:11px;font-weight:800;display:inline-block">☁️ برنامج منفصل — اضغط للانتقال</div>' : '';
+            if (!movedStageUrlForLevel(level)) return '';
+            const label = window.__CF_BACKEND ? '↩️ البرنامج الرئيسي — اضغط للانتقال' : '☁️ برنامج منفصل — اضغط للانتقال';
+            return '<div class="moved-stage-badge" style="margin:4px auto 0;padding:3px 8px;border-radius:999px;background:#dbeafe;color:#1e40af;font-size:11px;font-weight:800;display:inline-block">' + label + '</div>';
         }
-        // رابط الرجوع إلى المراحل الأخرى (داخل برنامج المرحلة المنفصلة فقط).
-        function renderOtherStagesLink() {
-            try {
-                if (!window.__CF_BACKEND || !state.currentUser) return;
-                document.getElementById('otherStagesLink')?.remove();
-                const role = state.currentUser.role;
-                const me = String(state.currentUser.id || '');
-                const teachesElsewhere = role === 'professor' && (state.subjects || []).some(s => String(s.professorId || '') === me && !isLevelVisibleHere(s.level));
-                if (role !== 'admin' && role !== 'officer' && !teachesElsewhere) return;
-                const link = document.createElement('a');
-                link.id = 'otherStagesLink';
-                link.href = MAIN_PROGRAM_URL;
-                link.textContent = '↩️ المراحل الأخرى';
-                link.style.cssText = 'margin:0 8px;padding:3px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px;font-weight:800;text-decoration:none;white-space:nowrap';
-                const anchor = document.getElementById('currentUserDisplay');
-                if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(link, anchor.nextSibling);
-            } catch (e) { console.warn(e); }
+        // أعداد مرحلة لا تُدار في هذا البرنامج غير دقيقة هنا، فلا تُعرض داخل برنامج المرحلة المنفصل.
+        function levelStatsHiddenAttr(level) {
+            return window.__CF_BACKEND && movedStageUrlForLevel(level) ? ' style="display:none"' : '';
         }
-
         function upsertAttendanceState(studentId, subject, context, hours, excused, source='professor-panel') {
             const movedUrl = movedStageUrlForSubject(subject);
             if (movedUrl) throw new Error('غيابات هذه المرحلة انتقلت إلى البرنامج الجديد: ' + movedUrl);
@@ -7759,7 +7748,7 @@
         function renderLevels() {
             const container = document.getElementById('levelsContainer');
             const detectedLevels=[...new Set([...state.students.map(x=>Number(x.level)),...state.subjects.map(x=>Number(x.level))].filter(n=>Number.isInteger(n)&&n>0&&n<=10))];
-            const levels=[...new Set([...getConfiguredLevels(),...detectedLevels])].filter(isLevelVisibleHere).sort((a,b)=>a-b);
+            const levels=[...new Set([...getAllStageLevels(),...detectedLevels])].sort((a,b)=>a-b);
             let html = '';
             levels.forEach(level => {
                 const stats = getLevelStats(level);
@@ -7771,7 +7760,7 @@
                         <span class="level-icon">${icon}</span>
                         <div class="level-name">${getLevelName(level)}</div>${movedStageBadgeHtml(level)}
                         <div class="level-system" style="font-size:0.8rem; color:#718096;">${systemLabel}</div>
-                        <div class="level-stats">
+                        <div class="level-stats"${levelStatsHiddenAttr(level)}>
                             <span>📘 ${stats.subjectCount} مواد</span>
                             <span>👨‍🎓 ${stats.studentCount} طلاب</span>
                             <span>👨‍🏫 ${stats.professorCount} أساتذة</span>
@@ -9192,7 +9181,7 @@
 
         function renderOfficerLevels() {
             const container = document.getElementById('officerLevelsContainer');
-            const levels = getConfiguredLevels();
+            const levels = getAllStageLevels();
             let html = '';
             levels.forEach(level => {
                 const stats = getLevelStats(level);
@@ -9204,7 +9193,7 @@
                         <span class="level-icon">${icon}</span>
                         <div class="level-name">${getLevelName(level)}</div>${movedStageBadgeHtml(level)}
                         <div class="level-system" style="font-size:0.8rem; color:#718096;">${systemLabel}</div>
-                        <div class="level-stats">
+                        <div class="level-stats"${levelStatsHiddenAttr(level)}>
                             <span>📘 ${stats.subjectCount} مواد</span>
                             <span>👨‍🎓 ${stats.studentCount} طلاب</span>
                             <span>👨‍🏫 ${stats.professorCount} أساتذة</span>
@@ -10663,7 +10652,7 @@
         function getProfessorSubjects() {
             if(state.currentUser?.role!=='professor')return [];
             const profId = state.currentUser?.id;
-            return state.subjects.filter(s => String(s.professorId || '') === String(profId || '') && s.timetableActive !== false && isLevelVisibleHere(s.level)).sort((a,b) => String(a.name||'').localeCompare(String(b.name||''),'ar'));
+            return state.subjects.filter(s => String(s.professorId || '') === String(profId || '') && s.timetableActive !== false).sort((a,b) => String(a.name||'').localeCompare(String(b.name||''),'ar'));
         }
 
         function getProfessorSubject() {
@@ -11585,7 +11574,7 @@
             if (movedSubjectUrl) {
                 const list = getProfessorSubjects();
                 const chooser = list.length > 1 ? `<label style="font-size:11px;margin-top:0;">اختر المادة</label><select onchange="selectProfessorSubject(this.value)" style="margin-bottom:8px">${list.map(x => `<option value="${escapeHtml(x.id)}" ${x.id === sub.id ? 'selected' : ''}>${escapeHtml(x.name)} — ${escapeHtml(getLevelName(x.level))}</option>`).join('')}</select>` : '';
-                infoDiv.innerHTML = `${chooser}<div style="padding:12px;border:2px solid #2563eb;border-radius:10px;background:#eff6ff;text-align:center"><p style="font-size:13px;font-weight:800;color:#1e3a8a;margin:0 0 8px">☁️ مادة <b>${escapeHtml(sub.name)}</b> من ${escapeHtml(getLevelName(sub.level))}، وغياباتها تُسجَّل في برنامج المرحلة المنفصل.</p><button type="button" class="btn-primary" onclick="goToStageProgram('${movedSubjectUrl}')">الانتقال إلى برنامج ${escapeHtml(getLevelName(sub.level))}</button></div>`;
+                infoDiv.innerHTML = `${chooser}<div style="padding:12px;border:2px solid #2563eb;border-radius:10px;background:#eff6ff;text-align:center"><p style="font-size:13px;font-weight:800;color:#1e3a8a;margin:0 0 8px">☁️ مادة <b>${escapeHtml(sub.name)}</b> من ${escapeHtml(getLevelName(sub.level))}، وغياباتها تُسجَّل في ${window.__CF_BACKEND ? 'البرنامج الرئيسي' : 'برنامج المرحلة المنفصل'}.</p><button type="button" class="btn-primary" onclick="goToStageProgram('${movedSubjectUrl}')">الانتقال إلى ${window.__CF_BACKEND ? 'البرنامج الرئيسي' : 'برنامج ' + escapeHtml(getLevelName(sub.level))}</button></div>`;
                 stuSelect.innerHTML = '<option>--</option>';
                 document.getElementById('profAttendanceTable').innerHTML = '';
                 document.getElementById('profGroupsContainer').innerHTML = '<p style="color:#64748b; text-align:center; padding:10px;">غيابات هذه المادة في برنامج مرحلتها.</p>';
