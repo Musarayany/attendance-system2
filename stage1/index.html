@@ -509,7 +509,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — المرحلة الأولى — V45.56.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — المرحلة الأولى — V45.57.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1569,7 +1569,18 @@
             const Native = window.WebSocket;
             if (!Native || Native.__downloadMeter) return;
             const KEY = 'attendance_download_meter_v1';
-            const today = () => { try { return new Intl.DateTimeFormat('en-CA', { timeZone:'Asia/Baghdad' }).format(new Date()); } catch (e) { return new Date().toISOString().slice(0, 10); } };
+            // V45.57: كان يُنشئ منسّق تاريخ جديداً مع كل رسالة (ثوانٍ على الهاتف)؛ الآن مرة كل دقيقة.
+            let todayFmt = null, todayVal = '', todayAt = 0;
+            const today = () => { const now = Date.now(); if (todayVal && now - todayAt < 60000) return todayVal; try { todayFmt = todayFmt || new Intl.DateTimeFormat('en-CA', { timeZone:'Asia/Baghdad' }); todayVal = todayFmt.format(new Date(now)); } catch (e) { todayVal = new Date(now).toISOString().slice(0, 10); } todayAt = now; return todayVal; };
+            // الرسائل الكبيرة يحلّلها Firebase أصلاً؛ العدّاد يقرأ رأسها فقط ليعرف المسار.
+            const meterParse = text => {
+                if (text.length < 20000) return JSON.parse(text);
+                const head = text.slice(0, 600);
+                const r = /^\{"t":"d","d":\{"r":(\d+)/.exec(head);
+                if (r) return { d:{ r:Number(r[1]) } };
+                const p = /"b":\{"p":"((?:[^"\\]|\\.)*)"/.exec(head);
+                return { d:{ b:{ p:p ? JSON.parse('"' + p[1] + '"') : '' } } };
+            };
             let store = {};
             try { store = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { store = {}; }
             const session = { total:0, byPath:{}, startedAt:Date.now() };
@@ -1661,7 +1672,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.56.0-all-stage-cards-stage1-cloudflare';
+        const APP_VERSION = '45.57.0-fast-sync-stage1-cloudflare';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -2179,6 +2190,7 @@
                     const indexedSaved = await writeIndexedSnapshot(payload);
                     if (!indexedSaved && !fallbackSaved) throw new Error('لم ينجح أي مخزن محلي');
                     lastLocalSnapshotSignature = signature;
+                    lastLocalWriteDoneAt = Date.now();
                     return true;
                 } catch (err) {
                     console.error('خطأ حفظ النسخة المحلية:', err);
@@ -2191,9 +2203,13 @@
             return localPersistenceQueue;
         }
         let pendingLocalWrite = null;
+        // V45.57: مع البيانات الكبيرة كل حفظ ينسخ كل السجلات؛ الحفظ المجدول لا يتكرر أسرع من مرة كل 4 ثوانٍ.
+        let lastLocalWriteDoneAt = 0;
         function scheduleLocalPersistence(delay = 120) {
             clearTimeout(localSaveTimer);
-            localSaveTimer = setTimeout(() => persistLocalState('scheduled'), delay);
+            const big = (state.attendances || []).length > 5000;
+            const gap = big && delay > 0 ? Math.max(0, lastLocalWriteDoneAt + 4000 - Date.now()) : 0;
+            localSaveTimer = setTimeout(() => persistLocalState('scheduled'), Math.max(delay, gap));
         }
 
         async function loadLocalState() {
@@ -2531,6 +2547,63 @@
             (arr || []).forEach(r => { if (r && r.id) map.set(String(r.id), r); });
             return map;
         }
+        // V45.57: بحث سريع عن سجل بمعرّفه. كان كل سجل يصل من السحابة يعيد بناء خريطة لكل الغيابات
+        // (عشرات الآلاف) مرتين أو ثلاثاً، فيتجمد الهاتف دقيقة عند وصول مئات التغييرات.
+        // كل نتيجة من الفهرس يُتحقق منها قبل استعمالها، وعند الشك يُبحث خطياً؛ النتيجة مطابقة لـ mapsById.
+        const recordIdIndexCache = new WeakMap();
+        function recordIdIndex(arr) {
+            let e = recordIdIndexCache.get(arr);
+            if (e && e.len === arr.length) return e;
+            const map = new Map(); let regular = true;
+            for (let i = 0; i < arr.length; i++) {
+                const r = arr[i];
+                if (!r || !r.id) { regular = false; continue; }
+                const k = String(r.id);
+                if (map.has(k)) regular = false;
+                map.set(k, i);
+            }
+            e = { map, len:arr.length, regular };
+            recordIdIndexCache.set(arr, e);
+            return e;
+        }
+        function recordIndexById(arr, id) {
+            if (!Array.isArray(arr) || !arr.length) return -1;
+            const key = String(id);
+            const e = recordIdIndex(arr);
+            const i = e.map.get(key);
+            if (e.regular && i !== undefined && i < arr.length && arr[i] && arr[i].id && String(arr[i].id) === key) return i;
+            for (let j = arr.length - 1; j >= 0; j--) { const r = arr[j]; if (r && r.id && String(r.id) === key) return j; }
+            return -1;
+        }
+        function recordById(arr, id) {
+            const i = recordIndexById(arr, id);
+            return i < 0 ? undefined : arr[i];
+        }
+        function noteRecordAppended(arr, id) {
+            const e = recordIdIndexCache.get(arr), k = String(id);
+            if (!e || e.len !== arr.length - 1) return;
+            const j = e.map.get(k);
+            if (j !== undefined && j < arr.length - 1 && arr[j] && String(arr[j].id) === k) e.regular = false;
+            e.map.set(k, arr.length - 1); e.len = arr.length;
+        }
+        // نسخة جديدة من المصفوفة بعد استبدال/إضافة/حذف سجل واحد، بنفس نتيجة mapsById + Array.from.
+        function withRecordReplaced(arr, id, value) {
+            const src = Array.isArray(arr) ? arr : [];
+            const key = String(id);
+            const e = recordIdIndex(src);
+            if (!e.regular) {
+                const map = mapsById(src);
+                if (value === undefined || value === null) map.delete(key); else map.set(key, value);
+                return Array.from(map.values());
+            }
+            const i = recordIndexById(src, key);
+            const out = src.slice();
+            if (value === undefined || value === null) { if (i >= 0) out.splice(i, 1); return out; }
+            if (i >= 0) out[i] = value;
+            else { out.push(value); e.map.set(key, out.length - 1); }
+            recordIdIndexCache.set(out, { map:e.map, len:out.length, regular:true });
+            return out;
+        }
 
         function stableComparable(value) {
             if (Array.isArray(value)) return value.map(stableComparable);
@@ -2677,27 +2750,21 @@
 
         function replaceStateRecordFromCloud(name,id,value){
             if(value&&['students','attendances'].includes(name)&&isStudentOfficiallyDeleted(name==='students'?id:value.studentId))return;
-            const map=mapsById(state[name]||[]);
-            if(value===undefined || value===null)map.delete(String(id));
-            else map.set(String(id),sanitizeRecord(value));
-            state[name]=Array.from(map.values());
+            state[name]=withRecordReplaced(state[name]||[],id,(value===undefined||value===null)?undefined:sanitizeRecord(value));
         }
 
         function updateSyncBaseRecord(name,id,value){
-            const base=mapsById(lastSyncedCollections[name]||[]);
-            if(value===undefined || value===null)base.delete(String(id));
-            else base.set(String(id),sanitizeRecord(value));
-            lastSyncedCollections[name]=Array.from(base.values());
+            lastSyncedCollections[name]=withRecordReplaced(lastSyncedCollections[name]||[],id,(value===undefined||value===null)?undefined:sanitizeRecord(value));
         }
 
         function acknowledgeFirebaseRecord(name,id,before,sent,saved){
-            const current=mapsById(lastSyncedCollections[name]||[]).get(String(id));
+            const current=recordById(lastSyncedCollections[name]||[],id);
             if(sameRecord(current,before)||sameRecord(current,sent)||sameRecord(current,saved))updateSyncBaseRecord(name,id,saved);
         }
 
         function rebaseLocalAfterCommit(name,id,sent,saved){
-            const current=mapsById(state[name]||[]).get(String(id));
-            const baseline=mapsById(lastSyncedCollections[name]||[]).get(String(id));
+            const current=recordById(state[name]||[],id);
+            const baseline=recordById(lastSyncedCollections[name]||[],id);
             if(!sameRecord(baseline,saved))return; // A later remote event already won.
             if(['students','attendances'].includes(name)&&isStudentOfficiallyDeleted(name==='students'?id:(current||saved)?.studentId))return;
             if(sameRecord(current,sent)||sameRecord(current,saved)){
@@ -2730,7 +2797,7 @@
                     const snap=await withTimeout(ref.once('value'),CLOUD_OPERATION_TIMEOUT_MS,'انتهت مهلة فحص التعارض');
                     const remoteRaw=snap.val();
                     const remote=remoteRaw===null?undefined:remoteRaw;
-                    const liveLocal=mapsById(state[c.name]||[]).get(String(c.id));
+                    const liveLocal=recordById(state[c.name]||[],c.id);
                     const local=liveLocal===undefined?undefined:JSON.parse(JSON.stringify(liveLocal));
                     const before=c.before===null?undefined:c.before;
                     const decision=safeThreeWayRecordMerge(c.name,before,local,remote);
@@ -2752,7 +2819,7 @@
                     acknowledgeFirebaseRecord(c.name,c.id,remote,local,normalizedSaved);
                     rebaseLocalAfterCommit(c.name,c.id,local,normalizedSaved);
                     rememberAutoConflictResolution(c.name,c.id,local,remote,normalizedSaved,decision.reason);
-                    if(sameRecord(mapsById(state[c.name]||[]).get(String(c.id)),normalizedSaved))delete syncConflicts[key];
+                    if(sameRecord(recordById(state[c.name]||[],c.id),normalizedSaved))delete syncConflicts[key];
                     resolved++;
                 }catch(err){
                     console.warn('تعذر الحسم الآمن التلقائي لتعارض:',c?.name,c?.id,err);
@@ -2816,7 +2883,7 @@
                                 if(autoDecision){
                                     rebaseLocalAfterCommit(change.name,change.id,change.after,saved);
                                     rememberAutoConflictResolution(change.name,change.id,change.after,remoteSeen,saved,autoDecision.reason);
-                                    if(sameRecord(mapsById(state[change.name]||[]).get(String(change.id)),saved))delete syncConflicts[syncConflictKey(change.name,change.id)];
+                                    if(sameRecord(recordById(state[change.name]||[],change.id),saved))delete syncConflicts[syncConflictKey(change.name,change.id)];
                                 }
                             }
                         } catch (err) { errors.push(err); blockRelatedSubject(change); }
@@ -3244,6 +3311,31 @@
                 applyRemoteChild(name, raw, key);
             } else applyRemoteChild(name, null, deltaResolveLocalId(name, key));
         }
+        // السحابة = خط الأساس المحفوظ + السجلات المتغيرة التي نُزّلت للتو؛ تُدمج كما في التحميل الكامل.
+        const DELTA_BULK_APPLY_MIN = 200;
+        function applyDeltaRecordsBulk(name, fetchedRaw) {
+            if (!state.initialLoadDone) return;
+            const remote = {};
+            (lastSyncedCollections[name] || []).forEach(r => { if (r && r.id) remote[firebaseRecordKey(r.id)] = r; });
+            let heldKeys = null;
+            for (const [key, raw] of fetchedRaw) {
+                if (name === 'attendances' && raw && typeof raw === 'object' && !attendanceRecordInScope(raw)) {
+                    if (!heldKeys) heldKeys = new Set((state.attendances || []).map(r => firebaseRecordKey(r?.id)));
+                    if (!heldKeys.has(key)) continue;
+                }
+                if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+                    if (name === 'students' || name === 'attendances') {
+                        const sid = name === 'students' ? String(raw.id || key) : String(raw.studentId || '');
+                        if (sid && isStudentOfficiallyDeleted(sid)) deltaDeletedLeftovers.set(`${name}/${key}`, sid);
+                    }
+                    remote[key] = raw;
+                } else delete remote[key];
+            }
+            applyRemoteCollection(name, remote);
+            scheduleLocalPersistence(700);
+            scheduleRenderRefresh();
+            updateSyncConflictButton();
+        }
         async function fetchAndApplyDeltaGroups(groups) {
             let fetched = 0;
             const fullNames = [];
@@ -3260,6 +3352,20 @@
                     continue;
                 }
                 const list = [...keys];
+                // V45.57: تغييرات كثيرة (يوم كامل من الغيابات مثلاً): تُنزَّل السجلات المتغيرة فقط كما هو،
+                // ثم تُدمج دفعة واحدة بنفس طريقة الدمج المستعملة في التحميل الكامل، بدل دمج كل سجل وحده
+                // (الذي كان يمر على كل الغيابات مع كل سجل فيتجمد الهاتف).
+                if (list.length > DELTA_BULK_APPLY_MIN && !legacyCloudCollections.has(name)) {
+                    const fetchedRaw = new Map();
+                    for (let i = 0; i < list.length; i += DELTA_FETCH_CONCURRENCY) {
+                        const batch = list.slice(i, i + DELTA_FETCH_CONCURRENCY);
+                        const snaps = await Promise.all(batch.map(k => withTimeout(database.ref(`/${name}/${k}`).once('value'), CLOUD_OPERATION_TIMEOUT_MS, `انتهت مهلة تحميل سجل من ${name}`)));
+                        snaps.forEach((snap, j) => fetchedRaw.set(String(batch[j]), snap.val()));
+                        fetched += batch.length;
+                    }
+                    applyDeltaRecordsBulk(name, fetchedRaw);
+                    continue;
+                }
                 for (let i = 0; i < list.length; i += DELTA_FETCH_CONCURRENCY) {
                     const batch = list.slice(i, i + DELTA_FETCH_CONCURRENCY);
                     const snaps = await Promise.all(batch.map(k => withTimeout(database.ref(`/${name}/${k}`).once('value'), CLOUD_OPERATION_TIMEOUT_MS, `انتهت مهلة تحميل سجل من ${name}`)));
@@ -3849,14 +3955,20 @@
                 const sid=name==='students'?id:String(incoming?.studentId||local?.studentId||'');
                 if(sid&&isStudentOfficiallyDeleted(sid))return;
             }
-            const base=mapsById(lastSyncedCollections[name]||[]);
-            const before=name==='students'?recoverDerivedStudentConflict(id,local,base.get(id)):base.get(id),key=syncConflictKey(name,id);
+            const baseArr=lastSyncedCollections[name]||[];
+            const baseRec=recordById(baseArr,id);
+            const before=name==='students'?recoverDerivedStudentConflict(id,local,baseRec):baseRec,key=syncConflictKey(name,id);
             if(name==='attendances'&&incoming&&!isEnrollmentRecord(incoming)&&incoming.superseded!==true&&attendanceRecordSessionKey(incoming)!=='legacy'){
                 const logicalKey=attendanceLogicalKeyFromRecord(incoming);
-                const other=list.find(r=>String(r.id)!==id&&r.superseded!==true&&attendanceLogicalKeyFromRecord(r)===logicalKey);
+                // V45.57: نفس الشرط، لكن يُقارن رقم الطالب أولاً (رخيص) قبل حساب مفتاح المحاضرة لكل سجل.
+                const incSid=String(incoming.studentId??'');
+                const other=incSid==='legacy'
+                    ?list.find(r=>String(r.id)!==id&&r.superseded!==true&&attendanceLogicalKeyFromRecord(r)===logicalKey)
+                    :list.find(r=>r&&String(r.studentId??'')===incSid&&String(r.id)!==id&&r.superseded!==true&&attendanceLogicalKeyFromRecord(r)===logicalKey);
                 if(other){
                     // Old clients can create another ID for this same session. Reuse the
                     // logical merge so a pending correction wins over a second stale ID.
+                    const base=mapsById(baseArr);
                     base.set(id,incoming);
                     applyRemoteCollection(name,Array.from(base.values()));
                     scheduleLocalPersistence(700);scheduleIncrementalUiRefresh(name,180);updateSyncConflictButton();
@@ -3879,13 +3991,11 @@
             // A conflicting edit/removal is retained for explicit review, never adopted silently.
             const keepLocal=dirty||!!syncConflicts[key];
             if(!keepLocal&&!equal){
-                if(incoming){if(idx<0)list.push(incoming);else list[idx]=incoming;}
+                if(incoming){if(idx<0){list.push(incoming);noteRecordAppended(list,id);}else list[idx]=incoming;}
                 else if(idx>=0)list.splice(idx,1);
             }
             // Baselines must never share mutable records (including nested values) with state.
-            if(incoming)base.set(id,JSON.parse(JSON.stringify(incoming)));
-            else base.delete(id);
-            lastSyncedCollections[name]=Array.from(base.values());
+            lastSyncedCollections[name]=withRecordReplaced(baseArr,id,incoming?JSON.parse(JSON.stringify(incoming)):undefined);
             scheduleLocalPersistence(name==='attendances'?700:350);
             if(!equal||syncConflicts[key])scheduleIncrementalUiRefresh(name,name==='attendances'?180:90);
             if(name==='appSettings'&&incoming?.type==='deletedStudent')purgeOfficiallyDeletedStudentsFromState();
@@ -3980,7 +4090,8 @@
                 ensureProfessorProfilesFromLegacy();
                 canonicalizeProfessorReferences();
                 if (!loaded) lastSyncedCollections = cloneCollections();
-                await persistLocalState('bootstrap', true);
+                // V45.57: البيانات قُرئت للتو من هذا الجهاز؛ لا داعي لنسخها كلها مرة أخرى فوراً.
+                if (loaded) scheduleLocalPersistence(5000); else await persistLocalState('bootstrap', true);
                 const restored = restoreSavedSession();
                 if (!restored) {
                     setStartupStatus(loaded ? '✅ النسخة المحلية جاهزة — جارٍ جلب آخر تحديث...' : '✅ النظام جاهز — جارٍ الاتصال بالسحابة...');
