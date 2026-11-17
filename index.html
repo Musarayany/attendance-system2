@@ -509,7 +509,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.53.2 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.54.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -650,7 +650,7 @@
               <summary style="font-size:14px;font-weight:900;cursor:pointer;color:#1e3a8a">🗂️ الأرشيف الأسبوعي — النسخ والتحقق دون حذف</summary>
               <p style="font-size:11px;color:#334155;line-height:1.75;margin:8px 0">
                 يعمل هذا العرض عند فتحه فقط، دون مستمع Firebase إضافي. يمكن فحص أسبوع وتصديره وفتح نسخته لاحقاً،
-                ولا يغير أي سجل حضور أو حالة إرسال أو حساب غياب. <b>يمكن إنشاء نسخة ظل موثقة أسبوعيًا بعد تصدير نسخة احتياطية كاملة والتحقق منها، لكن حذف الأصل والتحويل النهائي غير مفعلين حتى اختبار توافق الأجهزة والتقارير وقواعد Firebase.</b>
+                ولا يغير أي سجل حضور أو حالة إرسال أو حساب غياب.
               </p>
               <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:9px;align-items:end">
                 <label>اختر يومًا من الأسبوع<input type="date" id="weeklyArchiveDate" onchange="weeklyArchiveDateChanged()"></label>
@@ -664,22 +664,6 @@
                 <button type="button" class="btn-import btn-sm" onclick="document.getElementById('weeklyArchiveFileInput').click()">فتح ملف أرشيف أسبوعي للتصفح فقط</button>
                 <input type="file" id="weeklyArchiveFileInput" accept=".json,application/json" style="display:none" onchange="weeklyArchiveImportFile(event)">
                 <button type="button" class="btn-secondary btn-sm" onclick="weeklyArchiveClear()">إفراغ ذاكرة المعاينة</button>
-              </div>
-              <div style="margin-top:10px;padding:10px;border:2px dashed #d97706;border-radius:9px;background:#fffbeb">
-                <strong>المرحلة A: نسخة احتياطية كاملة والتحقق منها</strong>
-                <p style="font-size:11px;margin:5px 0">ينزّل هذا الإجراء بيانات Firebase التي تسمح صلاحياتك بقراءتها بصيغة JSON، ثم يُطلب فتح الملف المُنزّل للتحقق من تطابق البصمة. احتفظ بالملف في موقع آمن؛ يحتوي بيانات الطلاب ولا يُعد بديلاً عن تصدير إداري موثوق ومُجرّب للاستعادة.</p>
-                <div style="display:flex;gap:6px;flex-wrap:wrap">
-                  <button type="button" class="btn-backup btn-sm" onclick="weeklyArchiveDownloadFullBackup()">إنشاء نسخة Firebase كاملة متاحة للحساب</button>
-                  <button type="button" class="btn-import btn-sm" onclick="document.getElementById('weeklyArchiveFullBackupInput').click()">تحقق من ملف النسخة الاحتياطية المُنزّل</button>
-                  <input type="file" id="weeklyArchiveFullBackupInput" accept=".json,application/json" style="display:none" onchange="weeklyArchiveVerifyFullBackupFile(event)">
-                </div>
-                <div id="weeklyArchiveBackupStatus" style="font-size:11px;white-space:pre-wrap;margin-top:7px">لم يتم التحقق من نسخة احتياطية كاملة بهذه الجلسة.</div>
-              </div>
-              <div style="margin-top:10px;padding:10px;border:2px dashed #2563eb;border-radius:9px;background:#eff6ff">
-                <strong>المرحلة B: Copy → Verify للأسبوع المحدد (نسخة ظل سحابية)</strong>
-                <p style="font-size:11px;margin:5px 0">بعد التحقق من النسخة الاحتياطية، يُنسخ الأسبوع القديم إلى مسار جديد دون أي تعديل أو حذف في ‎/attendances‎. ستُقرأ النسخة الجديدة والأصل ثانيةً للتحقق من التطابق. لا تُحوّل المزامنة الحية تلقائيًا.</p>
-                <button type="button" class="btn-info btn-sm" id="weeklyArchiveCopyButton" onclick="weeklyArchiveStageVerifiedCopy()">نسخ الأسبوع إلى الأرشيف السحابي والتحقق من التطابق</button>
-                <div id="weeklyArchiveMigrationStatus" style="font-size:11px;white-space:pre-wrap;margin-top:7px">الترحيل النهائي (Cutover) معطّل؛ يتطلب موافقة قواعد Firebase على تجميد عمل النسخ القديمة واختبارات التقارير والتصحيح.</div>
               </div>
               <div id="weeklyArchiveStatus" role="status" aria-live="polite" style="margin-top:9px;padding:8px;background:#fff;border:1px solid #bfdbfe;border-radius:8px;font-size:11px;line-height:1.65;white-space:pre-wrap">لم تُحمّل أي سجلات للأرشيف بعد.</div>
               <div id="weeklyArchiveIndex" style="font-size:11px;max-height:220px;overflow:auto;margin-top:9px"></div>
@@ -1228,7 +1212,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.53.2-download-meter';
+        const APP_VERSION = '45.54.0-reviewed';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -1699,15 +1683,6 @@
         function localSnapshotSignature(payload) {
             return `w${++localSnapshotWriteSerial}:${payload?.savedAt || 0}`;
         }
-        function legacyLocalSnapshotSignature(payload) {
-            const json = JSON.stringify({ collections:payload.collections, syncBase:payload.syncBase, syncConflicts:payload.syncConflicts || {}, syncConflictHistory:payload.syncConflictHistory || [], deltaSync:payload.deltaSync || null });
-            let hash = 2166136261;
-            for (let i = 0; i < json.length; i++) {
-                hash ^= json.charCodeAt(i);
-                hash = Math.imul(hash, 16777619);
-            }
-            return `${json.length}:${hash >>> 0}`;
-        }
 
         // V45.51: نسخة localStorage لا تتسع لأكثر من ~4MB؛ مع بيانات كبيرة كان البرنامج يحوّل كل
         // البيانات إلى نص عند كل نقرة ثم يفشل الحفظ. نحاولها فقط عندما يمكن أن تنجح.
@@ -1909,22 +1884,6 @@
                     updateSyncConflictButton();
                 } catch(err){console.error('تعذر تحديث الواجهة:',err);}
             },120);
-        }
-        function scheduleCredentialValidation() {
-            clearTimeout(credentialValidationTimer);
-            credentialValidationTimer = setTimeout(() => {
-                if (state.currentUser?.role !== 'professor') return;
-                const saved = readSavedSession();
-                const prof = (state.professors || []).find(p => String(p.id) === String(state.currentUser.id));
-                const active = prof && getCanonicalProfessorRecords().some(p => String(p.id) === String(prof.id));
-                const currentCredential = prof ? String(getProfessorUnifiedPassword(prof).hash || '') : '';
-                const expectedCredential = String(saved?.credentialSignature || state.currentUser.credentialSignature || '');
-                if (!active || (expectedCredential && currentCredential && expectedCredential !== currentCredential)) {
-                    logout(false);
-                    const error = document.getElementById('loginError');
-                    if (error) error.textContent = 'تم تغيير بيانات هذا الحساب. سجل الدخول بكلمة المرور الجديدة.';
-                }
-            }, 500);
         }
 
         function getBaghdadClock(date = new Date()) {
@@ -2171,26 +2130,6 @@
             purgeOfficiallyDeletedStudentsFromState();
         }
 
-        function buildFirebaseDiff() {
-            ensureAllRecordIds();
-            ensurePendingAttendanceLevels();
-            const updates = {};
-            SYNC_COLLECTIONS.forEach(name => {
-                const base = mapsById(lastSyncedCollections[name] || []);
-                const current = mapsById(state[name] || []);
-                const ids = new Set([...base.keys(), ...current.keys()]);
-                ids.forEach(id => {
-                    const before = base.get(id);
-                    const after = current.get(id);
-                    // نسخ الجدول التاريخية لا تُحذف عبر فرق مزامنة صادر من جهاز قديم.
-                    if(name==='scheduleLinks' && String(id).startsWith('schedule_history__') && !String(id).startsWith('schedule_history_gap__') && before && !after)return;
-                    if (sameCollectionRecord(name,before, after)) return;
-                    const key = String(id).replace(/[.#$\[\]\/]/g, '_');
-                    updates[`${name}/${key}`] = after ? after : null;
-                });
-            });
-            return updates;
-        }
 
         function buildFirebaseChanges() {
             ensureAllRecordIds();
@@ -2214,13 +2153,6 @@
             return changes;
         }
 
-        function replaceStateFromRemote(data) {
-            if (!data) return;
-            SYNC_COLLECTIONS.forEach(name => {
-                state[name] = normalizeCollection(data[name], name);
-            });
-            lastSyncedCollections = cloneCollections();
-        }
 
         function conflictComparable(value){
             if(Array.isArray(value))return value.map(conflictComparable);
@@ -3262,12 +3194,6 @@
             };
         }
 
-        function hasAnyCollectionData(data, names = SYNC_COLLECTIONS) {
-            return names.some(name => {
-                const value = data?.[name];
-                return Array.isArray(value) ? value.length > 0 : !!(value && typeof value === 'object' && Object.keys(value).length);
-            });
-        }
 
         async function loadFromFirebase(options = {}) {
             if (!database) return false;
@@ -4045,6 +3971,7 @@
             clearInterval(sessionTimer);
             if (state.currentUser?.role === 'admin') scheduleAuditArchive();
             ensureAttendanceScopeLoaded();
+            renderMovedStagesBanner();
             // افتح الرابط مع ‎#diag‎ في آخره لعرض نافذة التشخيص على أي جهاز (أستاذ أو مسؤول).
             if (String(location.hash || '').toLowerCase() === '#diag') setTimeout(() => { try { showUsageDiagnostics(); } catch (e) { console.warn(e); } }, 15000);
             if (!state.currentUser.persistent) {
@@ -4300,8 +4227,6 @@
         }
 
         // توافق مع أي استدعاء قديم داخل نسخة محفوظة من الصفحة.
-        function downloadStudentsTemplate() { downloadUnifiedStudentsExcel(); }
-        function exportToExcel() { downloadUnifiedStudentsExcel(); }
 
         // ==============================================================
         //  RENDER ENGINE (معظمه مختصر للحفاظ على الطول)
@@ -4991,29 +4916,7 @@
             };
         }
 
-        function getSuggestedSessionTime(subject, groupName='') {
-            if(groupName){const context=buildQuickAttendanceContext(subject,groupName,true);return context.ok?context.sessionTime:'';}
-            const professor=state.professors.find(p=>String(p.id)===String(subject?.professorId));
-            if(!professor)return '';
-            const clock=getBaghdadClock();
-            const lectures=getProfessorScheduledLectures(professor,subject?.level).filter(lecture=>
-                normalizeMatchText(lecture.dayName||'')===normalizeMatchText(clock.dayName) &&
-                lectureMatchesSubjectForAttendance(lecture,subject,professor) && Number(lecture.startMinutes)<=clock.minutes
-            );
-            const current=lectures.find(isLectureCurrentNow);
-            lectures.sort((a,b)=>Number(a.startMinutes)-Number(b.startMinutes));
-            const chosen=current||lectures[lectures.length-1];
-            return chosen?formatMinutes24(chosen.startMinutes):'';
-        }
 
-        function getSessionTimeFromInput(inputId, subject, groupName='') {
-            const input=document.getElementById(inputId);
-            const typed=normalizeSessionTime(input?.value);
-            if(typed)return typed;
-            const suggested=getSuggestedSessionTime(subject,groupName);
-            if(input&&suggested)input.value=suggested;
-            return suggested;
-        }
 
         function attendanceRecordRevision(att) {
             return Math.max(Number(att?.updatedAt)||0, Number(att?.createdAt)||0);
@@ -5191,7 +5094,33 @@
             return {ok:true};
         }
 
+        // V45.53.3: مراحل انتقلت إلى برنامج مستقل على Cloudflare. البرنامج الرئيسي لا يسجّل غياباتها
+        // حتى لا تتوزع غيابات المرحلة نفسها على مكانين. (لا يُطبَّق داخل نسخة Cloudflare نفسها.)
+        const STAGES_MOVED_TO_CLOUDFLARE = { 1: 'https://musarayany.github.io/attendance-system2/stage1/' };
+        function movedStageUrlForSubject(subject) {
+            if (window.__CF_BACKEND) return null;
+            const level = Number(subject?.level);
+            return STAGES_MOVED_TO_CLOUDFLARE[level] || null;
+        }
+        function renderMovedStagesBanner() {
+            try {
+                if (window.__CF_BACKEND || !state.currentUser) return;
+                let levels = Object.keys(STAGES_MOVED_TO_CLOUDFLARE).map(Number);
+                if (state.currentUser.role === 'professor') { const mine = new Set(professorScopeLevels()); levels = levels.filter(l => mine.has(l)); }
+                const old = document.getElementById('movedStagesBanner'); if (old) old.remove();
+                if (!levels.length) return;
+                const box = document.createElement('div');
+                box.id = 'movedStagesBanner';
+                box.style.cssText = 'margin:8px auto;max-width:1100px;padding:10px 14px;border:2px solid #2563eb;background:#eff6ff;border-radius:10px;font-weight:700;color:#1e3a8a;text-align:center;direction:rtl';
+                box.innerHTML = levels.map(l => `📢 غيابات ${escapeHtml(getLevelName(l))} انتقلت إلى برنامج جديد. سجّل وتابع غياباتها من هنا: <a href="${STAGES_MOVED_TO_CLOUDFLARE[l]}" style="color:#1d4ed8">${STAGES_MOVED_TO_CLOUDFLARE[l]}</a>`).join('<br>');
+                const container = document.getElementById('appContainer');
+                if (container) container.insertBefore(box, container.firstChild);
+            } catch (e) { console.warn(e); }
+        }
+
         function upsertAttendanceState(studentId, subject, context, hours, excused, source='professor-panel') {
+            const movedUrl = movedStageUrlForSubject(subject);
+            if (movedUrl) throw new Error('غيابات هذه المرحلة انتقلت إلى البرنامج الجديد: ' + movedUrl);
             const integrity=validateAttendanceWriteIntegrity(studentId,subject,context);
             if(!integrity.ok) throw new Error('منع النظام تسجيل حالة غير آمنة: '+integrity.reason);
             const canonicalTarget=attendanceCanonicalId(studentId,subject.id,context.date,context.sessionTime);
@@ -5402,19 +5331,7 @@
             return { added, removed };
         }
 
-        function reconcileStudentSubjectLinks(studentId = null) {
-            return ensureActiveSubjectLinks(studentId);
-        }
 
-        function inferGroupTypeForLevel(level, groupName, excludeStudentId = null) {
-            const types = new Set(
-                state.students
-                    .filter(st => st.id !== excludeStudentId && Number(st.level) === Number(level) && (st.group || st.section) === groupName)
-                    .map(st => st.groupType)
-                    .filter(Boolean)
-            );
-            return types.size === 1 ? [...types][0] : null;
-        }
 
         function countHistoricalAttendanceRecords(studentId) {
             return state.attendances.filter(att => String(att.studentId) === String(studentId) && !isEnrollmentRecord(att)).length;
@@ -5901,10 +5818,6 @@
         }
 
         // توافق مع أي استدعاء قديم: لا نسمح بتعديل الساعات من نافذة عامة.
-        function editSubjectHours(subjectId) {
-            if (state.currentUser?.role !== 'admin') { alert('هذه الصلاحية لرئيس القسم فقط.'); return; }
-            alert('عدّل ساعات المادة من الحقل الموجود أمام المادة ثم اضغط «💾 حفظ الساعات».');
-        }
 
         function normalizeWhatsAppNumber(value) {
             let digits = normalizeDigits(value).replace(/\D/g, '');
@@ -6031,6 +5944,17 @@
             return `https://wa.me/${normalized}?text=${encodeURIComponent(message || '')}`;
         }
 
+        // V45.54: زر "🧪 اختبار واتساب" كان موجوداً في لوحة رئيس القسم دون دالة (لا يعمل منذ النسخ السابقة).
+        function testOfficerWhatsApp() {
+            const input = document.getElementById('officerWhatsAppNumber');
+            const typed = normalizeWhatsAppNumber(sanitizeText(input?.value || '', 40));
+            const number = /^\d{8,15}$/.test(typed) ? typed : getOfficerWhatsAppNumber();
+            if (!number) { alert('❌ أدخل رقم واتساب صالحاً لمسؤول الغيابات أولاً، مثل 07701234567.'); return; }
+            const url = buildWhatsAppUrl(number, '🧪 رسالة اختبار من نظام إدارة الغيابات — قسم الفيزياء. إذا وصلتك فرقم واتساب مسؤول الغيابات صحيح.');
+            const win = window.open(url, '_blank', 'noopener');
+            if (!win) window.location.href = url;
+        }
+
         // V45.18: App-first على الهاتف، مع fallback آمن إلى wa.me.
         function isMobileWhatsAppDevice() {
             const ua = String(navigator.userAgent || navigator.vendor || '');
@@ -6038,10 +5962,6 @@
             return /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || touchMac;
         }
 
-        function buildWhatsAppAppUrl(number, message) {
-            // V45.20: نبقي اسم الدالة للتوافق، لكن نستخدم wa.me Universal Link.
-            return buildWhatsAppUrl(number,message);
-        }
 
         function openWhatsAppReliable(number, message, reservedWindow = null) {
             const url = buildWhatsAppUrl(number,message);
@@ -6067,9 +5987,6 @@
             }
         }
 
-        function closeReservedWhatsAppWindow(popup) {
-            try { if (popup && !popup.closed) popup.close(); } catch (e) {}
-        }
 
         // ==============================================================
         //  التذكيرات التلقائية لمحاضرات الأساتذة
@@ -6586,10 +6503,6 @@
             }
         }
 
-        async function updateProfessorReminderSettings(professorId) {
-            if (!requireAppRole('admin')) return false;
-            return saveProfessorIdentityFromUI(professorId,'','',state.currentLevel||currentManagementLevel||null);
-        }
 
         async function reconcileProfessorIdentityData(showMessage=true) {
             const beforeProfiles=(state.professorProfiles||[]).length;
@@ -10404,14 +10317,6 @@
             alert(`✅ تم ربط بيانات الجدول الأسبوعي بأمان.\nالأساتذة المطابقون: ${analysis.matchedProfessors}/${analysis.teacherTotal}\nالمواد المطابقة: ${analysis.matchedSubjects}/${analysis.subjectTotal}\nبيانات أوقات التذكير: ${snapshot.structuredSchedule ? (reminderPublished?'تمت مزامنتها':'موجودة لكن تعذر رفعها') : 'غير موجودة — أعد إنشاء الجدول بالنسخة الجديدة'}\nلم يتم تغيير سجلات الغياب.`);
         }
 
-        function linkWeeklyScheduleFromBrowser() {
-            if (!requireAppRole('admin')) return false;
-            try {
-                const raw=localStorage.getItem('physics_schedule_builder_persistent');
-                if (!raw) { document.getElementById('weeklyScheduleImportInput')?.click(); alert('لم أجد بيانات الجدول في التخزين المحلي لهذا الموقع. اختر ملف النسخة الاحتياطية JSON الذي يصدره برنامج الجدول الأسبوعي.'); return; }
-                saveWeeklyScheduleLink(JSON.parse(raw),'التخزين المحلي للجدول الأسبوعي');
-            } catch(err) { alert('تعذر الربط التلقائي: '+err.message); }
-        }
 
         function importWeeklyScheduleJSON(event) {
             if (!requireAppRole('admin')) return false;
@@ -11169,7 +11074,6 @@
             return !!getLatestCompletedSubmission(subject.id,state.currentUser.id) && !hasOpenScheduledProfessorLecture(subject);
         }
 
-        function canHeadEditAttendanceAnyTime(){return state.currentUser?.role==='admin';}
 
         function canProfessorEditAttendanceForSubject(subject,showMessage=true) {
             const allowed=subjectBelongsToCurrentProfessor(subject);
@@ -11246,70 +11150,6 @@
         // V45.32: التحقق قبل واتساب لا يستعلم عن attendances حسب subjectId.
         // ذلك الاستعلام كان يقرأ/يفحص مجموعة كبيرة ويؤدي إلى timeout على الهاتف.
         // نتحقق فقط من سجلات المادة الموجودة في النسخة التي تم إرسالها، كل سجل بمساره المباشر.
-        async function getSubmissionCloudIssueDirect(subject,submission) {
-            const quick=getSubmissionCloudIssue(subject,submission);
-            if(!quick)return '';
-            if(!database)return quick;
-            const sid=String(subject?.id||'');
-            if(!sid||!submission)return quick;
-            try{
-                const localRecords=getSubjectOperationalAttendanceRecords(sid,state.attendances||[]);
-                const expectedFingerprint=simpleHash(JSON.stringify(localRecords));
-                if(expectedFingerprint!==submission.fingerprint)
-                    return 'تغيرت سجلات حضور وغياب المادة محلياً بعد إنشاء الإرسال؛ أعد الإرسال بعد تثبيت التعديلات.';
-
-                // اقرأ السجلات المطلوبة فقط بمفاتيحها المباشرة، بدفعات صغيرة.
-                // لا query على /attendances ولا تنزيل للمجموعة كاملة.
-                const confirmedRecords=[];
-                const VERIFY_BATCH=6;
-                for(let i=0;i<localRecords.length;i+=VERIFY_BATCH){
-                    const batch=localRecords.slice(i,i+VERIFY_BATCH);
-                    const results=await Promise.all(batch.map(async rec=>{
-                        const snap=await withTimeout(
-                            database.ref(`/attendances/${firebaseRecordKey(rec.id)}`).once('value'),
-                            CLOUD_OPERATION_TIMEOUT_MS,
-                            `انتهت مهلة التحقق من سجل غياب ${rec.id}`
-                        );
-                        const raw=snap.val();
-                        return raw===null?undefined:sanitizeRecord(raw);
-                    }));
-                    confirmedRecords.push(...results);
-                }
-                if(confirmedRecords.some((r,i)=>!r || !sameRecord(r,localRecords[i])))
-                    return 'بعض سجلات حضور وغياب هذه المادة لم تصل إلى Firebase بنفس النسخة الحالية بعد.';
-                const remoteFingerprint=simpleHash(JSON.stringify(confirmedRecords));
-                if(remoteFingerprint!==submission.fingerprint)
-                    return 'نسخة غيابات المادة المؤكدة في Firebase لا تطابق نسخة الإرسال الحالية.';
-
-                const subSnap=await withTimeout(
-                    database.ref(`/submissions/${firebaseRecordKey(submission.id)}`).once('value'),
-                    CLOUD_OPERATION_TIMEOUT_MS,
-                    'انتهت مهلة التحقق المباشر من تأكيد الإرسال'
-                );
-                const savedRaw=subSnap.val(), saved=savedRaw===null?undefined:sanitizeRecord(savedRaw);
-                if(!saved || saved.fingerprint!==submission.fingerprint || String(saved.subjectId)!==sid ||
-                   String(saved.professorId)!==String(submission.professorId) || saved.declaration!=='completed')
-                    return 'تأكيد إرسال هذه المادة لم يصل إلى Firebase بنفس النسخة الحالية بعد.';
-
-                const workflow=getAttendanceWorkflowState(subject.id,submission.professorId,false);
-                const wfSnap=await withTimeout(
-                    database.ref(`/appSettings/${firebaseRecordKey(workflow.id)}`).once('value'),
-                    CLOUD_OPERATION_TIMEOUT_MS,
-                    'انتهت مهلة التحقق المباشر من حالة الإرسال'
-                );
-                const wfRaw=wfSnap.val(), savedWorkflow=wfRaw===null?undefined:sanitizeRecord(wfRaw);
-                if(!savedWorkflow || !savedWorkflow.locked || String(savedWorkflow.lastSubmissionId)!==String(submission.id))
-                    return 'حالة تأكيد الإرسال لم تصل إلى Firebase بعد.';
-
-                // حدّث baseline للسجلات التي أكدها Firebase فقط.
-                confirmedRecords.forEach(r=>updateSyncBaseRecord('attendances',r.id,r));
-                updateSyncBaseRecord('submissions',saved.id,saved);
-                updateSyncBaseRecord('appSettings',savedWorkflow.id,savedWorkflow);
-                return '';
-            }catch(err){
-                return `تعذر التحقق المباشر من Firebase: ${String(err?.message||err||'خطأ غير معروف')}`;
-            }
-        }
 
         function getSubmissionState(subject) {
             if(!subject)return {code:'pending',label:'لم يؤكد الإكمال',cls:'submission-pending'};
@@ -11802,9 +11642,6 @@
             return {ok:true,code:'recorded',date:latest.date,sessionTime:latest.sessionTime,sessionKey:attendanceSessionKey(latest.sessionTime),groupName:groupName||'',subjectId:String(subject.id),professorId:String(subject.professorId||''),lectureId:String(latest.records[0]?.lectureId||''),schedulePublishedAt:Number(latest.records[0]?.schedulePublishedAt)||null,displayTime:`${latest.date} · ${latest.sessionTime}`,fromRecordedAttendance:true,absentCount:latest.records.length};
         }
 
-        function getLatestAbsentSessionContextForGroup(subject, groupName, students=null) {
-            return latestAbsentSessionContext(subject,groupName);
-        }
 
         function getLatestAbsentSessionContextForSubject(subject) {
             return latestAbsentSessionContext(subject,null);
@@ -11828,76 +11665,7 @@
 
         // V33: سياق موحد وموثوق للأوامر الجماعية.
         // يفضل محاضرة اليوم المنشورة، وإن تعذر ذلك يستخدم آخر محاضرة مسجلة فعلياً لهذه المجموعة.
-        function latestRecordedSessionContext(subject, groupName=null) {
-            if(!subject)return null;
-            const candidates=getLogicalAttendanceRecords(state.attendances).filter(att=>
-                String(att.subjectId)===String(subject.id) && attendanceRecordSessionKey(att)!=='legacy' &&
-                attendanceRecordMatchesGroup(att,subject,groupName)
-            );
-            if(!candidates.length)return null;
-            const sessions=new Map();
-            candidates.forEach(att=>{
-                const key=`${String(att.date||'')}|${attendanceRecordSessionKey(att)}`;
-                const current=sessions.get(key)||{date:String(att.date||''),sessionTime:normalizeSessionTime(att.sessionTime),records:[],revision:0};
-                current.records.push(att);
-                current.revision=Math.max(current.revision,attendanceRecordRevision(att));
-                sessions.set(key,current);
-            });
-            const latest=[...sessions.values()].sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(b.sessionTime).localeCompare(String(a.sessionTime)) || b.revision-a.revision)[0];
-            if(!latest)return null;
-            return {
-                ok:true,code:'recorded',date:latest.date,sessionTime:latest.sessionTime,
-                sessionKey:attendanceSessionKey(latest.sessionTime),groupName:groupName||'',
-                subjectId:String(subject.id),professorId:String(subject.professorId||''),
-                lectureId:String(latest.records[0]?.lectureId||''),
-                schedulePublishedAt:Number(latest.records[0]?.schedulePublishedAt)||null,
-                displayTime:`${latest.date} · ${latest.sessionTime}`,fromRecordedAttendance:true,
-                recordedCount:latest.records.length
-            };
-        }
 
-        function buildPanelManualAttendanceContext(subject, groupName, interactive=false) {
-            if(!subject)return null;
-            const dateInput=document.getElementById('profAbsentDate');
-            const timeInput=document.getElementById('profSessionTime');
-            const today=getLocalDateISO();
-            let date=String(dateInput?.value||today).trim()||today;
-            if(!isValidAttendanceDate(date))return {ok:false,code:'invalid-date',reason:'تاريخ المحاضرة غير صالح.'};
-            if(date>today)return {ok:false,code:'future-date',reason:'لا يمكن تسجيل حضور أو غياب بتاريخ مستقبلي.'};
-
-            let sessionTime=normalizeSessionTime(timeInput?.value||'');
-            if(!sessionTime && interactive){
-                if(date===today){
-                    sessionTime=formatMinutes24(getBaghdadClock().minutes);
-                }else{
-                    const entered=prompt(`المحاضرة غير مجدولة في الجدول. أدخل وقت المحاضرة الاستثنائية بتاريخ ${date} بصيغة HH:MM:`, '08:00');
-                    if(entered===null)return {ok:false,code:'cancelled',reason:'تم إلغاء تحديد وقت المحاضرة الاستثنائية.'};
-                    sessionTime=normalizeSessionTime(entered);
-                    if(!sessionTime)return {ok:false,code:'invalid-time',reason:'وقت المحاضرة غير صالح. استخدم الصيغة HH:MM.'};
-                }
-                if(dateInput)dateInput.value=date;
-                if(timeInput)timeInput.value=sessionTime;
-            }
-            if(!sessionTime)return null;
-
-            if(date===today){
-                const mins=Number(sessionTime.slice(0,2))*60+Number(sessionTime.slice(3,5));
-                if(mins>getBaghdadClock().minutes)return {ok:false,code:'future-time',reason:'لا يمكن تسجيل محاضرة لم يبدأ وقتها بعد.'};
-            }
-            const lectures=getScheduledAttendanceLectures(subject,groupName,date);
-            const mins=Number(sessionTime.slice(0,2))*60+Number(sessionTime.slice(3,5));
-            const matched=lectures.find(l=>Number(l.startMinutes)===mins)||null;
-            return {
-                ok:true,code:matched?'scheduled-manual':'manual-override',date,sessionTime,
-                sessionKey:attendanceSessionKey(sessionTime),groupName:groupName||'',
-                subjectId:String(subject.id),professorId:String(subject.professorId||''),
-                lectureId:String(matched?.id||''),lecture:matched,
-                scheduleVersionId:String(matched?._scheduleVersionId||''),schedulePublishedAt:matched?(Number(matched?._schedulePublishedAt)||null):null,
-                displayTime:`${date} · ${sessionTime}${matched?'':' · استثنائية'}`,
-                contextSource:matched?'schedule':'manual',manualOverride:!matched,scheduleVerified:!!matched,
-                requiresConfirmation:!matched
-            };
-        }
 
         // V41: بطاقات المجاميع تستخدم نسخة الجدول التي كانت نافذة في التاريخ المختار.
         // إذا كان التاريخ أقدم من بداية الأرشيف، لا نفترض أن جدول اليوم كان نافذاً آنذاك:
@@ -12563,78 +12331,7 @@
             localPromise.catch(err=>{console.error(err);showAttendanceToast('⚠️ تعذر تحديث التخزين المحلي.','error');});
         }
 
-        async function deleteAttendance(attendanceId) {
-            const sub=getProfessorSubject();
-            if(!canProfessorEditAttendanceForSubject(sub))return;
-            if (!confirm('⚠️ هل أنت متأكد من إلغاء غياب هذه المحاضرة؟')) return;
-            const removed = state.attendances.find(a => String(a.id) === String(attendanceId));
-            if(!removed||!sub||String(removed.subjectId)!==String(sub.id)||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح بإلغاء سجل لا يخص المادة الحالية.');return;}
-            if(isProfessorLectureEffectivelyLocked(sub,{...removed,groupName:removed.lectureGroup||professorGroupNameForStudent(state.students.find(st=>String(st.id)===String(removed.studentId))||{},sub)})){alert('هذه المحاضرة مرسلة؛ اطلب إعادة فتحها من رئيس القسم.');return;}
-            const savedView=captureProfessorViewState(removed.studentId);
-            const normalized=normalizeSessionTime(removed.sessionTime);
-            if(normalized){
-                const student=state.students.find(st=>String(st.id)===String(removed.studentId));
-                const context={date:String(removed.date),sessionTime:normalized,groupName:student?professorGroupNameForStudent(student,sub):String(removed.lectureGroup||''),lectureId:String(removed.lectureId||''),schedulePublishedAt:removed.schedulePublishedAt||null,manualOverride:removed.manualOverride===true};
-                const result=upsertAttendanceState(removed.studentId,sub,context,0,0,'cancel-attendance-explicit-present');
-                const verified=findAttendanceForSession(removed.studentId,removed.subjectId,removed.date,normalized);
-                if(!verified || Number(verified.hours)!==0){showAttendanceToast('⚠️ لم يثبت إلغاء السجل.','error');return;}
-                recordAudit('إلغاء سجل غياب',{attendanceId:verified.id,previousAttendanceId:attendanceId,duplicatesRemoved:result.duplicateCount,studentId:removed.studentId,subjectId:removed.subjectId,date:removed.date,sessionTime:removed.sessionTime,hoursRemoved:getAttendanceEffectiveHours(removed,sub),newState:'present'});
-            } else {
-                // السجلات القديمة بلا وقت لا يمكن ربطها بمحاضرة محددة؛ نجعلها ملغاة صراحة بدلاً من حذفها.
-                removed.hours=0;removed.excused=0;removed.cancelled=true;removed.cancelledAt=Date.now();removed.updatedAt=Date.now();removed.source='cancel-legacy-attendance';
-                recordAudit('إلغاء سجل غياب قديم',{attendanceId:removed.id,studentId:removed.studentId,subjectId:removed.subjectId,date:removed.date});
-            }
-            const localPromise=persistAttendanceMutation('delete-attendance');
-            updateProfessorStudentAttendanceRow(removed.studentId);
-            const removedStudent=state.students.find(st=>String(st.id)===String(removed.studentId));
-            if(removedStudent)updateProfessorGroupCancelAllButton(professorGroupNameForStudent(removedStudent,sub));
-            renderProfessorAttendance(sub.id);
-            renderProfessorSubmissionStatus(sub);
-            showAttendanceToast('✅ تم إلغاء الغياب وتثبيت الحالة الجديدة');
-            localPromise.catch(err=>console.error(err));
-        }
 
-        async function editAttendance(attendanceId) {
-            const attendance = state.attendances.find(a => String(a.id) === String(attendanceId));
-            if (!attendance) { alert('غير موجود'); return; }
-            const sub=getProfessorSubject();
-            if(!canProfessorEditAttendanceForSubject(sub))return;
-            if(!sub||String(attendance.subjectId)!==String(sub.id)||!subjectBelongsToCurrentProfessor(sub)){alert('غير مسموح بتعديل سجل لا يخص المادة الحالية.');return;}
-            const student=state.students.find(s=>String(s.id)===String(attendance.studentId));
-            if(!student){alert('الطالب المرتبط بالسجل غير موجود.');return;}
-            if(isProfessorLectureEffectivelyLocked(sub,{...attendance,groupName:attendance.lectureGroup||professorGroupNameForStudent(student,sub)})){alert('هذه المحاضرة مرسلة؛ اطلب إعادة فتحها من رئيس القسم.');return;}
-            const effectiveHours=getSubjectWeeklyHours(sub);
-            const newSessionTime = prompt(`وقت المحاضرة (HH:MM):\nساعات الغياب مقفلة على ${effectiveHours} ساعة حسب إعداد المادة.`, normalizeSessionTime(attendance.sessionTime) || '');
-            if (newSessionTime === null) return;
-            const normalizedSessionTime = normalizeSessionTime(newSessionTime);
-            if (newSessionTime.trim() && !normalizedSessionTime) { alert('وقت المحاضرة غير صالح. استخدم الصيغة HH:MM.'); return; }
-            const context=validateManualAttendanceContext(sub,student,attendance.date,normalizedSessionTime);
-            if(!context.ok){alert(context.reason);return;}
-            if(context.requiresConfirmation&&!confirm('الوقت الجديد لا يطابق محاضرة منشورة لهذه الشعبة في ذلك اليوم. هل تريد اعتماده كاستثناء يدوي؟'))return;
-            const duplicate = state.attendances.some(a => a.id !== attendance.id && !isEnrollmentRecord(a) && a?.superseded!==true && String(a.studentId) === String(attendance.studentId) && String(a.subjectId) === String(attendance.subjectId) && String(a.date) === String(attendance.date) && attendanceRecordSessionKey(a) === attendanceSessionKey(normalizedSessionTime));
-            if (duplicate) { alert('يوجد سجل آخر للطالب في المادة والتاريخ ووقت المحاضرة نفسه.'); return; }
-            const cross=findCrossSubjectAttendanceConflicts(attendance.studentId,attendance.subjectId,attendance.date,normalizedSessionTime);
-            if(cross.length){alert('يوجد للطالب تسجيل في مادة أخرى في الوقت الجديد نفسه.');return;}
-            const newExcused = confirm('هل الغياب بعذر مشروع؟\nموافق = بعذر، إلغاء = بدون عذر');
-            const before = { hours: attendance.hours, excused: attendance.excused, sessionTime: attendance.sessionTime || '' };
-            const original=JSON.parse(JSON.stringify(attendance));
-            const moved=attendanceRecordSessionKey(original)!==attendanceSessionKey(normalizedSessionTime);
-            if (moved) {
-                attendance.hours=0; attendance.excused=0; attendance.cancelled=true;
-                attendance.explicitState='present'; attendance.updatedAt=Math.max(Date.now(),attendanceRecordRevision(original)+1);
-                attendance.movedToAttendanceId=attendanceCanonicalId(original.studentId,sub.id,original.date,normalizedSessionTime);
-            }
-            const updated=upsertAttendanceState(original.studentId,sub,context,Number(original.hours)>0?effectiveHours:0,newExcused?1:0,'edit-attendance').record;
-            if (moved) updated.movedFromAttendanceId=original.id;
-            recordAudit('تعديل سجل غياب', { attendanceId, before, after: { id:updated.id,hours:updated.hours,excused:updated.excused,sessionTime:updated.sessionTime } });
-            const savedView=captureProfessorViewState(attendance.studentId);
-            const localPromise=persistAttendanceMutation('edit-attendance');
-            updateProfessorStudentAttendanceRow(attendance.studentId);
-            renderProfessorAttendance(sub.id);
-            renderProfessorSubmissionStatus(sub);
-            showAttendanceToast('✅ تم تعديل السجل');
-            await localPromise;
-        }
 
         async function sendToOfficer() {
             if (!requireAppRole('professor') || submissionMutationBusy) return false;
@@ -13014,13 +12711,17 @@
 
         function setAutoDateRange() {
             const level=state.currentLevel;
+            if(!level||!document.getElementById('reportDateFrom'))return;
             const subjects=new Set(getReportSubjects(level).map(s=>String(s.id)));
             const students=new Set(getActiveStudents().filter(st=>Number(st.level)===Number(level)).map(st=>String(st.id)));
             const dates=getLogicalAttendanceRecords(state.attendances)
                 .filter(a=>Number(a.hours)>0&&subjects.has(String(a.subjectId))&&students.has(String(a.studentId))&&/^\d{4}-\d{2}-\d{2}$/.test(String(a.date||'')))
                 .map(a=>String(a.date)).sort();
-            document.getElementById('reportDateFrom').value=dates[0]||'';
-            document.getElementById('reportDateTo').value=dates[dates.length-1]||'';
+            // V45.54: حقول التاريخ موجودة فقط داخل تقرير مرحلة مفتوح؛ عند الدخول لا توجد فلا نفعل شيئاً.
+            const fromEl=document.getElementById('reportDateFrom'),toEl=document.getElementById('reportDateTo');
+            if(!fromEl||!toEl)return;
+            fromEl.value=dates[0]||'';
+            toEl.value=dates[dates.length-1]||'';
             applyDateFilter();
         }
 
@@ -13771,159 +13472,6 @@
         let weeklyFullBackupPending=null;
         let weeklyVerifiedBackupProof=null;
         let weeklyMigrationBusy=false;
-        function weeklyStableData(value){
-            if(Array.isArray(value))return value.map(weeklyStableData);
-            if(value&&typeof value==='object'){
-                const out={};
-                for(const key of Object.keys(value).sort()){
-                    if(value[key]!==undefined)out[key]=weeklyStableData(value[key]);
-                }
-                return out;
-            }
-            return value;
-        }
-        async function weeklyRequiredHash(value){
-            const result=await weeklyArchiveDigest(JSON.stringify(weeklyStableData(value)));
-            if(!result||!/^[0-9a-f]{64}$/.test(result))throw new Error('لا تتوفر SHA-256: يلزم HTTPS ومتصفح يدعم WebCrypto.');
-            return result;
-        }
-        function weeklyShadowValidateSource(raw,bounds){
-            if(raw!==null && raw!==undefined && (typeof raw!=='object'||Array.isArray(raw)))throw new Error('بنية الأسبوع السحابي ليست خريطة سجلات؛ أوقف النسخ.');
-            const records={}; const ids=new Set();
-            for(const [key,rec] of Object.entries(raw||{})){
-                if(!key || /[.#$\[\]\/]/.test(key))throw new Error('مفتاح Firebase غير صالح.');
-                if(!rec||typeof rec!=='object'||Array.isArray(rec)||!isValidAttendanceDate(rec.date) || rec.date<bounds.start || rec.date>bounds.end)
-                    throw new Error('سجل غير صالح أو خارج نطاق الأسبوع: '+key);
-                const id=String(rec.id||key);
-                if(ids.has(id))throw new Error('معرّف سجل مكرر في المصدر: '+id);
-                ids.add(id);
-                records[key]=rec;
-            }
-            return records;
-        }
-        async function weeklyShadowReadSource(db,bounds){
-            const ref=db.ref('/attendances').orderByChild('date').startAt(bounds.start).endAt(bounds.end);
-            const snapshot=await withTimeout(ref.once('value'),Math.max(30000,CLOUD_OPERATION_TIMEOUT_MS),'انتهت مهلة استدعاء الأسبوع');
-            return weeklyShadowValidateSource(snapshot.val(),bounds);
-        }
-        async function weeklyShadowCheckStableSource(db,bounds,expectedHash){
-            const live=await weeklyShadowReadSource(db,bounds);
-            if(await weeklyRequiredHash(live)!==expectedHash)throw new Error('تغيرت بيانات الأسبوع على جهاز آخر أثناء النسخ؛ تم الاحتفاظ بالأصل دون حذفه. أعد الفحص.');
-            return live;
-        }
-        function weeklyFullBackupSetStatus(text,severity='info'){
-            const node=document.getElementById('weeklyArchiveBackupStatus');
-            if(!node)return;
-            node.textContent=text;node.style.color=severity==='error'?'#991b1b':severity==='success'?'#166534':'#334155';
-        }
-        function weeklyShadowSetStatus(text,severity='info'){
-            const node=document.getElementById('weeklyArchiveMigrationStatus');
-            if(!node)return;
-            node.textContent=text;node.style.color=severity==='error'?'#991b1b':severity==='success'?'#166534':'#334155';
-        }
-        function weeklyDownloadJSON(payload,filename){
-            const blob=new Blob([JSON.stringify(payload)],{type:'application/json;charset=utf-8'});
-            const url=URL.createObjectURL(blob),link=document.createElement('a');
-            link.href=url;link.download=filename;document.body.appendChild(link);link.click();link.remove();
-            setTimeout(()=>URL.revokeObjectURL(url),15000);
-            return blob.size;
-        }
-        async function weeklyArchiveDownloadFullBackup(){
-            if(!requireAppRole('admin'))return;
-            if(weeklyMigrationBusy)return;
-            weeklyVerifiedBackupProof=null;weeklyFullBackupPending=null;
-            if(!database||!firebaseTransportConnected){weeklyFullBackupSetStatus('Firebase غير متصل.','error');return;}
-            if(!confirm('سيُنزَّل ملف يحتوي كل البيانات السحابية التي يتيح Firebase لهذا الحساب قراءتها، وقد يحتوي بيانات شخصية. احتفظ به بأمان ولا تشاركه. الاستمرار؟'))return;
-            weeklyMigrationBusy=true;
-            try{
-                weeklyFullBackupSetStatus('جارٍ أخذ قراءة واحدة من جذر Firebase؛ لا كتابة أو حذف...');
-                const snap=await withTimeout(database.ref('/').once('value'),120000,'انتهت مهلة قراءة النسخة الاحتياطية الكاملة');
-                const full=snap.val();
-                if(!full||typeof full!=='object'||Array.isArray(full)||!('attendances' in full)||!('students' in full)||!('subjects' in full))
-                    throw new Error('لم تكتمل المجموعات الرئيسية في النسخة؛ أوقف الترحيل. راجع قواعد القراءة.');
-                const sha256=await weeklyRequiredHash(full);
-                const payload={format:WEEKLY_FULL_BACKUP_FORMAT,version:1,projectId:firebaseConfig.projectId,
-                    capturedAt:new Date().toISOString(),hashAlgorithm:'SHA-256',rootSha256:sha256,
-                    warning:'SENSITIVE STUDENT DATA. FULL READABLE SNAPSHOT, RESTORE NOT YET TESTED.',data:full};
-                const bytes=weeklyDownloadJSON(payload,'MUS_FIREBASE_FULL_BACKUP_'+new Date().toISOString().slice(0,10)+'.json');
-                weeklyFullBackupPending={sha256,projectId:firebaseConfig.projectId};
-                weeklyFullBackupSetStatus('تم إنشاء ملف النسخة الاحتياطية وحجمها '+(bytes/1048576).toFixed(2)+' MB. أعد فتح الملف نفسه من زر التحقق. لا يمكن نسخ أسبوع قبل التحقق.');
-            }catch(e){weeklyFullBackupPending=null;weeklyFullBackupSetStatus('فشل إنشاء النسخة الاحتياطية: '+String(e.message||e),'error');}
-            finally{weeklyMigrationBusy=false;}
-        }
-        async function weeklyArchiveVerifyFullBackupFile(event){
-            if(!requireAppRole('admin'))return;
-            weeklyVerifiedBackupProof=null;
-            const file=event?.target?.files?.[0];if(!file)return;
-            try{
-                if(!weeklyFullBackupPending)throw new Error('يجب تنزيل نسخة كاملة جديدة أولاً من الجلسة الحالية.');
-                if(file.size>150*1024*1024)throw new Error('حجم الملف كبير جدًا للتحقق داخل المتصفح. استخدم أدوات Firebase الإدارية للنسخ والاستعادة.');
-                const parsed=JSON.parse(await file.text());
-                if(parsed.format!==WEEKLY_FULL_BACKUP_FORMAT||parsed.version!==1 || parsed.projectId!==firebaseConfig.projectId ||
-                   !parsed.data||typeof parsed.data!=='object'||Array.isArray(parsed.data))throw new Error('صيغة النسخة الاحتياطية أو مشروعها غير متطابق.');
-                const digest=await weeklyRequiredHash(parsed.data);
-                if(digest!==parsed.rootSha256||digest!==weeklyFullBackupPending.sha256)throw new Error('بصمة النسخة لا تطابق ملف Firebase المُصدّر في هذه الجلسة.');
-                weeklyVerifiedBackupProof={sha256:digest,checkedAt:Date.now(),projectId:firebaseConfig.projectId};
-                weeklyFullBackupSetStatus('تم التحقق من تطابق SHA-256 لملف النسخة الكاملة المتاح قراءتها. هذه الخطوة ليست اختبار استعادة ولا تضمن أن قواعد Firebase تسمح بتصدير جميع المسارات.','success');
-            }catch(e){weeklyFullBackupSetStatus('فشل التحقق؛ تم تعطيل النسخ الظلي: '+String(e.message||e),'error');}
-            finally{if(event?.target)event.target.value='';}
-        }
-        async function weeklyShadowVerifiedCopy(db,bounds,backupProof){
-            if(!db)throw new Error('Firebase غير متاح');
-            if(!backupProof?.sha256 || backupProof.projectId!==firebaseConfig.projectId ||
-               Date.now()-backupProof.checkedAt>60*60*1000)throw new Error('النسخة الاحتياطية الكاملة غير مثبتة أو منتهية الصلاحية (ساعة واحدة).');
-            const nowBounds=weeklyArchiveWeekBounds(getLocalDateISO());
-            const warm=new Date(nowBounds.start+'T12:00:00Z');warm.setUTCDate(warm.getUTCDate()-7);
-            if(bounds.start>=warm.toISOString().slice(0,10))throw new Error('لا يُسمح بأرشفة الأسبوع الحالي أو السابق؛ ما زال قابلاً للتعديل.');
-            const source=await weeklyShadowReadSource(db,bounds);
-            if(!Object.keys(source).length)throw new Error('لم يجد Firebase سجلات صالحة لهذا الأسبوع. لا تُنشأ نسخة فارغة.');
-            const sourceHash=await weeklyRequiredHash(source);
-            await weeklyShadowCheckStableSource(db,bounds,sourceHash);
-            const destPath='/weeklyArchiveV1/weeks/'+bounds.start+'/snapshots/'+sourceHash;
-            const metadata={format:WEEKLY_SHADOW_FORMAT,version:1,weekStart:bounds.start,weekEnd:bounds.end,
-                projectId:firebaseConfig.projectId,sourcePath:'/attendances',sourceSha256:sourceHash,
-                fullBackupSha256:backupProof.sha256,recordsCount:Object.keys(source).length,
-                status:'VERIFIED_SHADOW_COPY_NOT_CUTOVER',createdAt:Date.now()};
-            const payload={metadata,records:source};
-            // One conditional Firebase transaction: never overwrite any different existing snapshot.
-            // A timeout may mean an uncertain commit: on failure, only read/verify; never delete the source.
-            const target=db.ref(destPath);
-            const result=await withTimeout(target.transaction(old=>{
-                if(old!==null && old!==undefined)return; // never overwrite
-                return payload;
-            },undefined,false),120000,'انتهت مهلة نسخ الأسبوع؛ نتيجة الكتابة تحتاج تحققًا يدويًا');
-            if(!result.committed){
-                const existing=(await withTimeout(target.once('value'),30000,'انتهت مهلة التحقق من نسخة موجودة')).val();
-                if(!existing||await weeklyRequiredHash(existing.records)!==sourceHash ||
-                    existing.metadata?.sourceSha256!==sourceHash)throw new Error('تعارض في مسار الأرشيف؛ لم تُستبدل النسخة الموجودة.');
-            }
-            const archived=(await withTimeout(target.once('value'),30000,'انتهت مهلة إعادة قراءة النسخة المؤرشفة')).val();
-            if(!archived || !archived.records || archived.metadata?.sourceSha256!==sourceHash ||
-               archived.metadata?.recordsCount!==Object.keys(source).length ||
-               await weeklyRequiredHash(archived.records)!==sourceHash)
-                throw new Error('فشل تطابق النسخة الظلية بعد كتابتها؛ الأصل بقي دون تغيير.');
-            await weeklyShadowCheckStableSource(db,bounds,sourceHash);
-            return {status:'VERIFIED_SHADOW_COPY_NOT_CUTOVER',weekStart:bounds.start,
-                originalPath:'/attendances',archivePath:destPath,recordsCount:Object.keys(source).length,sha256:sourceHash,
-                backupSha256:backupProof.sha256,sourcePreserved:true};
-        }
-        async function weeklyArchiveStageVerifiedCopy(){
-            if(!requireAppRole('admin'))return;
-            if(weeklyMigrationBusy)return;
-            const bounds=weeklyArchiveSelection();
-            const button=document.getElementById('weeklyArchiveCopyButton');
-            if(!bounds){weeklyShadowSetStatus('تاريخ الأسبوع غير صالح.','error');return;}
-            if(!database||!firebaseTransportConnected){weeklyShadowSetStatus('Firebase غير متصل.','error');return;}
-            if(!weeklyVerifiedBackupProof){weeklyShadowSetStatus('يجب تنزيل نسخة احتياطية كاملة وإعادة فتح ملفها للتحقق أولًا.','error');return;}
-            if(!confirm('سيُنشأ أرشيف أسبوعي جديد في Firebase دون حذف أو تعديل /attendances. لا يفعّل هذا ترحيل البيانات النشطة أو يغيّر التقارير. المتابعة؟'))return;
-            weeklyMigrationBusy=true;if(button)button.disabled=true;
-            try{
-                weeklyShadowSetStatus('جارٍ Copy → Verify: قراءة المصدر، بصمة SHA-256، النسخ المشروط، إعادة قراءة المصدر والأرشيف...');
-                const result=await weeklyShadowVerifiedCopy(database,bounds,weeklyVerifiedBackupProof);
-                weeklyShadowSetStatus('تم نسخ الأسبوع والتحقق منه: '+result.recordsCount+' سجل. بصمة '+result.sha256+'\nالمسار: '+result.archivePath+'\nالأصل /attendances ما زال محفوظًا. Cutover مؤجل إلى حين اختبارات جميع الأجهزة والتقارير وقواعد Firebase.','success');
-            }catch(e){weeklyShadowSetStatus('تعذر إكمال النسخ والتحقق: '+String(e.message||e)+'\nالأصل لم يُحذف. قد توجد نسخة ظل غير معتمدة تحتاج مراجعة، ولا يجوز استنتاج نجاح النسخ من انتهاء المهلة.','error');}
-            finally{weeklyMigrationBusy=false;if(button)button.disabled=false;}
-        }
         // =======================================================================
 
         // ======================================================================
