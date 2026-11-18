@@ -509,7 +509,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.58.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.59.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1223,7 +1223,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.58.0-total-15';
+        const APP_VERSION = '45.59.0-light-check';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -1686,7 +1686,9 @@
                 syncBase,
                 syncConflicts: JSON.parse(JSON.stringify(syncConflicts)),
                 syncConflictHistory:JSON.parse(JSON.stringify(syncConflictHistory)),
-                deltaSync: { ...deltaSyncMeta }
+                deltaSync: { ...deltaSyncMeta },
+                // V45.59: آخر نسخة من كتالوج الجدول طُبّقت على هذه البيانات؛ لا يُعاد تطبيقها عند كل دخول.
+                academicCatalogSignature: lastAcademicCatalogSignature
             };
         }
 
@@ -1792,6 +1794,7 @@
                 ? { cursor:Number(savedDelta.cursor)||0, fullAt:Number(savedDelta.fullAt)||0, db:String(savedDelta.db||''), attendanceScope:Array.isArray(savedDelta.attendanceScope)?savedDelta.attendanceScope.map(Number):'all' }
                 : { cursor:0, fullAt:0, db:'' };
             lastLocalSnapshotSignature = localSnapshotSignature(payload);
+            lastAcademicCatalogSignature = typeof payload.academicCatalogSignature === 'string' ? payload.academicCatalogSignature : '';
             return true;
         }
 
@@ -2060,10 +2063,32 @@
             return copy;
         }
 
-        function normalizeCollection(value, collectionName) {
+        // V45.59: فحص "هل يوجد ما يُرفع؟" كان يعيد تنظيف كل السجلات (عشرات الآلاف) في كل مرة، فيتجمد المتصفح.
+        // السجل الذي نظّفه البرنامج ولم يتغير بعدها (نصه مطابق حرفياً) تُؤخذ نسخة من نتيجته بدل تنظيفه ثانية؛
+        // التنظيف لا يغيّر سجلاً نظيفاً، فالنتيجة مطابقة تماماً. أي تغيير في السجل يعيده للتنظيف الكامل.
+        const normalizedRecordMemo = new WeakMap();
+        function normalizeCollection(value, collectionName, reuseUnchanged = false) {
             const entries = Array.isArray(value) ? value.map((record,index)=>[null,record,index]) :
                 value && typeof value === 'object' ? Object.entries(value).map(([key,record],index)=>[key,record,index]) : [];
             return entries.filter(([,record])=>record && typeof record==='object' && !Array.isArray(record)).map(([key,record,index])=>{
+                const memo=normalizedRecordMemo.get(record);
+                if(memo&&memo.collection===collectionName){
+                    let json=null;try{json=JSON.stringify(record);}catch(e){}
+                    if(json===memo.json&&Object.keys(record).length===memo.keys){
+                        // داخل ensureAllRecordIds فقط: السجل النظيف غير المتغير يبقى كما هو بلا نسخ.
+                        if(reuseUnchanged)return record;
+                        const same=JSON.parse(json);
+                        normalizedRecordMemo.set(same,memo);
+                        return same;
+                    }
+                }
+                const out=normalizeCollectionRecord(record,key,index,collectionName);
+                try{const json=JSON.stringify(out);normalizedRecordMemo.set(out,{json,keys:Object.keys(out).length,collection:collectionName});}catch(e){}
+                return out;
+            });
+        }
+        function normalizeCollectionRecord(record,key,index,collectionName) {
+            {
                 const out=sanitizeRecord(record);
                 out.id=String(out.id ?? key ?? `legacy_${collectionName}_${index}`);
                 if (out.level !== undefined && Number.isFinite(Number(out.level))) out.level=Number(out.level);
@@ -2072,7 +2097,7 @@
                     if (out.hours !== undefined) out.hours=Math.max(0,Number(out.hours)||0);
                 }
                 return out;
-            });
+            }
         }
         function collectionToMap(arr, collectionName) {
             const out = Object.create(null);
@@ -2198,13 +2223,29 @@
         function ensureAllRecordIds() {
             ensureStudentGroupingModel();
             SYNC_COLLECTIONS.forEach(name => {
-                state[name] = normalizeCollection(state[name], name);
+                state[name] = normalizeCollection(state[name], name, true);
             });
             // V36: ترحيل علامات الحذف القديمة إلى سجل مستقل ثم تطبيقها قبل أي مزامنة أو تقرير.
             migrateLegacyDeletedStudentTombstones();
             purgeOfficiallyDeletedStudentsFromState();
         }
 
+
+        // V45.59: Firebase لا يخزن الحقول الفارغة ({} أو [] أو null). سجل محلي فيه حقل فارغ كان يبدو
+        // "غير مرفوع" إلى الأبد، فيُعاد رفعه مع كل حفظ. المقارنة الآن بالشكل الذي يخزنه Firebase فعلاً.
+        function firebaseStoredForm(value) {
+            if (value === null || value === undefined) return undefined;
+            if (Array.isArray(value)) {
+                const items = value.map(firebaseStoredForm);
+                return items.some(x => x !== undefined) ? items.map(x => x === undefined ? null : x) : undefined;
+            }
+            if (typeof value === 'object') {
+                const out = {}; let any = false;
+                Object.keys(value).forEach(k => { const v = firebaseStoredForm(value[k]); if (v !== undefined) { out[k] = v; any = true; } });
+                return any ? out : undefined;
+            }
+            return value;
+        }
 
         function buildFirebaseChanges() {
             ensureAllRecordIds();
@@ -2219,7 +2260,7 @@
                     const after = current.get(id);
                     // append-only: لا نولّد عملية حذف لنسخة جدول تاريخية موجودة في خط الأساس.
                     if(name==='scheduleLinks' && String(id).startsWith('schedule_history__') && !String(id).startsWith('schedule_history_gap__') && before && !after)return;
-                    if (!sameCollectionRecord(name,before, after) && !syncConflicts[syncConflictKey(name,id)]) changes.push({
+                    if (!sameCollectionRecord(name,before, after) && !sameCollectionRecord(name,firebaseStoredForm(before),firebaseStoredForm(after)) && !syncConflicts[syncConflictKey(name,id)]) changes.push({
                         name, id, before: before === undefined ? undefined : JSON.parse(JSON.stringify(before)),
                         after: after === undefined ? undefined : JSON.parse(JSON.stringify(after))
                     });
@@ -3439,7 +3480,9 @@
                     cloudConnected = true;
                     lastCloudSyncAt = Date.now();
                     const localCopySaved=await persistLocalState('cloud-save', true);
-                    const pendingCount=buildFirebaseChanges().length,conflictCount=Object.keys(syncConflicts).length;
+                    // V45.59: بدل إعادة فحص كل السجلات بعد الرفع، يُفحص ما رُفع للتو فقط (التعديلات الجديدة أثناء الرفع لها حفظها الخاص).
+                    const stillDiffers=c=>{const b=recordById(lastSyncedCollections[c.name]||[],c.id),a=recordById(state[c.name]||[],c.id);return !syncConflicts[syncConflictKey(c.name,c.id)]&&!sameCollectionRecord(c.name,b,a)&&!sameCollectionRecord(c.name,firebaseStoredForm(b),firebaseStoredForm(a));};
+                    const pendingCount=changes.filter(stillDiffers).length,conflictCount=Object.keys(syncConflicts).length;
                     const allConfirmed=pendingCount===0&&conflictCount===0;
                     setSyncStatus(!allConfirmed?`🟠 تبقى ${pendingCount} تغييرات معلقة و${conflictCount} تعارضات للمراجعة`:localCopySaved?'✅ تم الحفظ محليا وسحابيا':'⚠️ تم الحفظ سحابياً فقط؛ تعذر الحفظ على الجهاز',allConfirmed&&localCopySaved?'#2f855a':'#b45309');
                     setStartupStatus('✅ متصل بالسحابة', 'online');
@@ -10389,6 +10432,7 @@
                 recordAudit('مزامنة الكتالوج الأكاديمي من الجدول',{professors:incomingProfessors.length,subjects:incomingSubjects.length,archivedSubjects:state.subjects.filter(s=>s.timetableManaged&&s.timetableActive===false).length});
                 await saveAll();
                 lastAcademicCatalogSignature=signature;
+                scheduleLocalPersistence(1500);
                 await reconcileProfessorIdentityData(false);
                 renderAll();
                 renderAcademicCatalogSyncStatus({professors:incomingProfessors.length,subjects:incomingSubjects.length,archivedSubjects:state.subjects.filter(s=>s.timetableManaged&&s.timetableActive===false).length,updatedAt:data.updatedAt});
