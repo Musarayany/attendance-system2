@@ -509,7 +509,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — المرحلة الأولى — V45.59.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — المرحلة الأولى — V45.60.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -1672,7 +1672,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.59.0-light-check-stage1-cloudflare';
+        const APP_VERSION = '45.60.0-robust-delta-stage1-cloudflare';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -1881,7 +1881,7 @@
         const DELTA_MARGIN_MS = 5 * 60 * 1000;
         const DELTA_FULL_REFRESH_MS = 30 * 24 * 60 * 60 * 1000;
         const DELTA_LOG_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
-        const DELTA_MAX_RECORD_FETCH = 1500;
+        const DELTA_MAX_RECORD_FETCH = 5000; // V45.60: كان 1500؛ يوم أو يومان من الغيابات كانا يفرضان تحميل كل الغيابات
         const DELTA_FETCH_CONCURRENCY = 20;
         const DELTA_LEGACY_TOLERANCE_MS = 3000;
         const DELTA_LEGACY_REFRESH_MIN_GAP_MS = 3 * 60 * 60 * 1000;
@@ -3377,6 +3377,27 @@
             scheduleRenderRefresh();
             updateSyncConflictButton();
         }
+        // V45.60: تنزيل السجلات المتغيرة مع إعادة المحاولة. سابقاً كان تأخر سجل واحد من آلاف (12 ثانية)
+        // يُفشل المزامنة الجزئية كلها فيُنزَّل كل شيء من جديد (~40 ميغابايت بدل ~3).
+        const DELTA_RECORD_TIMEOUT_MS = 30000;
+        let deltaLastError = '';
+        async function fetchDeltaRecords(name, keys) {
+            const out = new Map();
+            let pending = keys.map(String);
+            for (let attempt = 0; attempt < 3 && pending.length; attempt++) {
+                const failed = [];
+                const width = attempt === 0 ? DELTA_FETCH_CONCURRENCY : 8;
+                for (let i = 0; i < pending.length; i += width) {
+                    const batch = pending.slice(i, i + width);
+                    const results = await Promise.allSettled(batch.map(k => withTimeout(database.ref(`/${name}/${k}`).once('value'), DELTA_RECORD_TIMEOUT_MS, `انتهت مهلة تحميل سجل من ${name}`)));
+                    results.forEach((r, j) => { if (r.status === 'fulfilled') out.set(batch[j], r.value.val()); else failed.push(batch[j]); });
+                }
+                pending = failed;
+                if (pending.length) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+            }
+            if (pending.length) throw new Error(`تعذر تنزيل ${pending.length} سجل من ${name} بعد 3 محاولات`);
+            return out;
+        }
         async function fetchAndApplyDeltaGroups(groups) {
             let fetched = 0;
             const fullNames = [];
@@ -3396,23 +3417,13 @@
                 // V45.57: تغييرات كثيرة (يوم كامل من الغيابات مثلاً): تُنزَّل السجلات المتغيرة فقط كما هو،
                 // ثم تُدمج دفعة واحدة بنفس طريقة الدمج المستعملة في التحميل الكامل، بدل دمج كل سجل وحده
                 // (الذي كان يمر على كل الغيابات مع كل سجل فيتجمد الهاتف).
+                const fetchedRaw = await fetchDeltaRecords(name, list);
+                fetched += list.length;
                 if (list.length > DELTA_BULK_APPLY_MIN && !legacyCloudCollections.has(name)) {
-                    const fetchedRaw = new Map();
-                    for (let i = 0; i < list.length; i += DELTA_FETCH_CONCURRENCY) {
-                        const batch = list.slice(i, i + DELTA_FETCH_CONCURRENCY);
-                        const snaps = await Promise.all(batch.map(k => withTimeout(database.ref(`/${name}/${k}`).once('value'), CLOUD_OPERATION_TIMEOUT_MS, `انتهت مهلة تحميل سجل من ${name}`)));
-                        snaps.forEach((snap, j) => fetchedRaw.set(String(batch[j]), snap.val()));
-                        fetched += batch.length;
-                    }
                     applyDeltaRecordsBulk(name, fetchedRaw);
                     continue;
                 }
-                for (let i = 0; i < list.length; i += DELTA_FETCH_CONCURRENCY) {
-                    const batch = list.slice(i, i + DELTA_FETCH_CONCURRENCY);
-                    const snaps = await Promise.all(batch.map(k => withTimeout(database.ref(`/${name}/${k}`).once('value'), CLOUD_OPERATION_TIMEOUT_MS, `انتهت مهلة تحميل سجل من ${name}`)));
-                    snaps.forEach((snap, j) => applyDeltaRecord(name, batch[j], snap.val()));
-                    fetched += batch.length;
-                }
+                list.forEach(k => applyDeltaRecord(name, k, fetchedRaw.get(String(k))));
             }
             return { fetched, fullNames };
         }
@@ -3804,7 +3815,7 @@
                 let delta = null;
                 if (!options.forceFull) {
                     try { delta = await tryDeltaCloudSync(); }
-                    catch (deltaErr) { console.warn('تعذرت المزامنة الجزئية؛ سيتم التحميل الكامل:', deltaErr); delta = null; }
+                    catch (deltaErr) { console.warn('تعذرت المزامنة الجزئية؛ سيتم التحميل الكامل:', deltaErr); deltaLastError = String(deltaErr?.message || deltaErr || '').slice(0, 200); delta = null; }
                 }
                 const deltaApplied = !!(delta && delta.applied);
                 if (deltaApplied) setSyncStatus('⏳ جارٍ تطبيق آخر التغييرات فقط...', '#1e4f7a');
@@ -3826,7 +3837,7 @@
                     // وقت بداية القراءة الكاملة بتوقيت الخادم؛ ما تغيّر بعده يصل عبر سجل التغييرات.
                     const fullStartedAt = (deltaFullCycleStartedAtClient || Date.now()) + (Number(serverTimeOffsetMs) || 0);
                     deltaSyncMeta = { cursor:fullStartedAt - 60000, fullAt:fullStartedAt, db:deltaDbUrl, attendanceScope:attendanceScopeForCurrentLoad };
-                    deltaLastResult = { mode:'full', reason:delta?.reason || (options.forceFull ? 'forced' : 'fallback'), at:Date.now() };
+                    deltaLastResult = { mode:'full', reason:delta?.reason || (options.forceFull ? 'forced' : 'fallback'), error:(!delta && !options.forceFull) ? deltaLastError : '', at:Date.now() };
                 }
                 try { await migrateLegacyCollectionsIfNeeded(data); }
                 catch (migrationError) { throw migrationError; }
@@ -9711,7 +9722,7 @@
             const tableStyle = 'style="width:100%;min-width:0;table-layout:auto"';
             let html = `<div style="overflow-x:auto"><table class="report-table" ${tableStyle}><tbody>`;
             html += `<tr><td style="font-weight:800">رقم النسخة</td><td><bdi dir="ltr">${escapeHtml(getAttendanceBuildVersion())}</bdi></td></tr>`;
-            html += line('طريقة آخر مزامنة', modeText + (last.mode === 'full' && last.reason ? ' — السبب: ' + (reasons[last.reason] || last.reason) : ''));
+            html += line('طريقة آخر مزامنة', modeText + (last.mode === 'full' && last.reason ? ' — السبب: ' + (reasons[last.reason] || last.reason) + (last.error ? ' (' + last.error + ')' : '') : ''));
             if (last.mode === 'delta') html += line('تغييرات نُزّلت عند الفتح', `${last.entries ?? 0} إشعار، ${last.fetched ?? 0} سجل`);
             html += line('جهاز بنسخة قديمة مكتشف', delta.legacyDetected ? '⚠️ نعم — اطلب من الجميع تحديث الصفحة' : 'لا');
             html += line('النسخة المحلية عند الفتح', lc.loadedAtStartup ? `✅ قُرئت (${lc.readMs ?? '?'} ms)` : `❌ لم تُقرأ (${lc.readError || 'غير معروف'}, ${lc.readMs ?? '?'} ms)`);
