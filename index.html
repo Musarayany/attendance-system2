@@ -509,7 +509,7 @@
     <!-- ==================== شاشة تسجيل الدخول ==================== -->
     <div id="loginPage" class="login-box">
         <h1 style="text-align:center; font-size:1.5rem;">🏛️ قسم الفيزياء</h1>
-        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.60.0 فرز المواد وتقارير الفترات</h3>
+        <h3 style="text-align:center; color:#4a5568; margin-bottom:12px; font-size:0.9rem;">نظام إدارة الغيابات — V45.62.0 فرز المواد وتقارير الفترات</h3>
         <label>اسم المستخدم</label>
         <input type="text" id="loginUsername" placeholder="أدخل اسم المستخدم" autocomplete="username">
         <label>كلمة المرور</label>
@@ -732,7 +732,7 @@
                 </div>
                 <button onclick="saveAbsencePolicySettings()" class="btn-success btn-sm" style="margin-top:7px;">💾 حفظ السياسة وإعادة حساب الساعات</button>
                 <div id="absencePolicyStatus" class="integration-status" style="margin-top:7px;background:#fff;border-color:#f6d365;color:#744210;"></div>
-                <small>الحالة تُحسب تلقائياً بحدّين: غير المعذر (5% تنبيه، 7.5% إنذار أولي وقائي، 10% إنذار نهائي، وأكثر من 10% راسب) ومجموع الغياب كله معذر + غير معذر (5% تنبيه، 10% إنذار أولي وقائي، 15% إنذار نهائي، وأكثر من 15% راسب). يمكن تعديل أسابيع مادة منفردة من قائمة المواد.</small>
+                <small>الحالة تُحسب تلقائياً من الغياب غير المعذر فقط (5% تنبيه، 7.5% إنذار أولي وقائي، 10% إنذار نهائي، وأكثر من 10% راسب). الإجازات (الغياب بعذر) مفتوحة ولا تدخل في نسبة الرسوب. يمكن تعديل أسابيع مادة منفردة من قائمة المواد.</small>
             </div>
 
             <div class="card" style="background:#f0fdfa;border:2px solid #14b8a6;">
@@ -1223,7 +1223,7 @@
         const INITIAL_CLOUD_READ_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
         let attendanceReadScope = null;
-        const APP_VERSION = '45.60.0-robust-delta';
+        const APP_VERSION = '45.62.0-recent-leaves';
         window.getAttendanceBuildVersion = () => APP_VERSION;
         const inFlightFirebaseChanges = new Map();
         const SCHEMA_VERSION = 15;
@@ -4128,6 +4128,7 @@
             document.getElementById('loginPage').classList.add('hidden');
             document.getElementById('appContainer').classList.remove('hidden');
             document.getElementById('currentUserDisplay').innerText = '👤 ' + state.currentUser.name;
+            try { ensureLeaveListenerScope(); } catch (e) { console.warn(e); } // V45.62: رئيس القسم ← كل الإجازات
             if (restored) restoreUiState();
             try { renderAll(); setAutoDateRange(); }
             catch (err) {
@@ -4654,7 +4655,7 @@
         }
 
         function absencePolicyLabel() {
-            return 'المادة (11): غير المعذر بحد 10%، ومجموع الغياب كله (معذر + غير معذر) بحد 15%، مع إنذار أولي وقائي داخلي';
+            return 'الحالة من الغياب غير المعذر فقط بحد 10%؛ الإجازات (الغياب بعذر) لا تدخل في نسبة الرسوب';
         }
 
         function statusForAbsenceTrack(pct, thresholds) {
@@ -4668,13 +4669,10 @@
         }
 
         function getStatus(unexcusedPct, totalPct) {
+            // V45.61 (قرار رئيس القسم): الإجازات (الغياب بعذر) مفتوحة ولا تدخل في نسبة الرسوب.
+            // الحالة تُحسب من الغياب غير المعذر وحده: 5% تنبيه، 7.5% إنذار أولي، 10% إنذار نهائي، أكثر من 10% راسب.
             const unexcused = Math.max(0, Number(unexcusedPct) || 0);
-            const total = Math.max(0, Number(totalPct) || 0);
-            // V45.58: حد الـ 15% يُطبَّق على مجموع الغياب كله (المعذر + غير المعذر)، وحد الـ 10% على غير المعذر.
-            // سابقاً كان المعذر وحده يُقارن بـ 15%، فيصل المجموع إلى 20% أو أكثر دون رسوب.
-            const unexcusedStatus = statusForAbsenceTrack(unexcused, ABSENCE_THRESHOLDS.unexcused);
-            const totalStatus = statusForAbsenceTrack(Math.max(total, unexcused), ABSENCE_THRESHOLDS.excused);
-            return statusSeverity(unexcusedStatus) >= statusSeverity(totalStatus) ? unexcusedStatus : totalStatus;
+            return statusForAbsenceTrack(unexcused, ABSENCE_THRESHOLDS.unexcused);
         }
 
         function statusSeverity(status) {
@@ -5219,6 +5217,7 @@
             const student=state.students.find(st=>String(st.id)===String(studentId));
             if(!student)return {ok:false,reason:'الطالب غير موجود في قاعدة الطلبة.'};
             if(isStudentOfficiallyDeleted(studentId))return {ok:false,reason:'الطالب محذوف نهائياً.'};
+            if(state.currentUser?.role==='professor' && leaveCoverageMissing(context?.date)){ensureLeaveListenerScope();return {ok:false,reason:'جارٍ تحميل إجازات تلك الفترة للتحقق منها؛ أعد المحاولة بعد لحظات.'};}
             if(state.currentUser?.role==='professor' && !leaveCloudReady)return {ok:false,reason:'تعذر التحقق من الإجازات المعتمدة؛ لا يُسمح بالتعديل قبل استعادة اتصال الإجازات.'};
             if(state.currentUser?.role==='professor' && leaveForAttendance(studentId,subject,context))return {ok:false,reason:'إجازة معتمدة من رئيس القسم لهذه المحاضرة؛ تعديل حالة الطالب ممنوع.'};
             if(!subject||!state.subjects.some(s=>String(s.id)===String(subject.id)))return {ok:false,reason:'المادة غير موجودة.'};
@@ -5879,7 +5878,7 @@
             basis.value = 'unexcused';
             bologna.value = policy.bolognaWeeks;
             annual.value = policy.annualWeeks;
-            status.textContent = `الحالة تعتمد على: ${absencePolicyLabel()} — غير المعذر: 5% / 7.5% / 10% / >10% — المجموع (معذر + غير معذر): 5% / 10% / 15% / >15% — بولونيا ${policy.bolognaWeeks} أسبوعاً — السنوي ${policy.annualWeeks} أسبوعاً.`;
+            status.textContent = `الحالة تعتمد على: ${absencePolicyLabel()} — غير المعذر: 5% / 7.5% / 10% / >10% — الإجازات (بعذر): لا تدخل في نسبة الرسوب — بولونيا ${policy.bolognaWeeks} أسبوعاً — السنوي ${policy.annualWeeks} أسبوعاً.`;
         }
 
         function refreshAutomaticSubjectHours() {
@@ -7791,6 +7790,29 @@
             if(leaveListenerRetryTimer){clearTimeout(leaveListenerRetryTimer);leaveListenerRetryTimer=null;}
             if(leaveListenerWatchdogTimer){clearTimeout(leaveListenerWatchdogTimer);leaveListenerWatchdogTimer=null;}
         }
+        // V45.62: جهاز رئيس القسم يحمّل كل الإجازات (السجل والتصحيحات القديمة). بقية الأجهزة تحمّل إجازات
+        // آخر 14 يوماً فقط (+ بداية أي إذن تسجيل قديم للأستاذ)، بفهرس date في Firebase. أي تحقق لتاريخ أقدم
+        // من النافذة يُمنع (لا يُعتبر "لا إجازة") حتى تُحمَّل إجازات تلك الفترة.
+        const LEAVE_WINDOW_DAYS = 14;
+        let leaveWindowStart = '';
+        function desiredLeaveWindowStart(){
+            if(state.currentUser?.role==='admin')return '';
+            const d=new Date(getLocalDateISO()+'T00:00:00Z');d.setUTCDate(d.getUTCDate()-LEAVE_WINDOW_DAYS);
+            let start=d.toISOString().slice(0,10);
+            const me=String(state.currentUser?.id||'');
+            if(me)(state.appSettings||[]).forEach(x=>{
+                if(x&&x.kind==='historicalAttendancePermission'&&x.enabled===true&&String(x.professorId||'')===me){const f=String(x.fromDate||'0000-01-01');if(f<start)start=f;}
+            });
+            return start;
+        }
+        function leaveCoverageMissing(date){return !!leaveWindowStart && String(date||'')<leaveWindowStart;}
+        function ensureLeaveListenerScope(){
+            if(!leaveListenerStarted)return false;
+            const want=desiredLeaveWindowStart();
+            if(!leaveWindowStart)return false; // القائمة كاملة أصلاً
+            if(want===''||want<leaveWindowStart){startStudentLeaveListener(true);return true;}
+            return false;
+        }
         function detachStudentLeaveListener(){
             ++leaveListenerGeneration; // تجاهل ردود الاشتراك القديم بعد إلغائه.
             if(leaveListenerRef && leaveListenerHandler){
@@ -7844,7 +7866,9 @@
             if(leaveListenerStarted || force)detachStudentLeaveListener();
             clearStudentLeaveTimers();
             const generation=++leaveListenerGeneration;
-            const ref=database.ref('/studentLeaves');
+            const windowStart=desiredLeaveWindowStart();
+            const ref=windowStart?database.ref('/studentLeaves').orderByChild('date').startAt(windowStart):database.ref('/studentLeaves');
+            leaveWindowStart=windowStart;
             leaveListenerStarted=true;
             leaveListenerRef=ref;
             leaveListenerHandler=snap=>applyStudentLeaveSnapshot(snap,generation);
@@ -7868,7 +7892,7 @@
             const generation=leaveListenerGeneration;
             leaveReconnectReadInFlight=true;
             // مستمع Firebase يعاود المزامنة بنفسه؛ القراءة الواحدة تعيد التحقق إذا لم يرد حدث تغيّر.
-            database.ref('/studentLeaves').once('value').then(snap=>{
+            (leaveListenerRef||database.ref('/studentLeaves')).once('value').then(snap=>{
                 if(generation===leaveListenerGeneration && firebaseTransportConnected)applyStudentLeaveSnapshot(snap,generation);
             }).catch(err=>studentLeaveReadFailed(err,generation)).finally(()=>{leaveReconnectReadInFlight=false;});
         }
@@ -7883,7 +7907,8 @@
             checked:leaveCloudReady,
             listenerStarted:leaveListenerStarted,
             retryAttempt:leaveListenerRetryAttempt,
-            lastError:leaveListenerLastError
+            lastError:leaveListenerLastError,
+            windowStart:leaveWindowStart||'all'
         });
 
         function renderAdmin() {
@@ -8485,7 +8510,7 @@
                 <div class="card">
                     <h4>📊 إجمالي ساعات الغياب لكل طالب - ${escapeHtml(getLevelName(level))}</h4>
                     <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
-                    <small>🟢 جيد | 🔵 تنبيه: 5% | 🟡 إنذار أولي وقائي: 7.5% غير معذر / 10% المجموع | 🟠 إنذار نهائي: 10% غير معذر / 15% المجموع | 🔴 راسب: عند تجاوز 10% غير معذر أو 15% المجموع (معذر + غير معذر)</small>
+                    <small>🟢 جيد | 🔵 تنبيه: 5% | 🟡 إنذار أولي وقائي: 7.5% | 🟠 إنذار نهائي: 10% | 🔴 راسب: عند تجاوز 10% — كلها من الغياب غير المعذر فقط، والإجازات لا تُحتسب</small>
                 </div>
                 <div class="card">
                     <h4>📈 ملخص الحالات حسب أسوأ حالة للطالب في مواده</h4>
@@ -9556,7 +9581,7 @@
                     studentId:st.id, studentName:st.name,
                     theoreticalGroup:studentTheoreticalGroup(st)||'-', practicalGroup:studentPracticalGroup(st)||'-',
                     subjectId:sub.id, subjectName:sub.name, subjectType:sub.groupType||'',
-                    status:d.status, percentage:d.absencePercentage, unexcusedPercentage:d.unexcusedPercentage,
+                    status:d.status, percentage:d.unexcusedPercentage, unexcusedPercentage:d.unexcusedPercentage, excusedPercentage:Math.max(0,d.absencePercentage-d.unexcusedPercentage),
                     hours:d.totalAbsentHours, unexcusedHours:d.unexcusedHours
                 });
             }));
@@ -9620,7 +9645,7 @@
         }
         function statusSubjectLine(r) {
             const type = r.subjectType ? ` (${r.subjectType})` : '';
-            return `${r.subjectName}${type}: ${r.status} — ${r.percentage.toFixed(1)}% (غير معذر ${r.unexcusedPercentage.toFixed(1)}%) — ${r.hours.toFixed(1)} س`;
+            return `${r.subjectName}${type}: ${r.status} — غياب ${r.percentage.toFixed(1)}%${r.excusedPercentage>0?` (+ إجازات ${r.excusedPercentage.toFixed(1)}% لا تُحتسب)`:''} — ${r.unexcusedHours.toFixed(1)} س`;
         }
 
         function renderFilteredStatusDetails(level) {
@@ -9633,7 +9658,7 @@
             groupStatusRowsByStudent(rows).forEach((g,i)=>{
                 const subjectsHtml=g.subjects.map(r=>{
                     const st=getStatusStyle(r.status);
-                    const tip=`${r.subjectName}${r.subjectType?' ('+r.subjectType+')':''}: ${r.status} — ${r.percentage.toFixed(1)}% (غير معذر ${r.unexcusedPercentage.toFixed(1)}%) — ${r.hours.toFixed(1)} س`;
+                    const tip=statusSubjectLine(r);
                     return `<span class="fs-subject" title="${escapeHtml(tip)}" style="background:${st.bg};color:${st.fg};">${escapeHtml(r.subjectName)}: <b>${escapeHtml(r.status)}</b> ${r.percentage.toFixed(1)}%</span>`;
                 }).join('');
                 const groups=[g.theoreticalGroup,g.practicalGroup].filter(x=>x&&x!=='-').join(' / ');
@@ -9684,8 +9709,8 @@
             }));
             const data=rows.map((r,i)=>({
                 '#':i+1,'اسم الطالب':r.studentName,'الشعبة النظرية':r.theoreticalGroup,'المجموعة العملية':r.practicalGroup,
-                'المادة':r.subjectName,'نوع المادة':r.subjectType,'الحالة':r.status,'نسبة الغياب %':Number(r.percentage.toFixed(1)),
-                'نسبة غير المعذر %':Number(r.unexcusedPercentage.toFixed(1)),'ساعات الغياب':Number(r.hours.toFixed(1)),'ساعات غير معذرة':Number(r.unexcusedHours.toFixed(1)),'نطاق التقرير':officerReportPeriodDescription()
+                'المادة':r.subjectName,'نوع المادة':r.subjectType,'الحالة':r.status,'نسبة الغياب (بدون عذر) %':Number(r.percentage.toFixed(1)),
+                'نسبة الإجازات (لا تُحتسب) %':Number((r.excusedPercentage||0).toFixed(1)),'ساعات الغياب':Number(r.hours.toFixed(1)),'ساعات غير معذرة':Number(r.unexcusedHours.toFixed(1)),'نطاق التقرير':officerReportPeriodDescription()
             }));
             const ws=XLSX.utils.json_to_sheet(data); ws['!cols']=[{wch:5},{wch:25},{wch:14},{wch:14},{wch:24},{wch:12},{wch:15},{wch:14},{wch:16},{wch:14},{wch:16}];
             const wsGrouped=XLSX.utils.json_to_sheet(grouped); wsGrouped['!cols']=[{wch:5},{wch:28},{wch:14},{wch:14},{wch:10},{wch:14},{wch:90},{wch:22}];
@@ -10668,9 +10693,9 @@
                         <div class="report-legend">
                             <span style="background:#c6f6d5; padding:2px 6px; border-radius:4px;">🟢 جيد: أقل من 5%</span>
                             <span style="background:#bee3f8; padding:2px 6px; border-radius:4px;">🔵 تنبيه: من 5% حتى ما قبل الإنذار الأولي</span>
-                            <span style="background:#fefcbf; padding:2px 6px; border-radius:4px;">🟡 إنذار أولي وقائي: 7.5% غير معذر / 10% المجموع</span>
-                            <span style="background:#feebc8; padding:2px 6px; border-radius:4px;">🟠 إنذار نهائي رسمي: 10% غير معذر / 15% المجموع</span>
-                            <span style="background:#fed7d7; padding:2px 6px; border-radius:4px;">🔴 راسب: تجاوز 10% غير معذر أو 15% المجموع (معذر + غير معذر)</span>
+                            <span style="background:#fefcbf; padding:2px 6px; border-radius:4px;">🟡 إنذار أولي وقائي: 7.5% غير معذر</span>
+                            <span style="background:#feebc8; padding:2px 6px; border-radius:4px;">🟠 إنذار نهائي رسمي: 10% غير معذر</span>
+                            <span style="background:#fed7d7; padding:2px 6px; border-radius:4px;">🔴 راسب: تجاوز 10% غير معذر (الإجازات لا تُحتسب)</span>
                         </div>
                         <p class="report-explanation" style="font-size:9px; color:#718096; margin:2px 0;">أساس تحديد الحالة: <strong>${escapeHtml(absencePolicyLabel())}</strong>. وتبقى الساعات المعذرة وغير المعذرة محفوظة في التفاصيل.</p>
                     </div>
@@ -11353,7 +11378,8 @@
             const issues=[];const sessions=[];
             // V45.46.3: The absence of verified leave data must not be interpreted as no leaves.
             // Block submission before implicit presence or any side effects when verification is unavailable.
-            if(!leaveCloudReady || !firebaseTransportConnected)
+            if(leaveCoverageMissing(dateISO))ensureLeaveListenerScope();
+            if(!leaveCloudReady || !firebaseTransportConnected || leaveCoverageMissing(dateISO))
                 return {ready:false,issues:['لا يمكن إكمال إرسال الغيابات قبل التحقق من سجل الإجازات في Firebase. أعد فحص الإجازات وانتظر الاتصال.'],sessions};
             const subjects=getProfessorSubjects();
             const today=getLocalDateISO();
@@ -11386,7 +11412,7 @@
         // نتحقق من جميع عمليات الإضافة قبل إجراء أول تعديل، لتفادي الحفظ الجزئي.
         function finalizeImplicitPresenceForSubject(subject, dateISO=getProfessorAttendanceWorkDate()) {
             // Fail closed: an unverified leave list could incorrectly mark protected students present.
-            if(!leaveCloudReady || !firebaseTransportConnected)
+            if(!leaveCloudReady || !firebaseTransportConnected || leaveCoverageMissing(dateISO))
                 throw new Error('سجل الإجازات السحابي غير متحقق منه؛ لن يُثبَّت حضور افتراضي لأي طالب.');
             const today=getLocalDateISO();
             const nowMinutes=getBaghdadClock().minutes;
@@ -12376,7 +12402,7 @@
 
             let html=`<div style="font-size:10px;color:#64748b;margin-bottom:5px;">${rows.length} طالب — مرتب أبجدياً. زر «التواريخ» يعرض غيابات الطالب في هذه المادة.</div>
             <div class="table-wrapper"><table>
-                <tr><th>#</th><th>الطالب</th><th>الشعبة / العملي</th><th>مرات الغياب</th><th>ساعات الغياب</th><th>بدون عذر</th><th>النسبة</th><th>الحالة التراكمية</th><th>التفاصيل</th></tr>`;
+                <tr><th>#</th><th>الطالب</th><th>الشعبة / العملي</th><th>مرات الغياب</th><th>ساعات الغياب</th><th>بدون عذر</th><th>النسبة (بدون عذر)</th><th>الحالة التراكمية</th><th>التفاصيل</th></tr>`;
 
             rows.forEach((r,idx)=>{
                 const statusBadge=r.status==='جيد'?'bg-green':r.status==='تنبيه'?'bg-blue':r.status==='إنذار أولي'?'bg-yellow':r.status==='إنذار نهائي'?'bg-orange':'bg-red';
@@ -12391,7 +12417,7 @@
                     <td>${dates.length}</td>
                     <td>${r.totalAbsent}</td>
                     <td>${r.unexcusedAbsent}</td>
-                    <td>${Number(r.pctTotal||0).toFixed(1)}%</td>
+                    <td>${Number(r.pctUnexcused||0).toFixed(1)}%</td>
                     <td><span class="badge ${statusBadge}">${escapeHtml(r.status)}</span></td>
                     <td><button type="button" class="btn-sm btn-info prof-absence-dates-btn" onclick="toggleProfessorAbsenceDates('${escapeHtml(String(r.id))}','${escapeHtml(String(subjectId))}',this)">📅 التواريخ</button></td>
                 </tr>
@@ -12702,7 +12728,7 @@
                 const pctTotal = (totalH / courseHours) * 100;
                 const status = getStatus(pctUnexcused, pctTotal);
                 if (totalH > 0) {
-                    summary.push({ subject: sub.name, hours: totalH.toFixed(1), percentage: pctTotal.toFixed(1),
+                    summary.push({ subject: sub.name, hours: totalH.toFixed(1), percentage: pctUnexcused.toFixed(1),
                         status: status });
                     totalAbsent += totalH;
                 }
@@ -12732,10 +12758,10 @@
                 `السلام عليكم، ولي أمر الطالب ${st.name} (الشعبة النظرية ${studentTheoreticalGroup(st)}${studentPracticalGroup(st) ? ' / المجموعة العملية ' + studentPracticalGroup(st) : ''})\nتقرير الغياب:\n`;
             msg += `━━━━━━━━━━━━━━━━\n`;
             data.summary.forEach(item => {
-                msg += `📚 ${item.subject}: ${item.hours} س (${item.percentage}%)\n   الحالة: ${item.status}\n`;
+                msg += `📚 ${item.subject}: ${item.hours} س — نسبة الغياب بدون عذر ${item.percentage}%\n   الحالة: ${item.status}\n`;
             });
             msg += `━━━━━━━━━━━━━━━━\n`;
-            msg += `📊 إجمالي الغياب: ${data.totalAbsent} س\n📈 النسبة الكلية: ${data.totalPercentage}%\n`;
+            msg += `📊 إجمالي الغياب: ${data.totalAbsent} س\n📈 النسبة الكلية (مع الإجازات): ${data.totalPercentage}%\n`;
             msg += `\nيرجى الانتباه والتواصل مع مسؤول الغيابات.\nقسم الفيزياء`;
             return msg;
         }
